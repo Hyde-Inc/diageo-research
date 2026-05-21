@@ -1,0 +1,22 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+.env
+
+# Local data + run artifacts (large, regenerated)
+data/*.parquet
+data/*.csv
+data/*.duckdb
+data/raw/
+runs/
+
+# Editor
+.vscode/
+.idea/
+.DS_Store

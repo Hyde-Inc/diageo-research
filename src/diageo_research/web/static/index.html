@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Diageo Research</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@13/marked.min.js"></script>
+<style>
+  :root { --fg: #1d1d1f; --muted: #6e6e73; --line: #e5e5ea; --accent: #003a5d; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+         max-width: 1100px; margin: 32px auto; padding: 0 20px; color: var(--fg); line-height: 1.45; }
+  h1 { margin: 0 0 8px; font-size: 22px; }
+  .hint { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+  textarea { width: 100%; min-height: 90px; padding: 12px; font: inherit; resize: vertical;
+             border: 1px solid var(--line); border-radius: 8px; }
+  .row { display: flex; gap: 14px; align-items: center; margin: 10px 0 18px; flex-wrap: wrap; }
+  label { color: var(--muted); font-size: 13px; }
+  input[type=number] { width: 76px; padding: 6px 8px; font: inherit; border: 1px solid var(--line);
+                       border-radius: 6px; }
+  button { padding: 10px 20px; font-weight: 600; background: var(--accent); color: white;
+           border: 0; border-radius: 8px; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: progress; }
+  #runid { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-top: 24px; }
+  #events { background: #fbfbfd; border: 1px solid var(--line); padding: 14px; border-radius: 8px;
+            font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+            height: 320px; overflow: auto; }
+  #events div { margin: 2px 0; }
+  #events .persona { color: var(--accent); font-weight: 600; }
+  #events .q { color: #a05a00; }
+  #events .a { color: #2c6e1f; }
+  #events .tool { color: #888; }
+  #events .err { color: #b00020; }
+  #report { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
+  #report h1 { font-size: 26px; }
+  #report h2 { font-size: 18px; text-transform: none; letter-spacing: 0; color: var(--fg); margin-top: 22px; }
+  #report code, #report pre { background: #f3f3f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  #report pre { padding: 10px; }
+  #report blockquote { border-left: 3px solid var(--line); margin-left: 0; padding-left: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<h1>Diageo strategy research</h1>
+<div class="hint">Multi-perspective agent — replicates the STORM pattern (arxiv 2402.14207). Personas browse the open web and query the local public datasets (BLS CPI, US Census retail, FRED) to answer your question.</div>
+
+<form id="form">
+  <textarea id="question" placeholder="e.g. Where are recent price changes having the biggest impact on North American spirits demand?"></textarea>
+  <div class="row">
+    <label>Personas <input type="number" id="personas" min="1" max="8" value="4" /></label>
+    <label>Max turns <input type="number" id="turns" min="1" max="12" value="6" /></label>
+    <button type="submit" id="go">Run research</button>
+    <span id="runid"></span>
+  </div>
+</form>
+
+<h2>Events</h2>
+<div id="events"></div>
+
+<div id="report"></div>
+
+<script>
+const $events = document.getElementById('events');
+const $report = document.getElementById('report');
+const $runid = document.getElementById('runid');
+const $go = document.getElementById('go');
+
+function log(cls, msg) {
+  const d = document.createElement('div');
+  d.className = cls;
+  d.textContent = msg;
+  $events.appendChild(d);
+  $events.scrollTop = $events.scrollHeight;
+}
+
+document.getElementById('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $events.innerHTML = '';
+  $report.innerHTML = '';
+  $runid.textContent = '';
+  const question = document.getElementById('question').value.trim();
+  const personas = parseInt(document.getElementById('personas').value, 10);
+  const turns = parseInt(document.getElementById('turns').value, 10);
+  if (!question) return;
+  $go.disabled = true;
+  try {
+    const resp = await fetch('/research', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({question, personas, turns}),
+    });
+    if (!resp.ok) {
+      log('err', `HTTP ${resp.status}: ${await resp.text()}`);
+      $go.disabled = false;
+      return;
+    }
+    const {run_id} = await resp.json();
+    $runid.textContent = `run ${run_id}`;
+    connectStream(run_id);
+  } catch (err) {
+    log('err', `Network error: ${err}`);
+    $go.disabled = false;
+  }
+});
+
+function connectStream(runId) {
+  const es = new EventSource(`/research/${runId}/stream`);
+  const personaNames = {};
+
+  function parse(e) {
+    try { return JSON.parse(e.data); } catch { return null; }
+  }
+
+  es.addEventListener('persona_created', (e) => {
+    const ev = parse(e); if (!ev) return;
+    personaNames[ev.persona_id] = ev.data.name;
+    log('persona', `[${ev.persona_id}] ${ev.data.name} — ${ev.data.role}`);
+  });
+  es.addEventListener('turn_started', (e) => {
+    const ev = parse(e); if (!ev) return;
+    log('q', `[${ev.persona_id}] Q${ev.turn_idx}: ${ev.data.question}`);
+  });
+  es.addEventListener('tool_call', (e) => {
+    const ev = parse(e); if (!ev) return;
+    log('tool', `[${ev.persona_id}]   → ${ev.data.name}`);
+  });
+  es.addEventListener('tool_result', (e) => {
+    const ev = parse(e); if (!ev) return;
+    log('tool', `[${ev.persona_id}]   ← ${ev.data.name} result`);
+  });
+  es.addEventListener('turn_completed', (e) => {
+    const ev = parse(e); if (!ev) return;
+    const done = ev.data.done ? ' <<DONE>>' : '';
+    const a = (ev.data.answer || '').slice(0, 220);
+    log('a', `[${ev.persona_id}] A${ev.turn_idx} (${ev.data.n_citations} cites)${done}: ${a}…`);
+  });
+  es.addEventListener('interviewer_stopped', (e) => {
+    const ev = parse(e); if (!ev) return;
+    log('persona', `[${ev.persona_id}] interviewer stopped`);
+  });
+  es.addEventListener('subreport_ready', (e) => {
+    const ev = parse(e); if (!ev) return;
+    log('persona', `[${ev.persona_id}] sub-report ready (${ev.data.n_turns} turns)`);
+  });
+  es.addEventListener('outline_started', () => log('persona', '… synthesizing outline'));
+  es.addEventListener('final_ready', async (e) => {
+    const ev = parse(e);
+    log('persona', `✓ final brief ready (${(ev && ev.data && ev.data.n_citations) || 0} citations)`);
+    try {
+      const r = await fetch(`/research/${runId}/report`).then(r => r.json());
+      $report.innerHTML = marked.parse(r.markdown || '');
+    } catch (err) {
+      log('err', `Could not load report: ${err}`);
+    }
+    $go.disabled = false;
+  });
+  es.addEventListener('error', (e) => {
+    if (!e.data) return; // browser-generated connection error
+    const ev = parse(e);
+    log('err', `ERROR: ${(ev && ev.data && ev.data.message) || ''}`);
+  });
+  es.addEventListener('close', () => es.close());
+  es.addEventListener('heartbeat', () => { /* keep-alive */ });
+}
+</script>
+</body>
+</html>
