@@ -1,0 +1,28 @@
+# Don't ship local dev cruft into the image
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Local secrets — NEVER. Use fly secrets instead.
+.env
+
+# Local artifacts — regenerated in the container.
+runs/
+data/*.duckdb
+data/main.duckdb
+
+# Editor
+.vscode/
+.idea/
+.DS_Store
+.git/
+.github/
+
+# Docs / READMEs not needed at runtime
+*.md
+docs/
