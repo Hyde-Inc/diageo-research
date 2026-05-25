@@ -34,7 +34,7 @@ from .citations import (
 from .config import get_settings
 from .json_utils import ParseFailure, parse_json
 from .models import DialogueTurn, FinalReport, OutlineSection, Persona, SubReport
-from .prompt_loader import render
+from .prompt_loader import render, socializing_brief
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +68,9 @@ async def draft_subreport(
     # All panel personas are analysts. Write in the analyst voice they own.
     prompt = (
         f"You are {persona.name} ({persona.role}), an analyst on a Diageo strategy panel. "
-        f"Distill the interview transcript below into a tight sub-report (250–500 words, "
-        f"markdown) on this strategy question:\n\n"
+        f"Distill the interview transcript below into a tight, executive-grade sub-report "
+        f"(150–280 words, markdown) on this strategy question:\n\n"
+        f"# Shared socializing context (your lens; never cite verbatim)\n{socializing_brief()}\n\n"
         f"# Question\n{question}\n\n"
         f"# Transcript\n{transcript}\n\n"
         f"# Voice\nWrite as the analyst lens this persona owns. Ground every claim in the "
@@ -80,11 +81,13 @@ async def draft_subreport(
         f"- Preserve every `[B?]` / `[Q?]` citation marker from the transcript verbatim. "
         f"Do not drop them. Do not invent attribution-style tags like `[B-MyName]` — they "
         f"get stripped by the synthesizer and the claim becomes unsupported.\n"
-        f"- Lead with the single most consequential finding from your lens — this becomes "
-        f"your headline claim and seeds the cross-persona challenge round.\n"
-        f"- 3–5 short paragraphs. No section headings beyond the title.\n"
+        f"- Lead with the single most consequential finding from your lens — this is the "
+        f"headline claim the synthesizer will surface to the partner.\n"
+        f"- 2–4 short paragraphs. No section headings beyond the title. No filler.\n"
         f"- Every numeric / factual sentence carries a `[B?]` or `[Q?]` marker. "
-        f"Ungrounded prose gets dropped at synthesis.\n\n"
+        f"Ungrounded prose gets dropped at synthesis.\n"
+        f"- Where your data contradicts a CoLab Future-of-Socializing assumption, name "
+        f"the contradiction in one sentence.\n\n"
         f"Return ONLY markdown, beginning with `### {persona.name}'s view`."
     )
     resp = await client.messages.create(
@@ -327,9 +330,10 @@ async def _draft_executive_answer(
     bundle = _bundle_sub_reports(sub_reports)
     sections_blob = "\n\n".join(s[:1200] for s in sections_md)
     prompt = (
-        "Write the **executive answer** for a Diageo strategy brief.\n\n"
+        "Write the **executive answer** for a Diageo strategy brief — the partner reads "
+        "this and walks away with the verdict.\n\n"
         "# Hard rules\n"
-        "- **3–5 sentences. Finish the final sentence with a `.` — never end mid-clause.**\n"
+        "- **2–3 sentences. Finish the final sentence with a `.` — never end mid-clause.**\n"
         "- ANSWER the question directly with the most consequential conclusion. "
         "Do NOT describe the brief, do NOT use meta-phrasing like 'this brief argues' "
         "or 'the team finds that' or 'tell the partner which…' — that gets cut.\n"
@@ -337,7 +341,7 @@ async def _draft_executive_answer(
         "elasticity).\n"
         "- Preserve `[B?]` / `[Q?]` / `[S?]` citation markers verbatim — and CLOSE every "
         "bracket. Never leave `[S14][S18` dangling.\n"
-        "- No preamble. No bullets. Tight prose.\n"
+        "- No preamble. No bullets. Tight prose worthy of a partner cover slide.\n"
         "\n# Brand attribution — partner-grade honesty\n"
         "The DuckDB has category-level data only (whisky, tequila, vodka, RTDs). "
         "It does NOT have brand-level SKU data. Therefore: do NOT write 'Smirnoff "
@@ -347,6 +351,7 @@ async def _draft_executive_answer(
         "−0.6 elasticity [S25] — Don Julio 1942 and Casamigos Añejo sit in that tier "
         "(no brand-level data in this brief).' Frame brands as PORTFOLIO MAPPINGS to "
         "category findings, never as measurements.\n"
+        f"\n# Shared socializing context (lens; never quote verbatim)\n{socializing_brief()}\n"
         f"\n# Question\n{question}\n\n"
         f"# Section drafts (your source of truth)\n{sections_blob}\n\n"
         f"# Backing sub-reports (for context only — section drafts above are canonical)\n{bundle}\n"

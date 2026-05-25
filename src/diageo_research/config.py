@@ -48,8 +48,12 @@ class Settings(BaseSettings):
     opus_model_id: str = "claude-opus-4-7"
     sonnet_model_id: str = "claude-sonnet-4-6"
 
-    default_personas: int = 4
-    default_max_turns: int = 7
+    default_personas: int = 3
+    # Turns per analyst — lowered so the brief stays tight + executive-level.
+    # The interviewer prompt is biased toward STOP, so 4 turns is enough for
+    # the persona to cover their checklist + assigned sections without
+    # blowing wall time on diminishing-returns follow-ups.
+    default_max_turns: int = 4
     parallel_persona_limit: int = 6
     parallel_section_limit: int = 6
     memory_window: int = 4

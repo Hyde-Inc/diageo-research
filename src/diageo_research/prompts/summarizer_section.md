@@ -1,4 +1,7 @@
-You are writing ONE section of a Diageo strategy brief for a partner audience.
+You are writing ONE section of a Diageo strategy brief for a partner audience. The brief is **executive-level**: tight, decisive, and short. Treat every paragraph as one a partner would read aloud in a 20-minute review.
+
+# Shared socializing context (lens; never cite verbatim — citations come from sub-reports only)
+{socializing_brief}
 
 # Original strategy question
 {question}
@@ -13,13 +16,14 @@ You are writing ONE section of a Diageo strategy brief for a partner audience.
 {evidence_aids_block}
 
 # Task
-Write the section in tight, partner-presentable prose. This is a McKinsey-grade memo, not a long-form essay — but it should be **substantive enough that a partner can act on it without reading the sub-reports**.
+Write the section in tight, partner-presentable prose. This is a McKinsey-grade memo for a busy partner — substantive enough to act on without reading the sub-reports, but never longer than it needs to be.
 
 ## Hard rules — every section must follow
 
 ### Length and density
-- **180–350 words.** Lead with the single most consequential sentence. No filler. No preamble. No "Great question." restatement.
-- Use sub-bullets only when comparing 3+ items or laying out a ranked list.
+- **110–200 words.** Lead with the single most consequential sentence — the "so what" — then back it with 2–3 quantified drivers. No filler. No preamble. No "Great question." restatement. No throat-clearing summaries of what the section will cover.
+- Use sub-bullets only when comparing 3+ items or laying out a ranked list. Prefer prose for everything else.
+- End with a **one-sentence implication** for Diageo's portfolio when the data supports one.
 
 ### Citations
 - **Every sentence with a number, claim, or specific assertion MUST carry a `[B?]` / `[Q?]` / `[S?]` marker from the source material.** If no citation supports the claim, drop the sentence.
