@@ -108,6 +108,31 @@ class FinalReport(BaseModel):
     citations: list[Citation] = Field(default_factory=list)
 
 
+class PlanForReview(BaseModel):
+    """The full editable plan exposed to a human reviewer at the HITL pause.
+
+    Captures everything generated upstream of the parallel interviews so the
+    user can edit the panel composition + outline before any analyst time
+    is spent. The orchestrator applies any edits before resuming."""
+
+    run_id: str
+    question: str
+    executive_intent: str = ""
+    personas: list[Persona] = Field(default_factory=list)
+    sections: list[OutlineSection] = Field(default_factory=list)
+
+
+class PlanEdit(BaseModel):
+    """Human-supplied edits to the plan. Any field omitted leaves the
+    upstream value unchanged. `decision` controls whether to resume with the
+    edits applied or abort the run before any interviews run."""
+
+    decision: Literal["approve", "abort"] = "approve"
+    executive_intent: str | None = None
+    personas: list[Persona] | None = None
+    sections: list[OutlineSection] | None = None
+
+
 class RunState(BaseModel):
     run_id: str
     question: str

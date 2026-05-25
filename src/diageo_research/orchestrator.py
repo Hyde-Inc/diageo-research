@@ -30,9 +30,18 @@ from anthropic import AsyncAnthropic
 
 from .config import get_settings
 from .events import EventBus, create_bus
+from . import hitl
 from .interviewer import Interviewer
 from .memory import DialogueMemory
-from .models import DialogueTurn, FinalReport, OutlineSection, Persona, SSEEvent, SubReport
+from .models import (
+    DialogueTurn,
+    FinalReport,
+    OutlineSection,
+    Persona,
+    PlanForReview,
+    SSEEvent,
+    SubReport,
+)
 from .outline import assign_sections, draft_seed_outline
 from .persona_generator import generate_personas
 from .perspective import PerspectiveAgent
@@ -54,10 +63,19 @@ async def run_research(
     run_id: str | None = None,
     n_personas: int | None = None,
     max_turns: int | None = None,
+    human_in_loop: bool = False,
 ) -> FinalReport:
     """Run the multi-perspective research pipeline. If `n_personas` is None
     (the common CLI default), the upfront question analyzer sizes the panel
-    to the question; the user override always wins when supplied."""
+    to the question; the user override always wins when supplied.
+
+    When `human_in_loop=True` the run pauses after the seed outline +
+    analyst panel + section assignments are computed and BEFORE any
+    interviews kick off. The FastAPI layer surfaces the plan via
+    `GET /research/{id}/plan` and accepts edits via `POST /research/{id}/plan`;
+    until the user responds the orchestrator waits on `hitl.await_edits`.
+    Edits replace the executive_intent / personas / sections fields in
+    place, then the run resumes. CLI flows always skip the pause."""
     settings = get_settings()
     run_id = run_id or new_run_id()
     user_persona_override = n_personas  # may be None
@@ -216,6 +234,74 @@ async def run_research(
                 "n_sections": len(seed_sections),
             },
         ))
+
+        # 2.5 Human-in-the-loop pause (opt-in via the HTTP API).
+        # Surface the plan, await edits, apply them. CLI flows skip this.
+        if human_in_loop:
+            await bus.emit(SSEEvent(
+                type="stage_started", run_id=run_id,
+                data={"stage": "hitl_review"},
+            ))
+            t_stage = time.monotonic()
+            plan_for_review = PlanForReview(
+                run_id=run_id,
+                question=question,
+                executive_intent=executive_intent,
+                personas=personas,
+                sections=seed_sections,
+            )
+            await bus.emit(SSEEvent(
+                type="plan_ready_for_review",
+                run_id=run_id,
+                data=plan_for_review.model_dump(),
+            ))
+            edit = await hitl.await_edits(run_id, plan_for_review)
+            if edit.decision == "abort":
+                await bus.emit(SSEEvent(
+                    type="run_aborted",
+                    run_id=run_id,
+                    data={"stage": "hitl_review", "reason": "human aborted plan review"},
+                ))
+                raise RuntimeError("Run aborted at HITL review (no plan approved).")
+            edited = hitl.apply_edits(plan_for_review, edit)
+            executive_intent = edited.executive_intent
+            seed_sections = edited.sections
+            # Personas may have been added/removed/edited. Preserve any
+            # `section_assignments` the user kept; rebuild missing ones with
+            # the same fallback the assign_sections stage uses so every
+            # section still has at least one driver.
+            from .outline import _ensure_full_coverage  # local import to avoid cycle
+            new_personas = edited.personas
+            new_assign: dict[str, list[str]] = {
+                p.id: list(p.section_assignments) for p in new_personas
+            }
+            new_assign = _ensure_full_coverage(new_assign, new_personas, seed_sections)
+            personas = [
+                p.model_copy(update={"section_assignments": new_assign.get(p.id, [])})
+                for p in new_personas
+            ]
+            assignments = new_assign
+            n_personas = len(personas)
+            writer.write_seed_outline(executive_intent, seed_sections, assignments, personas)
+            elapsed_hitl = round(time.monotonic() - t_stage, 1)
+            stage_timings.append(("hitl_review", elapsed_hitl))
+            logger.info(
+                "stage hitl_review done in %ss — %d personas, %d sections post-edit",
+                elapsed_hitl, len(personas), len(seed_sections),
+            )
+            await bus.emit(SSEEvent(
+                type="plan_approved",
+                run_id=run_id,
+                data={
+                    "n_personas": len(personas),
+                    "n_sections": len(seed_sections),
+                    "executive_intent": executive_intent,
+                },
+            ))
+            await bus.emit(SSEEvent(
+                type="stage_completed", run_id=run_id,
+                data={"stage": "hitl_review", "elapsed_s": elapsed_hitl},
+            ))
 
         # 3. Parallel interviews
         await bus.emit(SSEEvent(type="stage_started", run_id=run_id, data={"stage": "interviews"}))

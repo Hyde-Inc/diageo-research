@@ -5,7 +5,7 @@
 <title>Diageo Research</title>
 <script src="https://cdn.jsdelivr.net/npm/marked@13/marked.min.js"></script>
 <style>
-  :root { --fg: #1d1d1f; --muted: #6e6e73; --line: #e5e5ea; --accent: #003a5d; }
+  :root { --fg: #1d1d1f; --muted: #6e6e73; --line: #e5e5ea; --accent: #003a5d; --warn: #a05a00; --good: #2c6e1f; --bad: #b00020; }
   * { box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
          max-width: 1100px; margin: 32px auto; padding: 0 20px; color: var(--fg); line-height: 1.45; }
@@ -15,28 +15,45 @@
              border: 1px solid var(--line); border-radius: 8px; }
   .row { display: flex; gap: 14px; align-items: center; margin: 10px 0 18px; flex-wrap: wrap; }
   label { color: var(--muted); font-size: 13px; }
-  input[type=number] { width: 76px; padding: 6px 8px; font: inherit; border: 1px solid var(--line);
-                       border-radius: 6px; }
+  input[type=number], input[type=text] { padding: 6px 8px; font: inherit; border: 1px solid var(--line); border-radius: 6px; }
+  input[type=number] { width: 76px; }
+  input[type=text] { width: 100%; }
   button { padding: 10px 20px; font-weight: 600; background: var(--accent); color: white;
            border: 0; border-radius: 8px; cursor: pointer; }
+  button.secondary { background: white; color: var(--accent); border: 1px solid var(--accent); }
+  button.danger { background: white; color: var(--bad); border: 1px solid var(--bad); }
+  button.small { padding: 4px 10px; font-size: 12px; }
   button:disabled { opacity: 0.5; cursor: progress; }
   #runid { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-top: 24px; }
   #events { background: #fbfbfd; border: 1px solid var(--line); padding: 14px; border-radius: 8px;
             font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
-            height: 320px; overflow: auto; }
+            height: 280px; overflow: auto; }
   #events div { margin: 2px 0; }
   #events .persona { color: var(--accent); font-weight: 600; }
-  #events .q { color: #a05a00; }
-  #events .a { color: #2c6e1f; }
+  #events .q { color: var(--warn); }
+  #events .a { color: var(--good); }
   #events .tool { color: #888; }
-  #events .err { color: #b00020; }
+  #events .err { color: var(--bad); }
   #report { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
   #report h1 { font-size: 26px; }
   #report h2 { font-size: 18px; text-transform: none; letter-spacing: 0; color: var(--fg); margin-top: 22px; }
   #report code, #report pre { background: #f3f3f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
   #report pre { padding: 10px; }
   #report blockquote { border-left: 3px solid var(--line); margin-left: 0; padding-left: 12px; color: var(--muted); }
+  #plan-review { margin-top: 24px; padding: 16px; border: 2px solid var(--accent); border-radius: 10px; background: #f5f8fb; }
+  #plan-review.hidden { display: none; }
+  #plan-review h2 { color: var(--accent); margin-top: 0; }
+  #plan-review .panel-card { background: white; border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 10px 0; }
+  #plan-review .panel-card .topline { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+  #plan-review .panel-card .topline strong { color: var(--accent); }
+  #plan-review .field { margin: 6px 0; }
+  #plan-review .field label { display: block; font-weight: 600; color: var(--fg); margin-bottom: 3px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  #plan-review textarea { min-height: 50px; }
+  #plan-review .checklist-line { display: flex; gap: 6px; margin: 3px 0; }
+  #plan-review .checklist-line input { flex: 1; }
+  #plan-review .actions { margin-top: 16px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .info-pill { display: inline-block; padding: 2px 8px; background: white; border: 1px solid var(--line); border-radius: 12px; font-size: 12px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -46,12 +63,34 @@
 <form id="form">
   <textarea id="question" placeholder="e.g. Where are recent price changes having the biggest impact on North American spirits demand?"></textarea>
   <div class="row">
-    <label>Personas <input type="number" id="personas" min="1" max="8" value="4" /></label>
-    <label>Max turns <input type="number" id="turns" min="1" max="12" value="6" /></label>
+    <label>Personas <input type="number" id="personas" min="1" max="8" placeholder="auto" /></label>
+    <label>Max turns <input type="number" id="turns" min="1" max="12" placeholder="4" /></label>
+    <label><input type="checkbox" id="hitl" checked /> Human in the loop (review plan before interviews)</label>
     <button type="submit" id="go">Run research</button>
     <span id="runid"></span>
   </div>
 </form>
+
+<div id="plan-review" class="hidden">
+  <h2>Review &amp; edit the research plan</h2>
+  <div class="hint">The agent paused before any analyst time was spent. Edit personas / sections below, then approve to run, or abort.</div>
+  <div class="field">
+    <label>Question</label>
+    <div id="plan-question"></div>
+  </div>
+  <div class="field">
+    <label>Executive intent</label>
+    <textarea id="plan-intent"></textarea>
+  </div>
+  <h3 style="margin-top: 18px;">Analyst panel <button class="small secondary" type="button" onclick="addPersona()">+ Add analyst</button></h3>
+  <div id="plan-personas"></div>
+  <h3 style="margin-top: 18px;">Outline sections <button class="small secondary" type="button" onclick="addSection()">+ Add section</button></h3>
+  <div id="plan-sections"></div>
+  <div class="actions">
+    <button type="button" id="plan-approve">Approve &amp; run</button>
+    <button type="button" class="danger" id="plan-abort">Abort run</button>
+  </div>
+</div>
 
 <h2>Events</h2>
 <div id="events"></div>
@@ -63,6 +102,10 @@ const $events = document.getElementById('events');
 const $report = document.getElementById('report');
 const $runid = document.getElementById('runid');
 const $go = document.getElementById('go');
+const $review = document.getElementById('plan-review');
+
+let activeRunId = null;
+let editablePlan = null;
 
 function log(cls, msg) {
   const d = document.createElement('div');
@@ -72,21 +115,172 @@ function log(cls, msg) {
   $events.scrollTop = $events.scrollHeight;
 }
 
+function el(tag, attrs, children) {
+  const node = document.createElement(tag);
+  if (attrs) {
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === 'class') node.className = v;
+      else if (k === 'value') node.value = v;
+      else if (k === 'placeholder') node.placeholder = v;
+      else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
+      else node.setAttribute(k, v);
+    }
+  }
+  for (const c of children || []) {
+    node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  }
+  return node;
+}
+
+function renderPlan(plan) {
+  editablePlan = JSON.parse(JSON.stringify(plan)); // deep clone for editing
+  document.getElementById('plan-question').textContent = plan.question;
+  document.getElementById('plan-intent').value = plan.executive_intent || '';
+  renderPersonas();
+  renderSections();
+  $review.classList.remove('hidden');
+  $review.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+
+function renderPersonas() {
+  const wrap = document.getElementById('plan-personas');
+  wrap.innerHTML = '';
+  editablePlan.personas.forEach((p, idx) => {
+    const card = el('div', {class: 'panel-card'}, [
+      el('div', {class: 'topline'}, [
+        el('div', {}, [
+          el('strong', {}, [`${p.id} · `]),
+          el('input', {type: 'text', value: p.name, oninput: (e) => p.name = e.target.value}),
+        ]),
+        el('button', {type: 'button', class: 'small danger', onclick: () => { editablePlan.personas.splice(idx, 1); renderPersonas(); }}, ['Remove']),
+      ]),
+      labeled('Role', el('input', {type: 'text', value: p.role, oninput: (e) => p.role = e.target.value})),
+      labeled('Lens', taText(p.lens, (v) => p.lens = v)),
+      labeled('Description', taText(p.description, (v) => p.description = v)),
+      labeled('System prompt', taText(p.system_prompt, (v) => p.system_prompt = v)),
+      labeled('Checklist', renderChecklist(p)),
+    ]);
+    wrap.appendChild(card);
+  });
+}
+
+function renderChecklist(persona) {
+  const wrap = el('div', {});
+  function refresh() {
+    wrap.innerHTML = '';
+    persona.checklist.forEach((item, idx) => {
+      wrap.appendChild(el('div', {class: 'checklist-line'}, [
+        el('input', {type: 'text', value: item, oninput: (e) => persona.checklist[idx] = e.target.value}),
+        el('button', {type: 'button', class: 'small danger', onclick: () => { persona.checklist.splice(idx, 1); refresh(); }}, ['×']),
+      ]));
+    });
+    wrap.appendChild(el('button', {type: 'button', class: 'small secondary', onclick: () => { persona.checklist.push(''); refresh(); }}, ['+ checklist item']));
+  }
+  refresh();
+  return wrap;
+}
+
+function renderSections() {
+  const wrap = document.getElementById('plan-sections');
+  wrap.innerHTML = '';
+  editablePlan.sections.forEach((s, idx) => {
+    const card = el('div', {class: 'panel-card'}, [
+      el('div', {class: 'topline'}, [
+        el('div', {style: 'flex: 1;'}, [
+          el('input', {type: 'text', value: s.heading, oninput: (e) => s.heading = e.target.value}),
+        ]),
+        el('button', {type: 'button', class: 'small danger', onclick: () => { editablePlan.sections.splice(idx, 1); renderSections(); }}, ['Remove']),
+      ]),
+      labeled('Intent', taText(s.intent || '', (v) => s.intent = v)),
+    ]);
+    wrap.appendChild(card);
+  });
+}
+
+function labeled(name, child) {
+  return el('div', {class: 'field'}, [el('label', {}, [name]), child]);
+}
+
+function taText(value, onset) {
+  const ta = el('textarea', {});
+  ta.value = value || '';
+  ta.addEventListener('input', () => onset(ta.value));
+  return ta;
+}
+
+function addPersona() {
+  const nextN = editablePlan.personas.length + 1;
+  editablePlan.personas.push({
+    id: `p${nextN}`,
+    name: `Lens ${nextN}`,
+    role: '',
+    lens: '',
+    description: '',
+    system_prompt: '',
+    persona_type: 'expert',
+    checklist: [],
+    section_assignments: [],
+  });
+  renderPersonas();
+}
+
+function addSection() {
+  editablePlan.sections.push({heading: 'New section', intent: ''});
+  renderSections();
+}
+
+document.getElementById('plan-approve').addEventListener('click', () => submitPlan('approve'));
+document.getElementById('plan-abort').addEventListener('click', () => submitPlan('abort'));
+
+async function submitPlan(decision) {
+  if (!activeRunId) return;
+  const body = decision === 'approve'
+    ? {
+        decision: 'approve',
+        executive_intent: document.getElementById('plan-intent').value,
+        personas: editablePlan.personas,
+        sections: editablePlan.sections,
+      }
+    : {decision: 'abort'};
+  try {
+    const resp = await fetch(`/research/${activeRunId}/plan`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      log('err', `Plan submit failed: HTTP ${resp.status} ${await resp.text()}`);
+      return;
+    }
+    $review.classList.add('hidden');
+    log('persona', decision === 'approve'
+      ? `✓ plan approved (${editablePlan.personas.length} analysts, ${editablePlan.sections.length} sections); resuming…`
+      : '✕ plan aborted by user');
+  } catch (err) {
+    log('err', `Plan submit error: ${err}`);
+  }
+}
+
 document.getElementById('form').addEventListener('submit', async (e) => {
   e.preventDefault();
   $events.innerHTML = '';
   $report.innerHTML = '';
   $runid.textContent = '';
+  $review.classList.add('hidden');
   const question = document.getElementById('question').value.trim();
-  const personas = parseInt(document.getElementById('personas').value, 10);
-  const turns = parseInt(document.getElementById('turns').value, 10);
+  const personasRaw = document.getElementById('personas').value;
+  const turnsRaw = document.getElementById('turns').value;
+  const hitl = document.getElementById('hitl').checked;
   if (!question) return;
   $go.disabled = true;
   try {
+    const body = {question, human_in_loop: hitl};
+    if (personasRaw) body.personas = parseInt(personasRaw, 10);
+    if (turnsRaw) body.turns = parseInt(turnsRaw, 10);
     const resp = await fetch('/research', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({question, personas, turns}),
+      body: JSON.stringify(body),
     });
     if (!resp.ok) {
       log('err', `HTTP ${resp.status}: ${await resp.text()}`);
@@ -94,6 +288,7 @@ document.getElementById('form').addEventListener('submit', async (e) => {
       return;
     }
     const {run_id} = await resp.json();
+    activeRunId = run_id;
     $runid.textContent = `run ${run_id}`;
     connectStream(run_id);
   } catch (err) {
@@ -114,6 +309,20 @@ function connectStream(runId) {
     const ev = parse(e); if (!ev) return;
     personaNames[ev.persona_id] = ev.data.name;
     log('persona', `[${ev.persona_id}] ${ev.data.name} — ${ev.data.role}`);
+  });
+  es.addEventListener('plan_ready_for_review', (e) => {
+    const ev = parse(e); if (!ev) return;
+    log('persona', '⏸ plan ready — review + edit before kicking off interviews');
+    renderPlan(ev.data);
+  });
+  es.addEventListener('plan_approved', (e) => {
+    const ev = parse(e); if (!ev) return;
+    log('persona', `▶ resumed (${ev.data.n_personas} analysts, ${ev.data.n_sections} sections)`);
+  });
+  es.addEventListener('run_aborted', (e) => {
+    const ev = parse(e); if (!ev) return;
+    log('err', `Run aborted: ${ev.data.reason || ''}`);
+    $go.disabled = false;
   });
   es.addEventListener('turn_started', (e) => {
     const ev = parse(e); if (!ev) return;
