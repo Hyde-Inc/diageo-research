@@ -1,8 +1,24 @@
 <!doctype html>
+<!--
+  DEPRECATED 2026-05-26: This single-file static FE is no longer the
+  primary surface for the Hypothesis Workbench. The Workbench panes
+  now live inside the Conduit Next.js app at:
+
+      /Users/timleers/Projects/adc-nextjs-fe
+      pnpm dev   (binds http://localhost:3000)
+      → /conduit/workbench
+
+  The new panes (DAG / Universe / Spec curve + Cost) consume the same
+  FastAPI endpoints you see at http://127.0.0.1:8765/* and are wired
+  via the Next.js rewrite /api/workbench/* → 127.0.0.1:8765/*.
+
+  This file is preserved only for back-compat (and so the FastAPI
+  smoke tests that hit GET / keep passing). Do not add features here.
+-->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Hypothesis Workbench — Diageo Research</title>
+<title>Hypothesis Workbench — Diageo Research (legacy)</title>
 <script src="https://cdn.jsdelivr.net/npm/marked@13/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <style>
