@@ -27,6 +27,8 @@ dependencies = [
   "pyarrow>=17.0.0",
   "pandas>=2.2.0",
   "pytrends>=4.9.2",
+  "dagster>=1.13",
+  "mcp>=1.27",
 ]
 
 [project.optional-dependencies]

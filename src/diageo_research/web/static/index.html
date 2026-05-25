@@ -2,165 +2,2096 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Diageo Research</title>
+<title>Hypothesis Workbench — Diageo Research</title>
 <script src="https://cdn.jsdelivr.net/npm/marked@13/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <style>
-  :root { --fg: #1d1d1f; --muted: #6e6e73; --line: #e5e5ea; --accent: #003a5d; }
+  :root {
+    --fg: #1d1d1f;
+    --muted: #6e6e73;
+    --line: #e5e5ea;
+    --line-strong: #c7c7cc;
+    --accent: #003a5d;
+    --accent-soft: #e8f0f6;
+    --ok: #1f7a45;
+    --warn: #a05a00;
+    --err: #b00020;
+    --bg: #ffffff;
+    --panel: #fafafa;
+    --header: #f4f5f7;
+  }
   * { box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
-         max-width: 1100px; margin: 32px auto; padding: 0 20px; color: var(--fg); line-height: 1.45; }
-  h1 { margin: 0 0 8px; font-size: 22px; }
-  .hint { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
-  textarea { width: 100%; min-height: 90px; padding: 12px; font: inherit; resize: vertical;
-             border: 1px solid var(--line); border-radius: 8px; }
-  .row { display: flex; gap: 14px; align-items: center; margin: 10px 0 18px; flex-wrap: wrap; }
-  label { color: var(--muted); font-size: 13px; }
-  input[type=number] { width: 76px; padding: 6px 8px; font: inherit; border: 1px solid var(--line);
-                       border-radius: 6px; }
-  button { padding: 10px 20px; font-weight: 600; background: var(--accent); color: white;
-           border: 0; border-radius: 8px; cursor: pointer; }
-  button:disabled { opacity: 0.5; cursor: progress; }
-  #runid { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-top: 24px; }
-  #events { background: #fbfbfd; border: 1px solid var(--line); padding: 14px; border-radius: 8px;
-            font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
-            height: 320px; overflow: auto; }
-  #events div { margin: 2px 0; }
-  #events .persona { color: var(--accent); font-weight: 600; }
-  #events .q { color: #a05a00; }
-  #events .a { color: #2c6e1f; }
-  #events .tool { color: #888; }
-  #events .err { color: #b00020; }
-  #report { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
-  #report h1 { font-size: 26px; }
-  #report h2 { font-size: 18px; text-transform: none; letter-spacing: 0; color: var(--fg); margin-top: 22px; }
-  #report code, #report pre { background: #f3f3f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
-  #report pre { padding: 10px; }
-  #report blockquote { border-left: 3px solid var(--line); margin-left: 0; padding-left: 12px; color: var(--muted); }
+  html, body {
+    margin: 0; padding: 0; height: 100vh; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+    color: var(--fg); background: var(--bg); line-height: 1.45; font-size: 14px;
+  }
+
+  /* Layout: header + 3-column main + footer */
+  .app {
+    display: grid;
+    grid-template-rows: auto auto 1fr auto;
+    height: 100vh;
+  }
+  header.app-header {
+    background: var(--header);
+    border-bottom: 1px solid var(--line);
+    padding: 10px 18px; display: flex; align-items: center; gap: 16px;
+  }
+  header.app-header h1 {
+    font-size: 14px; font-weight: 700; margin: 0;
+    text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent);
+  }
+  header.app-header .study-meta { color: var(--muted); font-size: 12px; }
+  header.app-header .study-meta b { color: var(--fg); }
+  header.app-header .controls { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  header.app-header select, header.app-header button {
+    padding: 6px 12px; font: inherit; font-size: 13px;
+    border: 1px solid var(--line-strong); border-radius: 6px;
+    background: var(--bg); color: var(--fg); cursor: pointer;
+  }
+  header.app-header button.primary {
+    background: var(--accent); color: white; border-color: var(--accent); font-weight: 600;
+  }
+  header.app-header button:disabled { opacity: 0.5; cursor: progress; }
+
+  /* Pre-registration header */
+  section.prereg {
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+    padding: 10px 18px; display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 14px;
+  }
+  .prereg-cell { font-size: 12px; }
+  .prereg-cell h3 {
+    margin: 0 0 4px; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+  }
+  .prereg-cell p { margin: 0; }
+  .prereg-cell .signed { color: var(--ok); font-weight: 600; }
+
+  /* 3-column main */
+  main.workbench { display: grid; grid-template-columns: 280px 1fr 380px; min-height: 0; }
+  main.workbench > section {
+    overflow: auto; min-height: 0; min-width: 0;
+    border-right: 1px solid var(--line);
+  }
+  main.workbench > section:last-child { border-right: none; }
+
+  /* Left nav: spec list + tabs */
+  .left-nav { background: var(--panel); }
+  .left-nav h2 {
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted); margin: 14px 14px 6px;
+  }
+  .spec-list { list-style: none; margin: 0; padding: 0; }
+  .spec-list li {
+    border-bottom: 1px solid var(--line);
+    padding: 10px 14px; cursor: pointer; user-select: none;
+  }
+  .spec-list li:hover { background: var(--accent-soft); }
+  .spec-list li.selected {
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent);
+    padding-left: 11px;
+  }
+  .spec-list li .id { font-weight: 600; font-size: 12.5px; }
+  .spec-list li .axes {
+    color: var(--muted); font-size: 11.5px; margin-top: 3px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .spec-list li .status { font-size: 11px; margin-top: 4px; }
+  .badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 11px; font-weight: 600;
+  }
+  .badge.pending  { background: #f3f3f5; color: var(--muted); }
+  .badge.running  { background: #fff4d4; color: var(--warn); }
+  .badge.complete { background: #d8f0e1; color: var(--ok); }
+  .badge.error    { background: #ffe2e7; color: var(--err); }
+  .badge.agree    { background: #d8f0e1; color: var(--ok); }
+  .badge.weaker   { background: #fff4d4; color: var(--warn); }
+  .badge.flips    { background: #ffe2e7; color: var(--err); }
+  .badge.missing  { background: #f3f3f5; color: var(--muted); }
+
+  .left-nav .tabs { padding: 14px; display: flex; flex-direction: column; gap: 6px; }
+  .left-nav .tab {
+    padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 6px;
+    background: var(--bg); cursor: pointer; font: inherit; font-size: 12.5px; text-align: left;
+  }
+  .left-nav .tab:hover { background: var(--accent-soft); }
+  .left-nav .tab.active { background: var(--accent); color: white; border-color: var(--accent); }
+
+  /* Center: DAG / Compare / Brief view */
+  .center { padding: 16px 22px; background: var(--bg); }
+  .center h2 {
+    margin: 0 0 14px; font-size: 16px;
+    border-bottom: 1px solid var(--line); padding-bottom: 8px;
+  }
+  .dag-container { background: var(--bg); padding: 8px; }
+  .dag-container svg { display: block; max-width: 100%; height: auto; }
+
+  /* Inline DAG fallback: a vertical list of stage nodes */
+  .stage-list { list-style: none; margin: 0; padding: 0; max-width: 540px; }
+  .stage-list li {
+    border: 1px solid var(--line-strong); border-radius: 8px;
+    padding: 10px 14px; margin-bottom: 8px; cursor: pointer;
+    display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; align-items: center;
+    background: var(--panel);
+  }
+  .stage-list li:hover { background: var(--accent-soft); }
+  .stage-list li.selected { border-color: var(--accent); background: var(--accent-soft); }
+  .stage-list li .icon { font-weight: 700; color: var(--muted); text-align: center; }
+  .stage-list li.complete .icon { color: var(--ok); }
+  .stage-list li.running .icon { color: var(--warn); }
+  .stage-list li.error .icon { color: var(--err); }
+  .stage-list li .label { font-weight: 600; font-size: 13.5px; }
+  .stage-list li .meta { color: var(--muted); font-size: 11.5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  /* Spec curve table */
+  table.spec-curve {
+    border-collapse: collapse; width: 100%;
+    font-size: 12.5px;
+  }
+  table.spec-curve th, table.spec-curve td {
+    border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top;
+  }
+  table.spec-curve th {
+    background: var(--header); font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; color: var(--muted);
+  }
+  table.spec-curve td.cell-status { text-align: center; font-weight: 700; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  table.spec-curve td.cell-status.agree   { color: var(--ok); }
+  table.spec-curve td.cell-status.weaker  { color: var(--warn); }
+  table.spec-curve td.cell-status.flips   { color: var(--err); }
+  table.spec-curve td.cell-status.missing { color: var(--muted); }
+  .robustness-bar {
+    display: inline-block; height: 8px; background: var(--line); border-radius: 4px; vertical-align: middle;
+    margin-right: 6px; width: 64px; position: relative;
+  }
+  .robustness-bar > span { display: block; height: 100%; background: var(--ok); border-radius: 4px; }
+
+  /* Brief renderer */
+  .brief-md { max-width: 880px; }
+  .brief-md h1 { font-size: 22px; }
+  .brief-md h2 { font-size: 16px; margin-top: 18px; }
+  .brief-md code, .brief-md pre {
+    background: #f3f3f5; padding: 1px 4px; border-radius: 3px;
+    font-size: 12.5px;
+  }
+  .brief-md pre { padding: 10px; overflow-x: auto; }
+  .brief-md blockquote {
+    border-left: 3px solid var(--line-strong); margin-left: 0; padding-left: 12px; color: var(--muted);
+  }
+  .brief-md table { border-collapse: collapse; }
+  .brief-md table th, .brief-md table td {
+    border: 1px solid var(--line); padding: 4px 8px;
+  }
+
+  /* Right pane: asset viewer */
+  .asset-pane { background: var(--panel); padding: 14px 16px; }
+  .asset-pane h2 {
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted); margin: 0 0 10px;
+  }
+  .asset-pane .empty { color: var(--muted); font-size: 12.5px; }
+  .asset-pane .manifest {
+    background: var(--bg); border: 1px solid var(--line); padding: 10px 12px;
+    border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px; margin-bottom: 12px;
+  }
+  .asset-pane .manifest div { margin: 2px 0; }
+  .asset-pane .manifest .k { color: var(--muted); }
+  .asset-pane .stage-md {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+    padding: 12px 14px; font-size: 12.5px; max-height: 100%; overflow: auto;
+  }
+
+  /* Cost widget */
+  .cost-widget {
+    display: inline-flex; gap: 6px; align-items: center;
+    padding: 4px 10px; border: 1px solid var(--line-strong);
+    border-radius: 999px; font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--bg);
+  }
+  .cost-widget .label { color: var(--muted); font-size: 11px; }
+  .cost-widget .total { font-weight: 700; }
+  .cost-widget.ok    { border-color: var(--ok); color: var(--ok); }
+  .cost-widget.warn  { border-color: var(--warn); color: var(--warn); }
+  .cost-widget.over  { border-color: var(--err); color: var(--err); background: #fff1f1; }
+
+  /* Tools tab content */
+  .tools-list { font-size: 12.5px; }
+  .tools-list .persona-block {
+    margin-bottom: 16px; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--bg);
+  }
+  .tools-list .persona-block h4 {
+    margin: 0; padding: 8px 12px; background: var(--header);
+    border-bottom: 1px solid var(--line); font-size: 13px;
+  }
+  .tools-list table {
+    width: 100%; border-collapse: collapse;
+  }
+  .tools-list table td, .tools-list table th {
+    padding: 5px 10px; border-bottom: 1px solid var(--line);
+    text-align: left; vertical-align: top;
+  }
+  .tools-list table th {
+    background: var(--panel); font-size: 11px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .tools-list .tool-name {
+    font-family: ui-monospace, Menlo, monospace; font-weight: 600;
+  }
+  .tools-list .outcome {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 10.5px; font-weight: 600;
+  }
+  .tools-list .outcome.ok        { background: #d8f0e1; color: var(--ok); }
+  .tools-list .outcome.disabled  { background: #ffe2e7; color: var(--err); }
+  .tools-list .outcome.cell_cap  { background: #fff4d4; color: var(--warn); }
+  .tools-list .outcome.turn_cap  { background: #fff4d4; color: var(--warn); }
+  .tools-list .outcome.error     { background: #ffe2e7; color: var(--err); }
+
+  /* Now-running panel */
+  .now-running {
+    border: 1px solid var(--accent);
+    background: var(--accent-soft);
+    border-radius: 6px; padding: 10px 12px;
+    font-size: 12px; margin-bottom: 12px;
+  }
+  .now-running .label {
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--accent); margin-bottom: 4px;
+  }
+  .now-running .row {
+    display: grid; grid-template-columns: 80px 1fr; gap: 8px;
+    margin: 2px 0;
+  }
+  .now-running .k { color: var(--muted); }
+  .now-running .v { font-family: ui-monospace, Menlo, monospace; }
+
+  /* Per-persona drill-down */
+  .persona-tabs {
+    display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px;
+  }
+  .persona-tabs button {
+    padding: 4px 10px; font-size: 12px; border-radius: 4px;
+    border: 1px solid var(--line-strong); background: var(--bg);
+    cursor: pointer; font: inherit;
+  }
+  .persona-tabs button:hover { background: var(--accent-soft); }
+  .persona-tabs button.active {
+    background: var(--accent); color: white; border-color: var(--accent);
+  }
+
+  /* Footer */
+  footer.app-footer {
+    background: var(--header); border-top: 1px solid var(--line);
+    padding: 6px 18px; font-size: 11.5px; color: var(--muted);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .conn-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted); margin-right: 5px; vertical-align: middle;
+  }
+  .conn-dot.live { background: var(--ok); }
+  .conn-dot.err  { background: var(--err); }
+
+  .pill {
+    display: inline-block; padding: 1px 7px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+    border: 1px solid var(--line-strong); color: var(--muted);
+  }
+  .pill.live { color: var(--ok); border-color: var(--ok); }
+
+  /* Lineage drawer (Dagster AssetMaterialization detail) */
+  .lineage-drawer {
+    position: fixed; top: 0; right: -460px; width: 440px; height: 100vh;
+    background: var(--bg); border-left: 1px solid var(--line-strong);
+    box-shadow: -4px 0 16px rgba(0, 0, 0, 0.08);
+    transition: right 220ms ease-out;
+    z-index: 50; display: flex; flex-direction: column;
+  }
+  .lineage-drawer.open { right: 0; }
+  .lineage-drawer .head {
+    padding: 12px 16px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 10px; background: var(--header);
+  }
+  .lineage-drawer .head h3 {
+    margin: 0; font-size: 13px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent);
+  }
+  .lineage-drawer .head .partition {
+    font-family: ui-monospace, Menlo, monospace; font-size: 11px;
+    color: var(--muted);
+  }
+  .lineage-drawer .head .close {
+    margin-left: auto; cursor: pointer; border: 1px solid var(--line-strong);
+    background: var(--bg); border-radius: 6px; padding: 4px 10px; font: inherit;
+  }
+  .lineage-drawer .body {
+    flex: 1; overflow-y: auto; padding: 14px 16px; font-size: 12.5px;
+  }
+  .lineage-drawer .badge-dagster {
+    display: inline-block; padding: 2px 7px; border-radius: 4px;
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em;
+    background: #e8e6ff; color: #4f46e5; margin-bottom: 12px;
+  }
+  .lineage-drawer .group { margin-bottom: 14px; }
+  .lineage-drawer .group h4 {
+    margin: 0 0 6px; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+  }
+  .lineage-drawer .kv {
+    display: grid; grid-template-columns: 130px 1fr; gap: 4px 10px;
+    font-family: ui-monospace, Menlo, monospace; font-size: 11.5px;
+  }
+  .lineage-drawer .kv .k { color: var(--muted); }
+  .lineage-drawer .kv .v { word-break: break-all; }
+  .lineage-drawer .hash {
+    background: var(--panel); padding: 4px 6px; border-radius: 4px;
+    border: 1px solid var(--line);
+  }
+  .lineage-drawer .empty {
+    color: var(--muted); font-style: italic; padding: 12px 0;
+  }
+  .lineage-drawer-backdrop {
+    position: fixed; inset: 0; background: rgba(0, 0, 0, 0.18);
+    opacity: 0; pointer-events: none; transition: opacity 200ms ease-out;
+    z-index: 40;
+  }
+  .lineage-drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+
+  /* Axis sensitivity panel */
+  .axis-sens-grid {
+    display: grid; grid-template-columns: 1fr; gap: 14px; margin-bottom: 18px;
+  }
+  .axis-sens {
+    border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px;
+    background: var(--panel);
+  }
+  .axis-sens h4 {
+    margin: 0 0 8px; font-size: 12px; font-weight: 700;
+    color: var(--accent); display: flex; align-items: baseline; gap: 8px;
+  }
+  .axis-sens h4 .axis-name {
+    font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+  }
+  .axis-sens h4 .axis-flips {
+    margin-left: auto; font-weight: 500; color: var(--muted); font-size: 11.5px;
+  }
+  .axis-sens-row {
+    display: grid; grid-template-columns: 160px 1fr 60px; gap: 10px;
+    align-items: center; margin: 4px 0; font-size: 12px;
+  }
+  .axis-sens-row .label { color: var(--fg); font-family: ui-monospace, Menlo, monospace; }
+  .axis-sens-row .meter {
+    height: 10px; background: var(--line); border-radius: 4px; overflow: hidden;
+  }
+  .axis-sens-row .meter > span {
+    display: block; height: 100%; background: var(--accent); border-radius: 4px;
+  }
+  .axis-sens-row .pct { text-align: right; color: var(--muted); font-size: 11px; }
+
+  /* Per-cell cost histogram */
+  .cost-hist { margin-bottom: 18px; }
+  .cost-hist h4 {
+    margin: 0 0 8px; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+  }
+  .cost-hist-row {
+    display: grid; grid-template-columns: 220px 1fr 90px; gap: 10px;
+    align-items: center; margin: 3px 0; font-size: 11.5px;
+  }
+  .cost-hist-row .id {
+    font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--fg);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .cost-hist-row .meter { height: 8px; background: var(--line); border-radius: 4px; }
+  .cost-hist-row .meter > span { display: block; height: 100%; border-radius: 4px; background: var(--accent); }
+  .cost-hist-row .meter > span.over { background: var(--err); }
+  .cost-hist-row .meter > span.warn { background: var(--warn); }
+  .cost-hist-row .v { color: var(--muted); font-size: 11px; text-align: right; font-family: ui-monospace, Menlo, monospace; }
+
+  /* Multiverse fan-out grid (Universe view) */
+  .universe-grid {
+    border-collapse: separate; border-spacing: 0;
+    font-size: 11.5px; margin-bottom: 14px;
+  }
+  .universe-grid th, .universe-grid td {
+    padding: 4px 6px; border: 1px solid var(--line); vertical-align: middle;
+  }
+  .universe-grid thead th {
+    background: var(--header); color: var(--muted); font-weight: 600;
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .universe-grid .row-axis {
+    background: var(--panel); color: var(--fg); font-family: ui-monospace, Menlo, monospace;
+    font-size: 11px; min-width: 130px;
+  }
+  .universe-tile {
+    width: 80px; min-height: 56px; cursor: pointer;
+    text-align: center; transition: transform 80ms ease-out;
+    position: relative;
+  }
+  .universe-tile:hover { transform: scale(1.04); z-index: 2; }
+  .universe-tile.selected { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .universe-tile .robust {
+    font-weight: 700; font-size: 13px;
+  }
+  .universe-tile .status {
+    display: inline-block; font-size: 10px; font-weight: 600; margin-top: 2px;
+  }
+  .universe-tile.complete  { background: #e2f0e8; color: var(--ok); }
+  .universe-tile.running   { background: #e8f0f6; color: var(--accent); }
+  .universe-tile.error     { background: #ffeae6; color: var(--err); }
+  .universe-tile.pending   { background: var(--panel); color: var(--muted); }
+  .universe-tile.empty     { background: repeating-linear-gradient(45deg, #fafafa, #fafafa 4px, #fff 4px, #fff 8px); color: var(--muted); }
+  .universe-legend {
+    display: flex; gap: 14px; font-size: 11px; color: var(--muted);
+    margin-bottom: 10px;
+  }
+  .universe-legend span { display: inline-flex; align-items: center; gap: 4px; }
+  .universe-legend .swatch {
+    display: inline-block; width: 12px; height: 12px; border-radius: 3px;
+    border: 1px solid var(--line);
+  }
+
+  /* Slash-command bar */
+  .cmd-bar {
+    border-top: 1px solid var(--line); background: var(--panel);
+    padding: 8px 14px; display: flex; align-items: center; gap: 10px;
+  }
+  .cmd-bar .prefix {
+    font-family: ui-monospace, Menlo, monospace; font-weight: 700;
+    color: var(--accent);
+  }
+  .cmd-bar input {
+    flex: 1; border: 1px solid var(--line-strong); border-radius: 6px;
+    padding: 6px 10px; font: inherit; font-size: 12.5px;
+    font-family: ui-monospace, Menlo, monospace; background: var(--bg);
+  }
+  .cmd-bar input:focus { outline: none; border-color: var(--accent); }
+  .cmd-bar .help {
+    font-size: 11px; color: var(--muted); white-space: nowrap;
+  }
+  .cmd-bar .toast {
+    margin-left: 12px; font-size: 11.5px; color: var(--ok);
+  }
+  .cmd-bar .toast.err { color: var(--err); }
 </style>
 </head>
 <body>
-<h1>Diageo strategy research</h1>
-<div class="hint">Multi-perspective agent — replicates the STORM pattern (arxiv 2402.14207). Personas browse the open web and query the local public datasets (BLS CPI, US Census retail, FRED) to answer your question.</div>
+<div class="app">
+  <header class="app-header">
+    <h1>Hypothesis Workbench</h1>
+    <div class="study-meta" id="study-meta">No study loaded.</div>
+    <div class="controls">
+      <span class="cost-widget" id="cost-widget" title="Cumulative Anthropic spend across this study">
+        <span class="label">cost</span>
+        <span class="total" id="cost-total">$0.00</span>
+        <span id="cost-budget" style="color: var(--muted);"></span>
+      </span>
+      <select id="recent-select" title="Switch to a recent study (auto-discovered from disk)">
+        <option value="">Recent studies…</option>
+      </select>
+      <select id="sample-select"><option value="">Loading samples…</option></select>
+      <button id="start-btn" class="primary">Start study</button>
+      <button id="refresh-btn">Refresh</button>
+    </div>
+  </header>
 
-<form id="form">
-  <textarea id="question" placeholder="e.g. Where are recent price changes having the biggest impact on North American spirits demand?"></textarea>
-  <div class="row">
-    <label>Personas <input type="number" id="personas" min="1" max="8" value="4" /></label>
-    <label>Max turns <input type="number" id="turns" min="1" max="12" value="6" /></label>
-    <button type="submit" id="go">Run research</button>
-    <span id="runid"></span>
+  <section class="prereg" id="prereg">
+    <div class="prereg-cell"><h3>Question</h3><p id="prereg-question">—</p></div>
+    <div class="prereg-cell"><h3>Decision rule</h3><p id="prereg-decision">—</p></div>
+    <div class="prereg-cell"><h3>Falsifiers</h3><p id="prereg-falsifiers">—</p></div>
+    <div class="prereg-cell"><h3>Signed</h3><p id="prereg-signed">—</p></div>
+  </section>
+
+  <main class="workbench">
+    <section class="left-nav">
+      <div class="tabs">
+        <button class="tab active" data-view="dag">DAG of selected spec</button>
+        <button class="tab" data-view="universe">Universe</button>
+        <button class="tab" data-view="compare">Compare specs (curve)</button>
+        <button class="tab" data-view="cost">Cost</button>
+        <button class="tab" data-view="tools">Tool calls</button>
+        <button class="tab" data-view="personas">Personas (drill-down)</button>
+        <button class="tab" data-view="brief">Decision brief</button>
+      </div>
+      <h2>Specs</h2>
+      <ul class="spec-list" id="spec-list">
+        <li><em style="color: var(--muted); cursor: default;">No specs yet.</em></li>
+      </ul>
+    </section>
+
+    <section class="center" id="center">
+      <h2 id="center-title">Welcome</h2>
+      <div id="center-body">
+        <p style="color: var(--muted);">
+          Pick a study spec from the dropdown above and click <b>Start study</b>.
+          The workbench will run the same question across the multiverse grid
+          and let you inspect every stage of every spec.
+        </p>
+      </div>
+    </section>
+
+    <aside class="asset-pane">
+      <h2>Asset viewer</h2>
+      <div id="asset-empty" class="empty">
+        Click any stage on the DAG to inspect its artefact, prompt hashes, and tool calls.
+      </div>
+      <div id="asset-manifest" class="manifest" style="display:none;"></div>
+      <div id="asset-md" class="stage-md" style="display:none;"></div>
+    </aside>
+  </main>
+
+  <div class="cmd-bar" title="Slash commands run against the live study. Try /help">
+    <span class="prefix">›</span>
+    <input id="cmd-input" type="text" placeholder="/help · /lineage cell stage · /cell <id> · /sensitivity · /universe · /brief · /falsifier · /cost" autocomplete="off" />
+    <span class="help">Enter to run · ↑/↓ history</span>
+    <span class="toast" id="cmd-toast"></span>
   </div>
-</form>
 
-<h2>Events</h2>
-<div id="events"></div>
+  <footer class="app-footer">
+    <span><span class="conn-dot" id="conn-dot"></span><span id="conn-status">disconnected</span></span>
+    <span id="study-status"></span>
+    <span class="pill" id="env-pill">Day-1 PoC</span>
+  </footer>
+</div>
 
-<div id="report"></div>
+<!-- Lineage drawer (Dagster AssetMaterialization detail) -->
+<div class="lineage-drawer-backdrop" id="lineage-backdrop"></div>
+<aside class="lineage-drawer" id="lineage-drawer" aria-hidden="true">
+  <div class="head">
+    <h3 id="lineage-title">Lineage</h3>
+    <span class="partition" id="lineage-partition">—</span>
+    <button class="close" id="lineage-close">Close</button>
+  </div>
+  <div class="body" id="lineage-body">
+    <span class="badge-dagster">Dagster · AssetMaterialization</span>
+    <p class="empty">Click a stage in the DAG to inspect its lineage.</p>
+  </div>
+</aside>
 
 <script>
-const $events = document.getElementById('events');
-const $report = document.getElementById('report');
-const $runid = document.getElementById('runid');
-const $go = document.getElementById('go');
+mermaid.initialize({ startOnLoad: false, theme: "default", securityLevel: "loose" });
 
-function log(cls, msg) {
-  const d = document.createElement('div');
-  d.className = cls;
-  d.textContent = msg;
-  $events.appendChild(d);
-  $events.scrollTop = $events.scrollHeight;
+// Fallback stage list used only if GET /assets/graph fails. The
+// authoritative source of truth is the Dagster Definitions object in
+// diageo_research/dagster_assets.py, fetched into STATE.assetGraph at
+// boot. Use stageDisplayOrder() in render code, not this constant.
+const STAGE_ORDER = [
+  "question_analysis",
+  "personas",
+  "outline",
+  "interviews",
+  "verifier",
+  "synthesis",
+];
+const STAGE_LABEL = {
+  question_analysis: "Question analysis",
+  personas: "Persona panel",
+  outline: "Outline",
+  interviews: "Interviews",
+  verifier: "Verifier",
+  synthesis: "Synthesis",
+};
+const STAGE_FILE_PREFIX = {
+  question_analysis: "00b",
+  personas: "01",
+  outline: "02",
+  // Interviews stage maps to 04_subreports.md (the consolidated view).
+  // The 03_interview_<pid>.md files are per-persona transcripts and are
+  // also surfaced via the asset viewer if the user wants drill-down.
+  interviews: "04",
+  verifier: "06",
+  synthesis: "07",
+};
+
+const STATE = {
+  studyId: null,
+  study: null,
+  prereg: null,
+  selectedCellId: null,
+  selectedStage: null,
+  selectedPersonaId: null,
+  view: "dag",
+  cellStages: {},        // cellId -> { stageName: { status, elapsed_s } }
+  manifestsByRun: {},    // runId -> manifest
+  briefsByRun: {},       // runId -> { markdown, json }
+  costsByRun: {},        // runId -> cost.json
+  toolsByRun: {},        // runId -> /runs/{id}/tools
+  liveByCell: {},        // cellId -> {persona_id, turn_idx, last_tool, last_tool_at}
+  specCurve: null,
+  studyCost: null,
+  costPollerId: null,
+  es: null,
+  assetGraph: null,      // {nodes, edges, partition_set} from GET /assets/graph
+  recentStudies: [],     // recent studies for the header picker
+};
+
+function $(sel) { return document.querySelector(sel); }
+function el(tag, attrs = {}, ...kids) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") node.className = v;
+    else if (k === "html") node.innerHTML = v;
+    else if (k.startsWith("on") && typeof v === "function") node.addEventListener(k.slice(2), v);
+    else node.setAttribute(k, v);
+  }
+  for (const k of kids) {
+    if (k == null) continue;
+    node.appendChild(typeof k === "string" ? document.createTextNode(k) : k);
+  }
+  return node;
+}
+function setConn(state, msg) {
+  const dot = $("#conn-dot");
+  dot.classList.remove("live", "err");
+  if (state === "live") dot.classList.add("live");
+  if (state === "err")  dot.classList.add("err");
+  $("#conn-status").textContent = msg;
+}
+function clip(s, n) { return !s ? "" : (s.length > n ? s.slice(0, n - 1) + "…" : s); }
+
+// --------------------------------------------------------- Boot
+
+async function boot() {
+  $("#start-btn").addEventListener("click", startStudy);
+  $("#refresh-btn").addEventListener("click", () => STATE.studyId && loadStudy(STATE.studyId, false));
+  $("#recent-select").addEventListener("change", (e) => {
+    const sid = e.currentTarget.value;
+    if (sid) {
+      // Update the URL so a refresh keeps the user on the same study.
+      const url = new URL(window.location.href);
+      url.searchParams.set("study", sid);
+      window.history.replaceState({}, "", url);
+      loadStudy(sid, true);
+    }
+  });
+  document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", (e) => {
+    document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+    e.currentTarget.classList.add("active");
+    STATE.view = e.currentTarget.dataset.view;
+    renderCenter();
+  }));
+  await Promise.all([loadSamples(), loadAssetGraph(), loadRecentStudies()]);
+  // Hydrate from URL ?study=<id> if present, otherwise auto-pick the
+  // most recent study so users who started a study via `diageo study`
+  // in another terminal don't have to remember the ID.
+  const params = new URLSearchParams(window.location.search);
+  const sid = params.get("study");
+  if (sid) {
+    await loadStudy(sid, true);
+  } else if (STATE.recentStudies && STATE.recentStudies.length > 0) {
+    const latest = pickPreferredStudy(STATE.recentStudies);
+    if (latest) {
+      const url = new URL(window.location.href);
+      url.searchParams.set("study", latest.id);
+      window.history.replaceState({}, "", url);
+      $("#recent-select").value = latest.id;
+      await loadStudy(latest.id, true);
+    }
+  }
+  // Periodically refresh the recent list so newly-launched CLI studies
+  // appear in the dropdown without a hard reload.
+  setInterval(loadRecentStudies, 8000);
 }
 
-document.getElementById('form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  $events.innerHTML = '';
-  $report.innerHTML = '';
-  $runid.textContent = '';
-  const question = document.getElementById('question').value.trim();
-  const personas = parseInt(document.getElementById('personas').value, 10);
-  const turns = parseInt(document.getElementById('turns').value, 10);
-  if (!question) return;
-  $go.disabled = true;
+// Prefer running > partial > complete > error; within a tier, newest first.
+function pickPreferredStudy(studies) {
+  const tier = (s) => {
+    if (s.status === "running") return 0;
+    if (s.status === "partial") return 1;
+    if (s.status === "complete") return 2;
+    return 3;
+  };
+  const sorted = studies.slice().sort((a, b) => {
+    const t = tier(a) - tier(b);
+    if (t !== 0) return t;
+    return (b.created_at || "").localeCompare(a.created_at || "");
+  });
+  return sorted[0] || null;
+}
+
+// Pull the recent-studies list from /studies and render the dropdown.
+// Highlights running studies (●) so the user can see at a glance which
+// one is currently producing data.
+async function loadRecentStudies() {
   try {
-    const resp = await fetch('/research', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({question, personas, turns}),
+    const r = await fetch("/studies");
+    if (!r.ok) return;
+    const body = await r.json();
+    // /studies historically returned an array; the workbench-MCP wrapper
+    // expects {studies: [...]}. Accept both shapes.
+    const list = Array.isArray(body) ? body : (body.studies || []);
+    STATE.recentStudies = list;
+    const sel = document.getElementById("recent-select");
+    if (!sel) return;
+    const current = sel.value || STATE.studyId || "";
+    sel.innerHTML = "";
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = list.length
+      ? `Recent studies (${list.length})…`
+      : "No studies yet — start one →";
+    sel.appendChild(placeholder);
+    list.slice(0, 30).forEach(s => {
+      const opt = document.createElement("option");
+      opt.value = s.id;
+      const dot = s.status === "running" ? "● " : s.status === "error" ? "✗ " : s.status === "complete" ? "✓ " : "◌ ";
+      const cells = (s.n_complete != null && s.n_cells != null) ? ` ${s.n_complete}/${s.n_cells}` : "";
+      const when = (s.created_at || "").slice(11, 16);  // HH:MM
+      opt.textContent = `${dot}${s.id} · ${s.name || "(unnamed)"}${cells}${when ? "  " + when : ""}`;
+      sel.appendChild(opt);
     });
-    if (!resp.ok) {
-      log('err', `HTTP ${resp.status}: ${await resp.text()}`);
-      $go.disabled = false;
+    if (current) sel.value = current;
+  } catch (e) {
+    // Non-fatal — keep whatever was last rendered.
+    console.warn("loadRecentStudies failed", e);
+  }
+}
+
+// Fetch the declared asset graph from the Dagster Definitions on the
+// backend. This drives the DAG view so the FE renders real lineage
+// (declared deps) instead of a hardcoded sequential list. Falls back to
+// STAGE_ORDER if the endpoint is unavailable.
+async function loadAssetGraph() {
+  try {
+    const r = await fetch("/assets/graph").then(r => r.json());
+    if (Array.isArray(r?.nodes) && r.nodes.length > 0) {
+      STATE.assetGraph = r;
+    }
+  } catch (e) {
+    // Non-fatal — the mermaid builder falls back to STAGE_ORDER.
+    console.warn("asset graph unavailable, falling back to STAGE_ORDER", e);
+  }
+}
+
+async function loadSamples() {
+  try {
+    const r = await fetch("/studies/samples").then(r => r.json());
+    const sel = $("#sample-select");
+    sel.innerHTML = "";
+    if (!r.samples || !r.samples.length) {
+      sel.appendChild(el("option", { value: "" }, "(no sample specs in samples/)"));
       return;
     }
-    const {run_id} = await resp.json();
-    $runid.textContent = `run ${run_id}`;
-    connectStream(run_id);
-  } catch (err) {
-    log('err', `Network error: ${err}`);
-    $go.disabled = false;
+    r.samples.forEach(s => sel.appendChild(el("option", { value: s.filename }, `${s.name} (${s.n_axes} axes)`)));
+  } catch (e) {
+    setConn("err", "could not list samples");
   }
+}
+
+async function startStudy() {
+  const filename = $("#sample-select").value;
+  if (!filename) return;
+  $("#start-btn").disabled = true;
+  try {
+    const r = await fetch("/studies", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sample: filename }),
+    });
+    if (!r.ok) {
+      const detail = await r.text();
+      alert("Could not start study: " + detail);
+      return;
+    }
+    const data = await r.json();
+    const url = new URL(window.location.href);
+    url.searchParams.set("study", data.study_id);
+    window.history.pushState({}, "", url);
+    await loadStudy(data.study_id, true);
+  } catch (e) {
+    alert("Network error: " + e);
+  } finally {
+    $("#start-btn").disabled = false;
+  }
+}
+
+// ----------------------------------------------------- Study load + stream
+
+async function loadStudy(studyId, openStream) {
+  STATE.studyId = studyId;
+  // Pull the study + prereg in parallel.
+  const [studyR, preregR] = await Promise.all([
+    fetch(`/studies/${studyId}`).then(r => r.ok ? r.json() : null),
+    fetch(`/studies/${studyId}/prereg`).then(r => r.ok ? r.json() : null),
+  ]);
+  if (!studyR) {
+    setConn("err", "study not found");
+    return;
+  }
+  STATE.study = studyR;
+  STATE.prereg = preregR;
+  STATE.cellStages = {};
+  studyR.cells.forEach(c => { STATE.cellStages[c.id] = {}; });
+  if (!STATE.selectedCellId || !studyR.cells.find(c => c.id === STATE.selectedCellId)) {
+    STATE.selectedCellId = studyR.cells[0]?.id ?? null;
+  }
+  hydrateFromDisk(studyR);
+  renderHeader();
+  renderPrereg();
+  renderSpecList();
+  renderCenter();
+  if (openStream) openStudyStream(studyId);
+  // Cost poll every 4s while the study is open. Cheap (8 file reads) and
+  // covers the gap between SSE cost events from already-completed cells
+  // whose buses have closed.
+  if (STATE.costPollerId) clearInterval(STATE.costPollerId);
+  STATE.costPollerId = setInterval(refreshCost, 4000);
+  refreshCost();
+}
+
+async function hydrateFromDisk(study) {
+  // For any cell whose run dir exists, fetch the stage list + manifest +
+  // final brief so the workbench is populated even without a live SSE feed.
+  await Promise.all(study.cells.map(async (cell) => {
+    try {
+      const [stagesR, manifestR, finalR] = await Promise.all([
+        fetch(`/runs/${cell.run_id}/stages`).then(r => r.ok ? r.json() : null),
+        fetch(`/runs/${cell.run_id}/manifest`).then(r => r.ok ? r.json() : null),
+        fetch(`/runs/${cell.run_id}/final`).then(r => r.ok ? r.json() : null),
+      ]);
+      if (stagesR && stagesR.stages) {
+        const presentSlugs = new Set(stagesR.stages.map(s => s.slug));
+        stageDisplayOrder().forEach(stage => {
+          const prefix = STAGE_FILE_PREFIX[stage];
+          if (!prefix) return;
+          let present = false;
+          for (const slug of presentSlugs) {
+            if (slug.startsWith(prefix)) { present = true; break; }
+          }
+          if (present) {
+            STATE.cellStages[cell.id][stage] = STATE.cellStages[cell.id][stage] ||
+              { status: "complete", elapsed_s: null };
+          }
+        });
+      }
+      if (manifestR) {
+        STATE.manifestsByRun[cell.run_id] = manifestR;
+        // Cross-reference: manifest stages override status to "complete".
+        (manifestR.stages || []).forEach(st => {
+          STATE.cellStages[cell.id][st.stage] = {
+            status: "complete",
+            elapsed_s: st.elapsed_s,
+            manifest: st,
+          };
+        });
+      }
+      if (finalR) {
+        STATE.briefsByRun[cell.run_id] = finalR;
+      }
+    } catch (e) { /* best-effort */ }
+  }));
+}
+
+function openStudyStream(studyId) {
+  if (STATE.es) { STATE.es.close(); STATE.es = null; }
+  const es = new EventSource(`/studies/${studyId}/stream`);
+  STATE.es = es;
+  setConn("live", "live");
+  es.addEventListener("open", () => setConn("live", "live"));
+  es.addEventListener("error", () => setConn("err", "stream error"));
+  es.addEventListener("close", () => setConn("", "stream closed"));
+
+  function parse(e) { try { return JSON.parse(e.data); } catch { return null; } }
+
+  function applyStageEvent(ev, stageStatus) {
+    const cellId = ev.cell_id;
+    const stage = ev.data?.stage;
+    if (!cellId || !stage) return;
+    STATE.cellStages[cellId] = STATE.cellStages[cellId] || {};
+    STATE.cellStages[cellId][stage] = {
+      status: stageStatus,
+      elapsed_s: ev.data?.elapsed_s ?? null,
+    };
+    if (cellId === STATE.selectedCellId && STATE.view === "dag") renderCenter();
+    if (stageStatus === "complete") {
+      // Once a stage completes, refresh the manifest for that cell so the
+      // asset viewer sees fresh hashes.
+      const cell = STATE.study.cells.find(c => c.id === cellId);
+      if (cell) {
+        fetch(`/runs/${cell.run_id}/manifest`).then(r => r.ok && r.json()).then(m => {
+          if (m) STATE.manifestsByRun[cell.run_id] = m;
+        }).catch(() => {});
+      }
+    }
+  }
+
+  es.addEventListener("study_state", (e) => {
+    const study = parse(e); if (!study) return;
+    STATE.study = study;
+    renderSpecList();
+  });
+  es.addEventListener("stage_started",   e => { const ev = parse(e); if (ev) applyStageEvent(ev, "running"); });
+  es.addEventListener("stage_completed", e => { const ev = parse(e); if (ev) applyStageEvent(ev, "complete"); });
+  es.addEventListener("error", e => {
+    if (!e.data) return;
+    const ev = parse(e); if (!ev) return;
+    if (ev.cell_id) {
+      // Mark all stages of this cell that aren't complete as errored.
+      const stages = STATE.cellStages[ev.cell_id] || {};
+      stageDisplayOrder().forEach(s => {
+        if (!stages[s] || stages[s].status !== "complete") stages[s] = { status: "error" };
+      });
+      STATE.cellStages[ev.cell_id] = stages;
+      renderSpecList();
+      if (ev.cell_id === STATE.selectedCellId) renderCenter();
+    }
+  });
+  es.addEventListener("final_ready", async (e) => {
+    const ev = parse(e); if (!ev || !ev.cell_id) return;
+    const cell = STATE.study?.cells?.find(c => c.id === ev.cell_id);
+    if (!cell) return;
+    try {
+      const finalR = await fetch(`/runs/${cell.run_id}/final`).then(r => r.ok ? r.json() : null);
+      if (finalR) STATE.briefsByRun[cell.run_id] = finalR;
+      // Also re-fetch parent study so cell statuses are up-to-date.
+      const studyR = await fetch(`/studies/${STATE.studyId}`).then(r => r.ok ? r.json() : null);
+      if (studyR) {
+        STATE.study = studyR;
+        renderSpecList();
+        renderHeader();
+      }
+      renderCenter();
+    } catch (err) { /* best-effort */ }
+  });
+  es.addEventListener("cell_close", () => {
+    fetch(`/studies/${STATE.studyId}`).then(r => r.ok && r.json()).then(s => {
+      if (s) { STATE.study = s; renderSpecList(); renderHeader(); }
+    }).catch(() => {});
+    refreshCost();
+  });
+  es.addEventListener("cost", e => {
+    const ev = parse(e); if (!ev) return;
+    // Increment the per-run cumulative if we already have one cached.
+    const cellId = ev.cell_id;
+    if (cellId) {
+      const cell = STATE.study?.cells?.find(c => c.id === cellId);
+      if (cell) {
+        const prior = STATE.costsByRun[cell.run_id] || { cost_usd: 0, n_calls: 0 };
+        prior.cost_usd = ev.data?.cumulative_usd ?? prior.cost_usd;
+        prior.n_calls = (prior.n_calls || 0) + 1;
+        STATE.costsByRun[cell.run_id] = prior;
+        // Also track which persona/stage just ran so the now-running
+        // panel has fresh signal.
+        STATE.liveByCell[cellId] = STATE.liveByCell[cellId] || {};
+        STATE.liveByCell[cellId].last_call = {
+          stage: ev.data?.stage,
+          persona_id: ev.data?.persona_id,
+          model: ev.data?.model,
+          incremental_usd: ev.data?.incremental_usd,
+          at: Date.now(),
+        };
+      }
+    }
+    renderCostWidget();
+    if (STATE.view === "dag" && STATE.selectedCellId === cellId) renderCenter();
+  });
+  es.addEventListener("turn_started", e => {
+    const ev = parse(e); if (!ev || !ev.cell_id) return;
+    STATE.liveByCell[ev.cell_id] = STATE.liveByCell[ev.cell_id] || {};
+    STATE.liveByCell[ev.cell_id].turn = {
+      persona_id: ev.persona_id,
+      turn_idx: ev.turn_idx,
+      question: ev.data?.question,
+      at: Date.now(),
+    };
+    if (STATE.view === "dag" && STATE.selectedCellId === ev.cell_id) renderCenter();
+  });
+  es.addEventListener("tool_call", e => {
+    const ev = parse(e); if (!ev || !ev.cell_id) return;
+    STATE.liveByCell[ev.cell_id] = STATE.liveByCell[ev.cell_id] || {};
+    STATE.liveByCell[ev.cell_id].last_tool = {
+      name: ev.data?.name,
+      args_preview: ev.data?.args ? Object.entries(ev.data.args)
+        .map(([k, v]) => `${k}=${String(v).slice(0, 60)}`).join(", ") : "",
+      persona_id: ev.persona_id,
+      at: Date.now(),
+    };
+    if (STATE.view === "dag" && STATE.selectedCellId === ev.cell_id) renderCenter();
+  });
+  es.addEventListener("cost_summary", e => {
+    const ev = parse(e); if (!ev || !ev.cell_id) return;
+    const cell = STATE.study?.cells?.find(c => c.id === ev.cell_id);
+    if (cell) {
+      STATE.costsByRun[cell.run_id] = ev.data;
+    }
+    refreshCost();
+  });
+}
+
+async function refreshCost() {
+  if (!STATE.studyId) return;
+  try {
+    const r = await fetch(`/studies/${STATE.studyId}/cost`);
+    if (!r.ok) return;
+    const data = await r.json();
+    STATE.studyCost = data;
+    (data.cells || []).forEach(c => {
+      const cell = STATE.study?.cells?.find(x => x.id === c.cell_id);
+      if (cell) {
+        STATE.costsByRun[cell.run_id] = {
+          cost_usd: c.cost_usd,
+          n_calls: c.n_calls,
+          input_tokens: c.input_tokens,
+          cached_input_tokens: c.cached_input_tokens,
+          output_tokens: c.output_tokens,
+          max_cost_usd: c.max_cost_usd,
+        };
+      }
+    });
+    renderCostWidget();
+    if (STATE.view === "dag") renderCenter();
+  } catch (e) { /* best-effort */ }
+}
+
+function renderCostWidget() {
+  const total = STATE.studyCost?.total_cost_usd ?? 0;
+  $("#cost-total").textContent = formatUsd(total);
+  // The per-cell budget is more meaningful than a study-wide budget;
+  // surface the highest configured per-cell ceiling × n_cells as a soft
+  // ceiling.
+  const widget = $("#cost-widget");
+  const cellBudgets = (STATE.studyCost?.cells || [])
+    .map(c => c.max_cost_usd)
+    .filter(x => x != null);
+  if (cellBudgets.length) {
+    const maxPer = Math.max(...cellBudgets);
+    const studyCap = maxPer * (STATE.study?.cells?.length || 1);
+    $("#cost-budget").textContent = ` / $${studyCap.toFixed(2)} budget`;
+    widget.classList.toggle("over", total >= studyCap);
+    widget.classList.toggle("warn", total >= 0.8 * studyCap && total < studyCap);
+    widget.classList.toggle("ok", total > 0 && total < 0.8 * studyCap);
+  } else {
+    $("#cost-budget").textContent = "";
+    widget.classList.remove("over", "warn");
+    widget.classList.toggle("ok", total > 0);
+  }
+}
+
+function formatUsd(x) {
+  if (x == null) return "$0.00";
+  if (x < 0.01) return `$${x.toFixed(4)}`;
+  return `$${x.toFixed(2)}`;
+}
+
+// ---------------------------------------------------------- Rendering
+
+function renderHeader() {
+  if (!STATE.study) { $("#study-meta").textContent = "No study loaded."; return; }
+  const s = STATE.study;
+  const completed = s.cells.filter(c => c.status === "complete").length;
+  const errored   = s.cells.filter(c => c.status === "error").length;
+  $("#study-meta").innerHTML =
+    `Study <b>${s.name}</b> · ${s.id} · ${s.cells.length} cells · `
+    + `${completed} complete · ${errored} errors · status <b>${s.status}</b>`;
+  $("#study-status").textContent = `Last update ${new Date().toLocaleTimeString()}`;
+}
+
+function renderPrereg() {
+  const p = STATE.prereg || {};
+  $("#prereg-question").textContent = clip(p.question || (STATE.study?.question || "—"), 220);
+  $("#prereg-decision").textContent = clip(p.decision_rule || "—", 220);
+  const f = p.falsifier_conditions || [];
+  $("#prereg-falsifiers").innerHTML = f.length ?
+    f.map(s => `<div>• ${escapeHtml(clip(s, 100))}</div>`).join("") : "—";
+  if (p.signed_by && p.signed_at) {
+    $("#prereg-signed").innerHTML = `<span class="signed">✓ signed</span> by ${escapeHtml(p.signed_by)} at ${escapeHtml(p.signed_at)}`;
+  } else {
+    $("#prereg-signed").textContent = "—";
+  }
+}
+
+function renderSpecList() {
+  const ul = $("#spec-list");
+  ul.innerHTML = "";
+  if (!STATE.study || !STATE.study.cells.length) {
+    ul.appendChild(el("li", {}, el("em", { style: "color: var(--muted); cursor: default;" }, "No specs yet.")));
+    return;
+  }
+  const stageOrder = stageDisplayOrder();
+  STATE.study.cells.forEach(cell => {
+    const stages = STATE.cellStages[cell.id] || {};
+    const completedStages = stageOrder.filter(s => stages[s]?.status === "complete").length;
+    const status = cell.status || "pending";
+    const axesText = Object.entries(cell.axes || {}).map(([k, v]) => `${k}=${v}`).join(" · ");
+    const li = el("li", {
+      class: cell.id === STATE.selectedCellId ? "selected" : "",
+      onclick: () => { STATE.selectedCellId = cell.id; renderSpecList(); renderCenter(); }
+    },
+      el("div", { class: "id" }, cell.id),
+      el("div", { class: "axes" }, axesText),
+      el("div", { class: "status" },
+        el("span", { class: `badge ${status}` }, status),
+        " ",
+        el("span", { style: "color: var(--muted);" }, ` ${completedStages}/${stageOrder.length} stages`)
+      )
+    );
+    ul.appendChild(li);
+  });
+}
+
+function renderCenter() {
+  if (!STATE.study) return;
+  const center = $("#center-body");
+  if (STATE.view === "dag") return renderDAG(center);
+  if (STATE.view === "tools") return renderTools(center);
+  if (STATE.view === "personas") return renderPersonas(center);
+  if (STATE.view === "compare") return renderCompare(center);
+  if (STATE.view === "universe") return renderUniverse(center);
+  if (STATE.view === "cost") return renderCostTab(center);
+  if (STATE.view === "brief") return renderBrief(center);
+}
+
+function renderDAG(center) {
+  const cell = STATE.study.cells.find(c => c.id === STATE.selectedCellId);
+  if (!cell) {
+    $("#center-title").textContent = "DAG";
+    center.innerHTML = "<p style=\"color: var(--muted);\">No spec selected.</p>";
+    return;
+  }
+  const stages = STATE.cellStages[cell.id] || {};
+  $("#center-title").textContent = `DAG · ${cell.id}`;
+  center.innerHTML = "";
+
+  // Now-running panel — what's actively burning credits in this cell.
+  const live = STATE.liveByCell[cell.id];
+  const cost = STATE.costsByRun[cell.run_id];
+  if (cell.status === "running" || live) {
+    const nr = el("div", { class: "now-running" });
+    nr.appendChild(el("div", { class: "label" }, `Now running · ${cell.id}`));
+    if (live?.turn) {
+      nr.appendChild(el("div", { class: "row" },
+        el("span", { class: "k" }, "persona"),
+        el("span", { class: "v" }, `${live.turn.persona_id || "—"} (turn ${live.turn.turn_idx ?? "?"})`)));
+      if (live.turn.question) {
+        nr.appendChild(el("div", { class: "row" },
+          el("span", { class: "k" }, "question"),
+          el("span", { class: "v" }, clip(live.turn.question, 140))));
+      }
+    }
+    if (live?.last_tool) {
+      nr.appendChild(el("div", { class: "row" },
+        el("span", { class: "k" }, "tool"),
+        el("span", { class: "v" }, `${live.last_tool.name} · ${clip(live.last_tool.args_preview || "", 80)}`)));
+    }
+    if (live?.last_call) {
+      nr.appendChild(el("div", { class: "row" },
+        el("span", { class: "k" }, "last $"),
+        el("span", { class: "v" },
+          `${live.last_call.stage} · +${formatUsd(live.last_call.incremental_usd || 0)} (${live.last_call.model || "model?"})`)));
+    }
+    if (cost) {
+      const budget = cost.max_cost_usd ? ` / ${formatUsd(cost.max_cost_usd)} budget` : "";
+      nr.appendChild(el("div", { class: "row" },
+        el("span", { class: "k" }, "cell cost"),
+        el("span", { class: "v" }, `${formatUsd(cost.cost_usd || 0)}${budget} · ${cost.n_calls || 0} calls`)));
+    }
+    center.appendChild(nr);
+  } else if (cost && cost.cost_usd) {
+    // Static cost summary for completed cells.
+    const nr = el("div", { class: "now-running", style: "border-color: var(--line-strong); background: var(--panel);" });
+    nr.appendChild(el("div", { class: "label", style: "color: var(--muted);" }, `Cell summary · ${cell.id}`));
+    const budget = cost.max_cost_usd ? ` / ${formatUsd(cost.max_cost_usd)}` : "";
+    nr.appendChild(el("div", { class: "row" },
+      el("span", { class: "k" }, "cost"),
+      el("span", { class: "v" }, `${formatUsd(cost.cost_usd || 0)}${budget} · ${cost.n_calls || 0} calls`)));
+    center.appendChild(nr);
+  }
+  // Mermaid DAG.
+  const mermaidSrc = buildMermaidForCell(cell, stages);
+  const id = `dag-${Math.random().toString(36).slice(2, 8)}`;
+  const container = el("div", { class: "dag-container", id });
+  center.appendChild(container);
+  try {
+    mermaid.render(id + "-svg", mermaidSrc).then(({ svg, bindFunctions }) => {
+      container.innerHTML = svg;
+      if (bindFunctions) bindFunctions(container);
+    }).catch(e => { container.textContent = "DAG render error: " + e; });
+  } catch (e) {
+    container.textContent = "DAG render error: " + e;
+  }
+  // Plus a clickable stage list under the DAG so the asset viewer is reachable.
+  // We pull stage labels from the declared graph if available so the list and
+  // the DAG never disagree about which stages exist.
+  const labelOf = (stage) => {
+    const node = STATE.assetGraph?.nodes?.find(n => n.id === stage);
+    return node?.label || STAGE_LABEL[stage] || stage;
+  };
+  const ulWrap = el("div", { style: "margin-top: 18px;" },
+    el("h3", { style: "margin: 0 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em;" }, "Stages"));
+  const ul = el("ul", { class: "stage-list" });
+  stageDisplayOrder().forEach(stage => {
+    const info = stages[stage];
+    const status = info?.status || "pending";
+    const classes = ["", status, stage === STATE.selectedStage ? "selected" : ""].filter(Boolean).join(" ");
+    const li = el("li", {
+      class: classes,
+      onclick: () => { STATE.selectedStage = stage; openAssetForStage(cell, stage); renderDAG(center); }
+    },
+      el("div", { class: "icon" }, status === "complete" ? "✓" : status === "running" ? "…" : status === "error" ? "!" : "○"),
+      el("div", { class: "label" }, labelOf(stage)),
+      el("div", { class: "meta" },
+        info?.elapsed_s != null ? `${info.elapsed_s.toFixed(1)}s` : status
+      )
+    );
+    ul.appendChild(li);
+  });
+  ulWrap.appendChild(ul);
+  center.appendChild(ulWrap);
+}
+
+// Render a per-cell mermaid DAG.
+//
+// Source of truth: the declared Dagster asset graph fetched from
+// GET /assets/graph at boot (cached on STATE.assetGraph). Edges follow
+// the declared deps — synthesis fans in from outline + interviews +
+// verifier, outline fans in from personas + question_analysis, etc.
+//
+// If the asset graph isn't available (older backend, fetch failed),
+// fall back to the legacy linear STAGE_ORDER chain so the UI still
+// renders something sensible.
+function buildMermaidForCell(cell, stages) {
+  const lines = ["flowchart TD"];
+  const graph = STATE.assetGraph;
+  if (graph && Array.isArray(graph.nodes) && Array.isArray(graph.edges)) {
+    graph.nodes.forEach(node => {
+      const info = stages[node.id];
+      const status = info?.status || "pending";
+      const glyph = status === "complete" ? "✓" : status === "running" ? "…" : status === "error" ? "!" : "○";
+      const elapsed = info?.elapsed_s != null ? ` (${info.elapsed_s.toFixed(1)}s)` : "";
+      const label = node.label || STAGE_LABEL[node.id] || node.id;
+      lines.push(`  ${node.id}["${glyph} ${label}${elapsed}"]`);
+    });
+    graph.edges.forEach(edge => {
+      lines.push(`  ${edge.from} --> ${edge.to}`);
+    });
+    return lines.join("\n");
+  }
+  // Fallback: linear stage chain.
+  STAGE_ORDER.forEach(stage => {
+    const info = stages[stage];
+    const status = info?.status || "pending";
+    const glyph = status === "complete" ? "✓" : status === "running" ? "…" : status === "error" ? "!" : "○";
+    const elapsed = info?.elapsed_s != null ? ` (${info.elapsed_s.toFixed(1)}s)` : "";
+    lines.push(`  ${stage}["${glyph} ${STAGE_LABEL[stage]}${elapsed}"]`);
+  });
+  for (let i = 0; i < STAGE_ORDER.length - 1; i++) {
+    lines.push(`  ${STAGE_ORDER[i]} --> ${STAGE_ORDER[i + 1]}`);
+  }
+  return lines.join("\n");
+}
+
+// Stages to enumerate in linear UI lists (e.g. the stage list under the
+// DAG, or any place we need a deterministic display order). Prefer the
+// declared graph if available so new stages flow through automatically.
+function stageDisplayOrder() {
+  const graph = STATE.assetGraph;
+  if (graph && Array.isArray(graph.nodes) && graph.nodes.length > 0) {
+    return graph.nodes.map(n => n.id);
+  }
+  return STAGE_ORDER.slice();
+}
+
+async function openAssetForStage(cell, stage) {
+  $("#asset-empty").style.display = "none";
+  const manifestEl = $("#asset-manifest");
+  const mdEl = $("#asset-md");
+  manifestEl.style.display = "block";
+  mdEl.style.display = "block";
+  manifestEl.innerHTML = "<em>Loading manifest…</em>";
+  mdEl.innerHTML = "<em>Loading stage artefact…</em>";
+  openLineageDrawer(cell, stage);
+  // Manifest
+  const manifest = STATE.manifestsByRun[cell.run_id];
+  let stageManifest = null;
+  if (manifest && Array.isArray(manifest.stages)) {
+    stageManifest = manifest.stages.find(s => s.stage === stage);
+  }
+  manifestEl.innerHTML = renderManifestEntry(stage, cell, stageManifest, manifest);
+  // Stage markdown
+  try {
+    const slug = STAGE_FILE_PREFIX[stage] || stage;
+    const r = await fetch(`/runs/${cell.run_id}/stages/${slug}`);
+    if (!r.ok) {
+      mdEl.innerHTML = `<em style="color: var(--muted);">No stage artefact yet for "${stage}".</em>`;
+      return;
+    }
+    const data = await r.json();
+    mdEl.innerHTML = marked.parse(data.markdown || "");
+  } catch (e) {
+    mdEl.innerHTML = `<em>Could not load stage: ${escapeHtml(String(e))}</em>`;
+  }
+}
+
+function renderManifestEntry(stage, cell, stageManifest, manifest) {
+  if (!stageManifest && !manifest) {
+    return `<em style="color: var(--muted);">No manifest yet for run ${cell.run_id}.</em>`;
+  }
+  const lines = [];
+  lines.push(`<div><b>Cell:</b> ${escapeHtml(cell.id)}</div>`);
+  lines.push(`<div><b>Run:</b> ${escapeHtml(cell.run_id)}</div>`);
+  lines.push(`<div><b>Stage:</b> ${escapeHtml(stage)}</div>`);
+  if (manifest && manifest.code_hash) {
+    lines.push(`<div><span class="k">repo code:</span> ${escapeHtml(manifest.code_hash)}</div>`);
+  }
+  if (stageManifest) {
+    if (stageManifest.elapsed_s != null) lines.push(`<div><span class="k">elapsed:</span> ${stageManifest.elapsed_s.toFixed(1)}s</div>`);
+    if (stageManifest.model_id) lines.push(`<div><span class="k">model:</span> ${escapeHtml(stageManifest.model_id)}</div>`);
+    if (stageManifest.input_hash)  lines.push(`<div><span class="k">input hash:</span>  ${escapeHtml(stageManifest.input_hash)}</div>`);
+    if (stageManifest.prompt_hash) lines.push(`<div><span class="k">prompt hash:</span> ${escapeHtml(stageManifest.prompt_hash)}</div>`);
+    if (stageManifest.code_hash)   lines.push(`<div><span class="k">code hash:</span>   ${escapeHtml(stageManifest.code_hash)}</div>`);
+    if (stageManifest.output_hash) lines.push(`<div><span class="k">output hash:</span> ${escapeHtml(stageManifest.output_hash)}</div>`);
+  } else {
+    lines.push(`<div><em>(stage not yet manifested)</em></div>`);
+  }
+  return lines.join("");
+}
+
+async function renderTools(center) {
+  $("#center-title").textContent = "Tool calls · " + (STATE.selectedCellId || "(no spec)");
+  if (!STATE.selectedCellId) {
+    center.innerHTML = "<p style=\"color: var(--muted);\">Select a spec from the left.</p>";
+    return;
+  }
+  const cell = STATE.study.cells.find(c => c.id === STATE.selectedCellId);
+  center.innerHTML = "<p style=\"color: var(--muted);\">Loading tool calls…</p>";
+  try {
+    const r = await fetch(`/runs/${cell.run_id}/tools`);
+    if (!r.ok) {
+      center.innerHTML = `<p style="color: var(--muted);">No tool calls recorded yet for this spec.</p>`;
+      return;
+    }
+    const data = await r.json();
+    STATE.toolsByRun[cell.run_id] = data;
+    if (!data.personas || !data.personas.length) {
+      center.innerHTML = `<p style="color: var(--muted);">No tool calls recorded yet for this spec.</p>
+        <p style="color: var(--muted); font-size: 11.5px;">When the perspective agents run, every <code>web_browse</code>, <code>web_fetch</code>, and <code>duckdb_query</code> they call lands here with its outcome — so you can see, e.g., when <code>web_browse</code> was disabled by the cost guardrails or hit the cell cap.</p>`;
+      return;
+    }
+    center.innerHTML = "";
+    const wrap = el("div", { class: "tools-list" });
+    data.personas.forEach(p => {
+      const block = el("div", { class: "persona-block" });
+      block.appendChild(el("h4", {}, `${p.persona_id} — ${p.calls.length} call${p.calls.length === 1 ? "" : "s"}`));
+      const tbl = el("table");
+      tbl.appendChild(el("thead", {}, el("tr", {},
+        el("th", {}, "tool"), el("th", {}, "args"), el("th", {}, "outcome"), el("th", {}, "info")
+      )));
+      const body = el("tbody");
+      p.calls.forEach(c => {
+        const args = c.tool === "duckdb_query" ? (c.sql || "")
+          : c.tool === "web_fetch" ? (c.url || "")
+          : (c.query || "");
+        const info = c.outcome === "ok" ?
+          (c.tool === "duckdb_query" ? `${c.n_rows || 0} rows` : `${c.n_snippets || 0} snippets`) :
+          c.outcome === "disabled" ? "browse off (cost guard)" :
+          c.outcome === "cell_cap" ? "cell browse cap reached" :
+          c.outcome === "turn_cap" ? "turn browse cap reached" :
+          "";
+        body.appendChild(el("tr", {},
+          el("td", { class: "tool-name" }, c.tool || ""),
+          el("td", {}, clip(args, 220)),
+          el("td", {}, el("span", { class: `outcome ${c.outcome || "ok"}` }, c.outcome || "ok")),
+          el("td", {}, info)
+        ));
+      });
+      tbl.appendChild(body);
+      block.appendChild(tbl);
+      wrap.appendChild(block);
+    });
+    center.appendChild(wrap);
+  } catch (e) {
+    center.innerHTML = `<p style="color: var(--err);">Tool list error: ${escapeHtml(String(e))}</p>`;
+  }
+}
+
+async function renderPersonas(center) {
+  $("#center-title").textContent = "Personas · " + (STATE.selectedCellId || "(no spec)");
+  if (!STATE.selectedCellId) {
+    center.innerHTML = "<p style=\"color: var(--muted);\">Select a spec from the left.</p>";
+    return;
+  }
+  const cell = STATE.study.cells.find(c => c.id === STATE.selectedCellId);
+  center.innerHTML = "<p style=\"color: var(--muted);\">Loading personas…</p>";
+  try {
+    const stagesR = await fetch(`/runs/${cell.run_id}/stages`).then(r => r.ok ? r.json() : null);
+    if (!stagesR || !stagesR.stages) {
+      center.innerHTML = `<p style="color: var(--muted);">No stage files yet.</p>`;
+      return;
+    }
+    const personaIds = stagesR.stages
+      .filter(s => s.slug.startsWith("03_interview_"))
+      .map(s => s.slug.replace("03_interview_", ""));
+    if (!personaIds.length) {
+      center.innerHTML = `<p style="color: var(--muted);">No per-persona transcripts written yet.</p>`;
+      return;
+    }
+    if (!STATE.selectedPersonaId || !personaIds.includes(STATE.selectedPersonaId)) {
+      STATE.selectedPersonaId = personaIds[0];
+    }
+    center.innerHTML = "";
+    const tabs = el("div", { class: "persona-tabs" });
+    personaIds.forEach(pid => {
+      const b = el("button", {
+        class: pid === STATE.selectedPersonaId ? "active" : "",
+        onclick: () => { STATE.selectedPersonaId = pid; renderPersonas(center); },
+      }, pid);
+      tabs.appendChild(b);
+    });
+    center.appendChild(tabs);
+    // Render the selected persona's interview file.
+    const slug = `03_interview_${STATE.selectedPersonaId}`;
+    const r = await fetch(`/runs/${cell.run_id}/stages/${slug}`);
+    if (!r.ok) {
+      center.appendChild(el("p", { style: "color: var(--muted);" }, `Could not load transcript for ${STATE.selectedPersonaId}.`));
+      return;
+    }
+    const data = await r.json();
+    const md = el("div", { class: "brief-md" });
+    md.innerHTML = marked.parse(data.markdown || "");
+    center.appendChild(md);
+  } catch (e) {
+    center.innerHTML = `<p style="color: var(--err);">Personas view error: ${escapeHtml(String(e))}</p>`;
+  }
+}
+
+async function renderCompare(center) {
+  $("#center-title").textContent = "Spec curve · " + (STATE.study?.name || "");
+  center.innerHTML = "<p style=\"color: var(--muted);\">Loading spec curve…</p>";
+  try {
+    const curve = await fetch(`/studies/${STATE.studyId}/spec_curve`).then(r => r.ok ? r.json() : null);
+    if (!curve) { center.innerHTML = "<p style=\"color: var(--muted);\">No spec curve yet.</p>"; return; }
+    STATE.specCurve = curve;
+    if (!curve.rows || !curve.rows.length) {
+      center.innerHTML = `<p style="color: var(--muted);">No clustered recommendations yet. Either no cells are complete or no recommendation-shaped sentences were found in the briefs.</p>`;
+      return;
+    }
+    const cellIds = (curve.cells || []).map(c => c.id);
+    const table = el("table", { class: "spec-curve" });
+    const head = el("tr", {},
+      el("th", {}, "#"),
+      el("th", { style: "min-width: 280px;" }, "Recommendation"),
+      el("th", {}, "Robustness"));
+    cellIds.forEach(cid => head.appendChild(el("th", { style: "writing-mode: vertical-rl; text-orientation: mixed; padding: 8px 4px; min-height: 80px;" }, cid)));
+    table.appendChild(el("thead", {}, head));
+    const body = el("tbody");
+    curve.rows.forEach((row, i) => {
+      const tr = el("tr", {});
+      tr.appendChild(el("td", {}, String(i + 1)));
+      tr.appendChild(el("td", {}, clip(row.representative, 240)));
+      const rb = el("td");
+      const bar = el("span", { class: "robustness-bar" }, el("span", { style: `width: ${(row.robustness * 100).toFixed(0)}%;` }));
+      rb.appendChild(bar);
+      rb.appendChild(document.createTextNode(`${(row.robustness * 100).toFixed(0)}% (${row.n_agree}/${cellIds.length})`));
+      tr.appendChild(rb);
+      cellIds.forEach(cid => {
+        const status = row.statuses[cid] || "missing";
+        const glyph = status === "agree" ? "✓" : status === "weaker" ? "~" : status === "flips" ? "✗" : "·";
+        tr.appendChild(el("td", { class: `cell-status ${status}` }, glyph));
+      });
+      body.appendChild(tr);
+    });
+    table.appendChild(body);
+    center.innerHTML = "";
+    const falsifierBlock = el("div", { style: "margin-bottom: 12px;" },
+      el("b", {}, "Falsifier status: "),
+      el("span", { class: `badge ${falsifierStatusClass(curve.falsifier_status)}` }, (curve.falsifier_status || "unknown").replace(/_/g, " ")));
+    center.appendChild(falsifierBlock);
+    if (curve.falsifier_notes && curve.falsifier_notes.length) {
+      const notes = el("ul", { style: "color: var(--muted); font-size: 12px; margin: 0 0 12px 16px; padding: 0;" });
+      curve.falsifier_notes.forEach(n => notes.appendChild(el("li", {}, n)));
+      center.appendChild(notes);
+    }
+
+    // (D) Per-cell cost histogram. Surfaces "decision-grade isn't free,
+    // but it's bounded": each cell has a hard max-cost cap, the bar
+    // shows actual spend / cap, and the bar turns warn → over as the
+    // cell approaches its budget.
+    const costPanel = await renderCostHistogramPanel();
+    if (costPanel) center.appendChild(costPanel);
+
+    // (B) Axis sensitivity. For each axis (cohort, time-window, geography…),
+    // shows what fraction of cells with each axis-value agreed with the
+    // top-ranked recommendation. Surfaces robustness drop-off when an
+    // axis is varied — i.e. "when we vary cohort, robustness drops from
+    // 80% → 50%" becomes immediately visible.
+    const sensPanel = renderAxisSensitivityPanel(curve, STATE.study?.cells || []);
+    if (sensPanel) center.appendChild(sensPanel);
+
+    center.appendChild(table);
+    const legend = el("p", { style: "font-size: 11.5px; color: var(--muted); margin-top: 10px;" },
+      "Legend: ", el("b", {}, "✓"), " agree · ", el("b", {}, "~"), " weaker / hedged · ",
+      el("b", {}, "✗"), " flips · ", el("b", {}, "·"), " missing");
+    center.appendChild(legend);
+  } catch (e) {
+    center.innerHTML = `<p style="color: var(--err);">Spec curve error: ${escapeHtml(String(e))}</p>`;
+  }
+}
+
+// (D) Cost histogram panel — used at the top of Compare and as the
+// body of the Cost tab. Reads /studies/<id>/cost (already polled by
+// the header cost widget) and renders one bar per cell with cap-aware
+// coloring.
+async function renderCostHistogramPanel() {
+  if (!STATE.studyId) return null;
+  let data = null;
+  try {
+    const r = await fetch(`/studies/${STATE.studyId}/cost`);
+    if (!r.ok) return null;
+    data = await r.json();
+  } catch { return null; }
+  if (!data || !Array.isArray(data.cells) || data.cells.length === 0) return null;
+  const wrap = el("div", { class: "cost-hist" });
+  wrap.appendChild(el("h4", {}, `Per-cell cost · total $${(data.total_cost_usd || 0).toFixed(4)}`));
+  // Determine global max for axis scaling.
+  const caps = data.cells.map(c => c.max_cost_usd).filter(v => v != null);
+  const spends = data.cells.map(c => c.cost_usd || 0);
+  const maxAxis = Math.max(0.01, ...spends, ...caps, ...(caps.length ? caps : [0]));
+  data.cells.forEach(c => {
+    const spend = c.cost_usd || 0;
+    const cap = c.max_cost_usd;
+    const pct = Math.min(100, (spend / maxAxis) * 100);
+    let cls = "";
+    if (cap != null) {
+      const pctOfCap = spend / cap;
+      if (pctOfCap >= 1.0) cls = "over";
+      else if (pctOfCap >= 0.8) cls = "warn";
+    }
+    const row = el("div", { class: "cost-hist-row" });
+    row.appendChild(el("div", { class: "id", title: c.cell_id }, c.cell_id));
+    const meter = el("div", { class: "meter" }, el("span", {
+      class: cls,
+      style: `width: ${pct.toFixed(1)}%;`,
+    }));
+    row.appendChild(meter);
+    const v = cap != null
+      ? `$${spend.toFixed(4)} / $${cap.toFixed(2)}`
+      : `$${spend.toFixed(4)}`;
+    row.appendChild(el("div", { class: "v" }, v));
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+// (B) Axis sensitivity. For each spec axis, partition cells by the
+// axis value, then for each value compute the fraction of cells that
+// agree with the top-ranked recommendation (curve.rows[0]). Renders
+// a horizontal meter per axis-value so a flat 100/100/100 means the
+// recommendation is robust to that axis, while 80/50/30 calls out
+// the axis as the dimension that flips conclusions.
+function renderAxisSensitivityPanel(curve, cells) {
+  if (!curve || !curve.rows || !curve.rows.length || !cells.length) return null;
+  const lead = curve.rows[0];
+  const axisNames = Object.keys(cells[0]?.axes || {});
+  if (!axisNames.length) return null;
+
+  const wrap = el("div");
+  wrap.appendChild(el("h4", {
+    style: "margin: 16px 0 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);"
+  }, "Axis sensitivity (lead recommendation)"));
+  const grid = el("div", { class: "axis-sens-grid" });
+  axisNames.forEach(axis => {
+    const buckets = new Map();
+    cells.forEach(c => {
+      const v = c.axes?.[axis];
+      if (v == null) return;
+      if (!buckets.has(v)) buckets.set(v, { agree: 0, total: 0 });
+      const status = lead.statuses?.[c.id];
+      const b = buckets.get(v);
+      b.total += 1;
+      if (status === "agree") b.agree += 1;
+    });
+    if (buckets.size === 0) return;
+    const values = Array.from(buckets.entries());
+    const max = Math.max(...values.map(([, b]) => b.total ? b.agree / b.total : 0));
+    const min = Math.min(...values.map(([, b]) => b.total ? b.agree / b.total : 0));
+    const flips = values.length > 1 ? `${(min * 100).toFixed(0)}% → ${(max * 100).toFixed(0)}%` : "";
+    const block = el("div", { class: "axis-sens" });
+    const head = el("h4", {});
+    head.appendChild(el("span", { class: "axis-name" }, axis));
+    head.appendChild(el("span", { class: "axis-flips" }, flips ? `range: ${flips}` : ""));
+    block.appendChild(head);
+    values.forEach(([val, b]) => {
+      const pct = b.total ? b.agree / b.total : 0;
+      const row = el("div", { class: "axis-sens-row" });
+      row.appendChild(el("span", { class: "label", title: val }, val));
+      row.appendChild(el("div", { class: "meter" },
+        el("span", { style: `width: ${(pct * 100).toFixed(1)}%;` })));
+      row.appendChild(el("span", { class: "pct" }, `${(pct * 100).toFixed(0)}% (${b.agree}/${b.total})`));
+      block.appendChild(row);
+    });
+    grid.appendChild(block);
+  });
+  wrap.appendChild(grid);
+  return wrap;
+}
+
+// (D) Cost tab — full-width replica of the histogram panel for users
+// who want to focus on spend.
+async function renderCostTab(center) {
+  $("#center-title").textContent = "Cost · " + (STATE.study?.name || "");
+  center.innerHTML = "<p style=\"color: var(--muted);\">Loading cost…</p>";
+  const panel = await renderCostHistogramPanel();
+  if (!panel) {
+    center.innerHTML = `<p style="color: var(--muted);">No cost data yet. Cells will report spend as they record API usage.</p>`;
+    return;
+  }
+  center.innerHTML = "";
+  center.appendChild(panel);
+  // Helpful note linking back to the underlying primitives.
+  center.appendChild(el("p", { style: "font-size: 11.5px; color: var(--muted); margin-top: 12px;" },
+    "Each bar is one cell's cumulative Anthropic spend. The cap (e.g. $1.50) comes from the study's ",
+    el("code", {}, "defaults.max_cost_usd"),
+    " and is enforced at API-call time via pessimistic reservation in ",
+    el("code", {}, "CostTracker"),
+    " (see ", el("code", {}, "tests/test_cost_guardrails.py"), ")."));
+}
+
+// (C) Universe view — 2D matrix of cells indexed by the first two
+// axes, colored by per-cell robustness across the full spec curve
+// (agree=1, weaker=0.5, flips=0). Click a tile to focus that cell in
+// the DAG view. Surfaces patterns like "robustness collapses in the
+// older-cohort × post-inflation cell" at a glance.
+async function renderUniverse(center) {
+  $("#center-title").textContent = "Universe · " + (STATE.study?.name || "");
+  if (!STATE.study) {
+    center.innerHTML = "<p style=\"color: var(--muted);\">No study yet.</p>";
+    return;
+  }
+  const cells = STATE.study.cells || [];
+  if (!cells.length) {
+    center.innerHTML = "<p style=\"color: var(--muted);\">No cells.</p>";
+    return;
+  }
+  // Lazy-fetch spec curve so robustness coloring works on first open.
+  if (!STATE.specCurve) {
+    try {
+      const r = await fetch(`/studies/${STATE.studyId}/spec_curve`);
+      if (r.ok) STATE.specCurve = await r.json();
+    } catch { /* tolerate */ }
+  }
+  const axisNames = Object.keys(cells[0].axes || {});
+  if (axisNames.length < 1) {
+    center.innerHTML = "<p style=\"color: var(--muted);\">Single-axis study — universe view needs ≥1 axis.</p>";
+    return;
+  }
+  const rowAxis = axisNames[0];
+  const colAxis = axisNames[1] || null;
+  const rowVals = Array.from(new Set(cells.map(c => c.axes[rowAxis])));
+  const colVals = colAxis ? Array.from(new Set(cells.map(c => c.axes[colAxis]))) : [null];
+  const findCell = (rv, cv) => cells.find(c =>
+    c.axes[rowAxis] === rv && (colAxis == null || c.axes[colAxis] === cv));
+
+  // Per-cell robustness from the spec curve.
+  const cellRobustness = new Map();
+  if (STATE.specCurve && Array.isArray(STATE.specCurve.rows)) {
+    cells.forEach(c => {
+      let total = 0, weighted = 0;
+      STATE.specCurve.rows.forEach(row => {
+        const s = row.statuses?.[c.id];
+        if (s == null || s === "missing") return;
+        total += 1;
+        if (s === "agree") weighted += 1;
+        else if (s === "weaker") weighted += 0.5;
+      });
+      cellRobustness.set(c.id, total ? weighted / total : null);
+    });
+  }
+
+  const wrap = el("div");
+  wrap.appendChild(el("p", { style: "font-size: 12px; color: var(--muted); margin: 0 0 8px;" },
+    `Rows: ${rowAxis}${colAxis ? `, columns: ${colAxis}` : ""}. ` +
+    `Tile color = pipeline status; number = per-cell robustness across all clustered recommendations.`));
+
+  const legend = el("div", { class: "universe-legend" });
+  [
+    ["complete", "complete"],
+    ["running", "running"],
+    ["error", "error"],
+    ["pending", "pending / not started"],
+  ].forEach(([cls, label]) => {
+    const span = el("span", {});
+    span.appendChild(el("i", { class: `swatch universe-tile ${cls}`, style: "width: 12px; height: 12px;" }));
+    span.appendChild(document.createTextNode(label));
+    legend.appendChild(span);
+  });
+  wrap.appendChild(legend);
+
+  const table = el("table", { class: "universe-grid" });
+  const thead = el("thead");
+  const headRow = el("tr");
+  headRow.appendChild(el("th", {}, ""));
+  colVals.forEach(cv => {
+    headRow.appendChild(el("th", {}, cv == null ? "—" : cv));
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+  const tbody = el("tbody");
+  rowVals.forEach(rv => {
+    const tr = el("tr");
+    tr.appendChild(el("td", { class: "row-axis" }, rv));
+    colVals.forEach(cv => {
+      const c = findCell(rv, cv);
+      if (!c) {
+        tr.appendChild(el("td", { class: "universe-tile empty" }, "—"));
+        return;
+      }
+      const status = c.status || "pending";
+      const robust = cellRobustness.get(c.id);
+      const robustText = robust == null ? "—" : `${(robust * 100).toFixed(0)}%`;
+      const td = el("td", {
+        class: `universe-tile ${status}` + (c.id === STATE.selectedCellId ? " selected" : ""),
+        title: `${c.id} · status=${status}` + (robust != null ? ` · robustness=${robustText}` : ""),
+        onclick: () => { focusCell(c.id); setView("dag"); },
+      });
+      td.appendChild(el("div", { class: "robust" }, robustText));
+      td.appendChild(el("div", { class: "status" }, status));
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+
+  if (axisNames.length > 2) {
+    wrap.appendChild(el("p", { style: "font-size: 11.5px; color: var(--muted); margin-top: 14px;" },
+      `(${axisNames.length - 2} additional axes folded into multiple cells per tile; ` +
+      `click a tile then use the DAG to drill down.)`));
+  }
+  center.innerHTML = "";
+  center.appendChild(wrap);
+}
+
+function falsifierStatusClass(s) {
+  if (s === "fully_triggered" || s === "partially_triggered") return "error";
+  if (s === "not_triggered") return "complete";
+  return "missing";
+}
+
+function renderBrief(center) {
+  $("#center-title").textContent = "Decision brief · " + (STATE.selectedCellId || "(no spec)");
+  if (!STATE.selectedCellId) { center.innerHTML = "<p style=\"color: var(--muted);\">Select a spec from the left to view its brief.</p>"; return; }
+  const cell = STATE.study.cells.find(c => c.id === STATE.selectedCellId);
+  const brief = STATE.briefsByRun[cell.run_id];
+  if (!brief || !brief.markdown) {
+    // Try to fetch on demand.
+    fetch(`/runs/${cell.run_id}/final`).then(r => r.ok ? r.json() : null).then(b => {
+      if (b) {
+        STATE.briefsByRun[cell.run_id] = b;
+        renderBrief(center);
+      } else {
+        center.innerHTML = `<p style="color: var(--muted);">No brief yet for this spec.</p>`;
+      }
+    }).catch(() => {
+      center.innerHTML = `<p style="color: var(--muted);">No brief yet for this spec.</p>`;
+    });
+    center.innerHTML = `<p style="color: var(--muted);">Loading brief…</p>`;
+    return;
+  }
+  const md = el("div", { class: "brief-md" });
+  md.innerHTML = marked.parse(brief.markdown);
+  center.innerHTML = "";
+  center.appendChild(md);
+}
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+// =========================================================================
+// Lineage drawer — Dagster AssetMaterialization detail
+// =========================================================================
+//
+// We persist one JSONL line per stage to runs/<run_id>/dagster_materializations.jsonl
+// during cell execution (see dagster_assets._record_materialization). The
+// drawer fetches that file via /runs/<run_id>/materializations and renders
+// partition_key, model, spend, hashes, timestamp — i.e. the same metadata
+// that ends up on the AssetMaterialization in Dagit.
+
+const STAGE_LABEL_DRAWER = {
+  question_analysis: "Question analysis",
+  personas: "Personas",
+  outline: "Outline",
+  interviews: "Interviews",
+  verifier: "Verifier",
+  synthesis: "Synthesis",
+};
+
+async function openLineageDrawer(cell, stage) {
+  const drawer = document.getElementById("lineage-drawer");
+  const backdrop = document.getElementById("lineage-backdrop");
+  const titleEl = document.getElementById("lineage-title");
+  const partitionEl = document.getElementById("lineage-partition");
+  const bodyEl = document.getElementById("lineage-body");
+  if (!drawer || !backdrop) return;
+  drawer.classList.add("open");
+  backdrop.classList.add("open");
+  drawer.setAttribute("aria-hidden", "false");
+  titleEl.textContent = STAGE_LABEL_DRAWER[stage] || stage;
+  partitionEl.textContent = cell.run_id;
+  bodyEl.innerHTML = `<span class="badge-dagster">Dagster · AssetMaterialization</span>
+    <p class="empty">Loading lineage…</p>`;
+  try {
+    const r = await fetch(`/runs/${cell.run_id}/materializations`);
+    if (!r.ok) {
+      bodyEl.innerHTML = `<span class="badge-dagster">Dagster · AssetMaterialization</span>
+        <p class="empty">No Dagster receipts yet — pipeline still warming up.</p>`;
+      return;
+    }
+    const data = await r.json();
+    const matched = (data.materializations || []).filter(m => m.asset_key === stage);
+    const m = matched[matched.length - 1] || null;
+    bodyEl.innerHTML = renderLineageBody(cell, stage, m);
+  } catch (e) {
+    bodyEl.innerHTML = `<span class="badge-dagster">Dagster · AssetMaterialization</span>
+      <p class="empty">Could not load receipts: ${escapeHtml(String(e))}</p>`;
+  }
+}
+
+function closeLineageDrawer() {
+  const drawer = document.getElementById("lineage-drawer");
+  const backdrop = document.getElementById("lineage-backdrop");
+  if (!drawer) return;
+  drawer.classList.remove("open");
+  backdrop.classList.remove("open");
+  drawer.setAttribute("aria-hidden", "true");
+}
+
+function renderLineageBody(cell, stage, m) {
+  const lines = [`<span class="badge-dagster">Dagster · AssetMaterialization</span>`];
+  if (!m) {
+    lines.push(`<p class="empty">Stage <code>${escapeHtml(stage)}</code> hasn't materialized yet for this cell.</p>`);
+    lines.push(renderManifestFallback(cell, stage));
+    return lines.join("");
+  }
+  lines.push(`<div class="group">
+    <h4>Identity</h4>
+    <div class="kv">
+      <span class="k">asset_key</span><span class="v">${escapeHtml(m.asset_key)}</span>
+      <span class="k">partition_key</span><span class="v">${escapeHtml(m.partition_key)}</span>
+      <span class="k">cell</span><span class="v">${escapeHtml(cell.id)}</span>
+      <span class="k">timestamp</span><span class="v">${escapeHtml(m.timestamp || "")}</span>
+    </div>
+  </div>`);
+
+  const exec = [];
+  if (m.model_id) exec.push(`<span class="k">model</span><span class="v">${escapeHtml(m.model_id)}</span>`);
+  if (m.elapsed_s != null) exec.push(`<span class="k">elapsed</span><span class="v">${m.elapsed_s.toFixed(1)}s</span>`);
+  if (m.spent_usd != null) exec.push(`<span class="k">spend</span><span class="v">$${m.spent_usd.toFixed(4)}</span>`);
+  if (m.n_calls != null) exec.push(`<span class="k">api calls</span><span class="v">${m.n_calls}</span>`);
+  if (exec.length) {
+    lines.push(`<div class="group"><h4>Execution</h4><div class="kv">${exec.join("")}</div></div>`);
+  }
+
+  const stageMetrics = stageSpecificMetrics(m);
+  if (stageMetrics.length) {
+    lines.push(`<div class="group"><h4>Stage outputs</h4><div class="kv">${stageMetrics.join("")}</div></div>`);
+  }
+
+  const hashes = [];
+  if (m.input_hash)  hashes.push(`<span class="k">input</span><span class="v hash">${escapeHtml(m.input_hash)}</span>`);
+  if (m.prompt_hash) hashes.push(`<span class="k">prompt</span><span class="v hash">${escapeHtml(m.prompt_hash)}</span>`);
+  if (m.code_hash)   hashes.push(`<span class="k">code</span><span class="v hash">${escapeHtml(m.code_hash)}</span>`);
+  if (m.output_hash) hashes.push(`<span class="k">output</span><span class="v hash">${escapeHtml(m.output_hash)}</span>`);
+  if (hashes.length) {
+    lines.push(`<div class="group"><h4>Provenance hashes</h4><div class="kv">${hashes.join("")}</div></div>`);
+  }
+  lines.push(`<div class="group"><h4>Replay</h4>
+    <p style="font-size: 11.5px; color: var(--muted); margin: 0;">
+      Identical input + prompt + code hashes will produce a bit-identical
+      run. Mismatches surface as red badges in the Provenance tab.
+    </p></div>`);
+  return lines.join("");
+}
+
+function stageSpecificMetrics(m) {
+  const out = [];
+  const keys = [
+    ["complexity", m.complexity],
+    ["complexity_score", m.complexity_score],
+    ["recommended_personas", m.recommended_personas],
+    ["n_personas", m.n_personas],
+    ["n_sections", m.n_sections],
+    ["n_subreports", m.n_subreports],
+    ["total_citations", m.total_citations],
+    ["verified", m.verified],
+    ["flagged", m.flagged],
+    ["n_citations", m.n_citations],
+    ["markdown_len", m.markdown_len],
+  ];
+  for (const [k, v] of keys) {
+    if (v == null) continue;
+    out.push(`<span class="k">${k}</span><span class="v">${escapeHtml(String(v))}</span>`);
+  }
+  return out;
+}
+
+function renderManifestFallback(cell, stage) {
+  const manifest = STATE.manifestsByRun[cell.run_id];
+  const stageManifest = manifest && Array.isArray(manifest.stages)
+    ? manifest.stages.find(s => s.stage === stage) : null;
+  if (!stageManifest) return "";
+  const lines = [];
+  lines.push(`<div class="group"><h4>Manifest fallback</h4><div class="kv">`);
+  if (stageManifest.elapsed_s != null) lines.push(`<span class="k">elapsed</span><span class="v">${stageManifest.elapsed_s.toFixed(1)}s</span>`);
+  if (stageManifest.model_id) lines.push(`<span class="k">model</span><span class="v">${escapeHtml(stageManifest.model_id)}</span>`);
+  if (stageManifest.input_hash) lines.push(`<span class="k">input</span><span class="v hash">${escapeHtml(stageManifest.input_hash)}</span>`);
+  if (stageManifest.output_hash) lines.push(`<span class="k">output</span><span class="v hash">${escapeHtml(stageManifest.output_hash)}</span>`);
+  lines.push(`</div></div>`);
+  return lines.join("");
+}
+
+// =========================================================================
+// Slash-command bar — fast path to the workbench's existing views
+// =========================================================================
+//
+// Commands are intentionally thin wrappers: each maps onto an existing
+// FE action (selectCell, switchTab, openLineageDrawer). The intent is the
+// same as Cursor / Claude command palette — keyboard-first navigation
+// over the same primitives the GUI exposes.
+
+const CMD_HISTORY = [];
+let CMD_HISTORY_IDX = -1;
+
+function bindCommandBar() {
+  const input = document.getElementById("cmd-input");
+  if (!input) return;
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      const raw = input.value.trim();
+      if (!raw) return;
+      runCommand(raw);
+      CMD_HISTORY.push(raw);
+      CMD_HISTORY_IDX = CMD_HISTORY.length;
+      input.value = "";
+    } else if (e.key === "ArrowUp") {
+      if (CMD_HISTORY.length === 0) return;
+      CMD_HISTORY_IDX = Math.max(0, CMD_HISTORY_IDX - 1);
+      input.value = CMD_HISTORY[CMD_HISTORY_IDX] || "";
+      e.preventDefault();
+    } else if (e.key === "ArrowDown") {
+      if (CMD_HISTORY_IDX < CMD_HISTORY.length - 1) {
+        CMD_HISTORY_IDX += 1;
+        input.value = CMD_HISTORY[CMD_HISTORY_IDX] || "";
+      } else {
+        CMD_HISTORY_IDX = CMD_HISTORY.length;
+        input.value = "";
+      }
+      e.preventDefault();
+    }
+  });
+}
+
+function showToast(msg, isError) {
+  const t = document.getElementById("cmd-toast");
+  if (!t) return;
+  t.textContent = msg;
+  t.classList.toggle("err", !!isError);
+  setTimeout(() => { t.textContent = ""; }, 4000);
+}
+
+function setView(view) {
+  STATE.view = view;
+  document.querySelectorAll(".tab").forEach(x => {
+    x.classList.toggle("active", x.dataset.view === view);
+  });
+  renderCenter();
+}
+
+function focusCell(cellId) {
+  STATE.selectedCellId = cellId;
+  if (typeof renderSpecList === "function") renderSpecList();
+  renderCenter();
+}
+
+function runCommand(raw) {
+  const tokens = raw.split(/\s+/);
+  const cmd = (tokens[0] || "").toLowerCase().replace(/^\//, "");
+  const args = tokens.slice(1);
+  switch (cmd) {
+    case "help":
+      showToast("/lineage <cell?> <stage?> · /cell <id> · /sensitivity · /universe · /cost · /brief · /tools · /personas");
+      return;
+    case "lineage": {
+      const cellId = args[0] || STATE.selectedCellId;
+      const stage = args[1] || STATE.selectedStage || "synthesis";
+      const cell = STATE.study?.cells?.find(c => c.id === cellId);
+      if (!cell) return showToast(`No cell '${cellId}'`, true);
+      STATE.selectedCellId = cell.id;
+      STATE.selectedStage = stage;
+      openLineageDrawer(cell, stage);
+      showToast(`Opened lineage for ${cell.id} / ${stage}`);
+      return;
+    }
+    case "cell": {
+      const cellId = args[0];
+      if (!cellId) return showToast("Usage: /cell <id>", true);
+      const cell = STATE.study?.cells?.find(c => c.id === cellId);
+      if (!cell) return showToast(`No cell '${cellId}'`, true);
+      focusCell(cell.id);
+      showToast(`Focused ${cell.id}`);
+      return;
+    }
+    case "sensitivity":
+    case "compare":
+      setView("compare");
+      showToast("Compare-specs tab");
+      return;
+    case "universe":
+    case "grid":
+      setView("universe");
+      showToast("Universe view");
+      return;
+    case "cost":
+      setView("cost");
+      showToast("Cost tab");
+      return;
+    case "brief":
+      setView("brief");
+      showToast("Brief tab");
+      return;
+    case "dag":
+      setView("dag");
+      showToast("DAG view");
+      return;
+    case "tools":
+      setView("tools");
+      showToast("Tool calls");
+      return;
+    case "personas":
+      setView("personas");
+      showToast("Personas tab");
+      return;
+    default:
+      showToast(`Unknown command: /${cmd}. Try /help`, true);
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const close = document.getElementById("lineage-close");
+  if (close) close.addEventListener("click", closeLineageDrawer);
+  const backdrop = document.getElementById("lineage-backdrop");
+  if (backdrop) backdrop.addEventListener("click", closeLineageDrawer);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeLineageDrawer();
+  });
+  bindCommandBar();
 });
 
-function connectStream(runId) {
-  const es = new EventSource(`/research/${runId}/stream`);
-  const personaNames = {};
-
-  function parse(e) {
-    try { return JSON.parse(e.data); } catch { return null; }
-  }
-
-  es.addEventListener('persona_created', (e) => {
-    const ev = parse(e); if (!ev) return;
-    personaNames[ev.persona_id] = ev.data.name;
-    log('persona', `[${ev.persona_id}] ${ev.data.name} — ${ev.data.role}`);
-  });
-  es.addEventListener('turn_started', (e) => {
-    const ev = parse(e); if (!ev) return;
-    log('q', `[${ev.persona_id}] Q${ev.turn_idx}: ${ev.data.question}`);
-  });
-  es.addEventListener('tool_call', (e) => {
-    const ev = parse(e); if (!ev) return;
-    log('tool', `[${ev.persona_id}]   → ${ev.data.name}`);
-  });
-  es.addEventListener('tool_result', (e) => {
-    const ev = parse(e); if (!ev) return;
-    log('tool', `[${ev.persona_id}]   ← ${ev.data.name} result`);
-  });
-  es.addEventListener('turn_completed', (e) => {
-    const ev = parse(e); if (!ev) return;
-    const done = ev.data.done ? ' <<DONE>>' : '';
-    const a = (ev.data.answer || '').slice(0, 220);
-    log('a', `[${ev.persona_id}] A${ev.turn_idx} (${ev.data.n_citations} cites)${done}: ${a}…`);
-  });
-  es.addEventListener('interviewer_stopped', (e) => {
-    const ev = parse(e); if (!ev) return;
-    log('persona', `[${ev.persona_id}] interviewer stopped`);
-  });
-  es.addEventListener('subreport_ready', (e) => {
-    const ev = parse(e); if (!ev) return;
-    log('persona', `[${ev.persona_id}] sub-report ready (${ev.data.n_turns} turns)`);
-  });
-  es.addEventListener('outline_started', () => log('persona', '… synthesizing outline'));
-  es.addEventListener('final_ready', async (e) => {
-    const ev = parse(e);
-    log('persona', `✓ final brief ready (${(ev && ev.data && ev.data.n_citations) || 0} citations)`);
-    try {
-      const r = await fetch(`/research/${runId}/report`).then(r => r.json());
-      $report.innerHTML = marked.parse(r.markdown || '');
-    } catch (err) {
-      log('err', `Could not load report: ${err}`);
-    }
-    $go.disabled = false;
-  });
-  es.addEventListener('error', (e) => {
-    if (!e.data) return; // browser-generated connection error
-    const ev = parse(e);
-    log('err', `ERROR: ${(ev && ev.data && ev.data.message) || ''}`);
-  });
-  es.addEventListener('close', () => es.close());
-  es.addEventListener('heartbeat', () => { /* keep-alive */ });
-}
+boot();
 </script>
 </body>
 </html>

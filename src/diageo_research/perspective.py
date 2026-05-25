@@ -18,8 +18,6 @@ import json
 import logging
 from typing import Any, Awaitable, Callable
 
-from anthropic import AsyncAnthropic
-
 from .citations import filter_used
 from .config import get_settings
 from .memory import DialogueMemory
@@ -51,10 +49,13 @@ OnEvent = Callable[[str, dict[str, Any]], Awaitable[None]]
 class PerspectiveAgent:
     def __init__(
         self,
-        client: AsyncAnthropic,
+        client: Any,
         persona: Persona,
         question: str,
         dataset_schema: str,
+        *,
+        enable_web_browse: bool | None = None,
+        max_browses_per_cell: int | None = None,
     ) -> None:
         self.client = client
         self.persona = persona
@@ -62,7 +63,14 @@ class PerspectiveAgent:
         self.dataset_schema = dataset_schema
         # Tools are scoped by persona_type: consumers get only `web_fetch`;
         # experts get the full kit. See tools/registry.py for the allowlist.
-        self.registry = ToolRegistry(persona_type=persona.persona_type)
+        # Cost guardrails (browse on/off, per-cell browse cap) flow through
+        # the registry so a study cell can disable browse without changing
+        # global settings.
+        self.registry = ToolRegistry(
+            persona_type=persona.persona_type,
+            enable_web_browse=enable_web_browse,
+            max_browses_per_cell=max_browses_per_cell,
+        )
 
     async def answer(
         self,

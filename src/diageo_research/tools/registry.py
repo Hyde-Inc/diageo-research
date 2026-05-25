@@ -89,13 +89,37 @@ _TOOLS_BY_PERSONA_TYPE: dict[PersonaType, set[str]] = {
 
 
 class ToolRegistry:
-    def __init__(self, persona_type: PersonaType = "expert") -> None:
+    def __init__(
+        self,
+        persona_type: PersonaType = "expert",
+        *,
+        enable_web_browse: bool | None = None,
+        max_browses_per_cell: int | None = None,
+    ) -> None:
+        """Create a per-persona registry. The two cost guardrail knobs are
+        passed in by the caller (the perspective agent reads them from the
+        cell-level overrides) so a single study can run cells with browse
+        on, cells with browse off, and cells with a custom cap. When the
+        kwargs are ``None`` we fall back to settings values.
+        """
+        settings = get_settings()
         self.persona_type: PersonaType = persona_type
         self._b = 0
         self._q = 0
         self.browser_snippets: list[BrowserSnippet] = []
         self.duckdb_results: list[QueryResult] = []
+        # Per-turn cap (resets each turn).
         self._browse_calls_this_turn = 0
+        # Per-cell cap (does NOT reset; persists across turns).
+        self._browse_calls_total = 0
+        self._enable_web_browse: bool = (
+            settings.enable_web_browse if enable_web_browse is None else bool(enable_web_browse)
+        )
+        self._max_browses_per_cell: int = (
+            settings.max_browses_per_cell if max_browses_per_cell is None else int(max_browses_per_cell)
+        )
+        # Public, observable counters (asset viewer reads these).
+        self.tool_call_log: list[dict[str, Any]] = []
 
     def start_turn(self) -> None:
         """Reset per-turn counters at the top of each `PerspectiveAgent.answer()`."""
@@ -121,10 +145,44 @@ class ToolRegistry:
 
         if name == "web_browse":
             settings = get_settings()
-            if self._browse_calls_this_turn >= settings.max_web_browse_per_turn:
+            query = args.get("query", "")
+            if not self._enable_web_browse:
+                self.tool_call_log.append(
+                    {"tool": "web_browse", "query": query, "outcome": "disabled"}
+                )
                 return {
                     "snippets": [],
-                    "query": args.get("query", ""),
+                    "query": query,
+                    "hint": (
+                        "`web_browse` is disabled for this run (the unattended "
+                        "browser harness is unreliable against Google/.gov in "
+                        "headless and every step is a paid Sonnet call). Use "
+                        "`web_fetch` against a specific authoritative URL "
+                        "(TTB.gov, BLS.gov, BEA.gov, FRED, Wikipedia, etc.), or "
+                        "fall back to `duckdb_query` for any quantitative claim."
+                    ),
+                }
+            if self._browse_calls_total >= self._max_browses_per_cell:
+                self.tool_call_log.append(
+                    {"tool": "web_browse", "query": query, "outcome": "cell_cap"}
+                )
+                return {
+                    "snippets": [],
+                    "query": query,
+                    "hint": (
+                        f"`web_browse` budget for this cell is exhausted "
+                        f"(cap={self._max_browses_per_cell} total). Use `web_fetch` "
+                        f"against a specific URL or `duckdb_query` for the rest "
+                        f"of this run. The cap protects the dollar budget."
+                    ),
+                }
+            if self._browse_calls_this_turn >= settings.max_web_browse_per_turn:
+                self.tool_call_log.append(
+                    {"tool": "web_browse", "query": query, "outcome": "turn_cap"}
+                )
+                return {
+                    "snippets": [],
+                    "query": query,
                     "hint": (
                         f"`web_browse` budget for this turn is exhausted "
                         f"(cap={settings.max_web_browse_per_turn}). Use `web_fetch` "
@@ -134,21 +192,39 @@ class ToolRegistry:
                     ),
                 }
             self._browse_calls_this_turn += 1
-            raw = await browse(args.get("query", ""), int(args.get("max_pages", 3)))
-            return self._assign_browser_snippets(raw, args.get("query", ""))
+            self._browse_calls_total += 1
+            raw = await browse(query, int(args.get("max_pages", 3)))
+            self.tool_call_log.append(
+                {"tool": "web_browse", "query": query, "outcome": "ok", "n_snippets": len(raw)}
+            )
+            return self._assign_browser_snippets(raw, query)
 
         if name == "web_fetch":
+            url = args.get("url", "")
             raw = await web_fetch(
-                args.get("url", ""),
+                url,
                 query=args.get("focus_query") or None,
             )
-            return self._assign_browser_snippets(raw, args.get("url", ""))
+            self.tool_call_log.append(
+                {"tool": "web_fetch", "url": url, "outcome": "ok", "n_snippets": len(raw)}
+            )
+            return self._assign_browser_snippets(raw, url)
 
         if name == "duckdb_query":
             self._q += 1
             cite_id = f"Q{self._q}"
-            result = run_query(args.get("sql", ""), cite_id=cite_id)
+            sql = args.get("sql", "")
+            result = run_query(sql, cite_id=cite_id)
             self.duckdb_results.append(result)
+            self.tool_call_log.append(
+                {
+                    "tool": "duckdb_query",
+                    "cite_id": cite_id,
+                    "sql": (sql or "").strip()[:240],
+                    "outcome": "error" if result.error else "ok",
+                    "n_rows": len(result.rows or []),
+                }
+            )
             return result.model_dump()
 
         return {"error": f"Unknown tool: {name}"}

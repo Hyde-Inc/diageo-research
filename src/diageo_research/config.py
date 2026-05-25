@@ -40,6 +40,26 @@ class Settings(BaseSettings):
     # After the cap, the dispatcher returns an instructive empty result hint
     # so the model uses `web_fetch` with a known URL instead.
     max_web_browse_per_turn: int = 1
+    # Master kill switch for `web_browse`. When False, the dispatcher
+    # short-circuits every browse call to an instructive empty hint so the
+    # model uses `web_fetch` (known URLs) or `duckdb_query` instead. The
+    # local Chromium path is unreliable against Google/.gov in headless and
+    # each browser-use Agent step is a paid Sonnet call — for unattended
+    # multiverse studies we default this OFF and let the spec override it
+    # per cell. Single research runs keep it on for back-compat.
+    enable_web_browse: bool = True
+    # Hard cap on `web_browse` calls across an entire run (study cell or
+    # single research run). Counted on the same registry. Once hit, all
+    # further browse calls return an empty hint regardless of per-turn
+    # budget. Belt-and-braces against runaway loops where the model burns
+    # the full token budget hitting CAPTCHAs.
+    max_browses_per_cell: int = 6
+    # Optional dollar ceiling. When set and the run's cumulative Anthropic
+    # spend (token usage × pricing) crosses it, the next call raises and
+    # the cell is marked errored with reason="budget_exceeded". `None`
+    # disables the check. Studies should set this in the spec yaml; single
+    # research runs set it via env var or settings only.
+    max_cost_usd: float | None = None
 
     data_dir: Path = Path("./data")
     runs_dir: Path = Path("./runs")

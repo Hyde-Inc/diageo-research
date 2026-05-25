@@ -1,0 +1,130 @@
+name: pricing_pressure_na
+question: >-
+  Where is consumer pricing pressure most likely to compress Diageo
+  North-American spirits demand over the next four quarters, and which
+  brand-occasion pairs are most exposed?
+
+# Pre-registration: signed BEFORE any data run. The multiverse runner refuses
+# to start without a valid prereg block. The synthesizer surfaces these fields
+# in the final brief so the partner sees the rule the answer is being scored
+# against, not just the answer.
+prereg:
+  question: >-
+    Where is consumer pricing pressure most likely to compress Diageo
+    North-American spirits demand over the next four quarters, and which
+    brand-occasion pairs are most exposed?
+  decision_rule: >-
+    Recommend reallocating campaign spend from the most-exposed brand-occasion
+    pair to the least-exposed pair only if the multiverse-robust expected-value
+    gap exceeds 5 percentage points and at least 60% of defensible specs agree
+    on the leading recommendation.
+  evidence_thresholds:
+    multiverse_agreement_min: 0.6
+    backcasting_pass_min: 0  # backcasting engine arrives in Phase 2
+    effect_size_min: 5.0
+  falsifier_conditions:
+    - The recommended target occasion underperforms the source occasion across
+      three or more defensible specifications.
+    - Public-data elasticity for the recommended brand category shows the
+      wrong sign at 95% CI on the 2022-2024 window.
+    - The CoLab-framed multiverse cells disagree with the demand-space-framed
+      cells on the lead recommendation in more than 50% of cells.
+  holdout_reservation: >-
+    Q4 2025 NA volume actuals reserved for blind evaluation; not used in any
+    spec, prompt, or prereg until calibration ledger reads them at quarter
+    close.
+  signed_at: 2026-05-25T17:00:00Z
+  signed_by: Tim Leers
+  notes: >-
+    First multiverse study. Axes intentionally minimal (taxonomy, cohort,
+    time-window) so the v1 grid is 8 cells. The recommendation must survive
+    framing differences between the Diageo demand-space taxonomy and the
+    CoLab Future-of-Socializing taxonomy to count as robust.
+
+# Defaults applied to every cell unless an axis value overrides them.
+#
+# Cost-tuned for an unattended 8-cell run. The single-research path keeps
+# its older heavier defaults (4 personas × 5 turns); studies default
+# leaner so 8 cells are 8 × ~$0.5–$1.0 instead of 8 × ~$3–$5.
+defaults:
+  n_personas: 3
+  max_turns: 3
+  # Master browse switch: OFF for unattended studies. The local Chromium
+  # path is unreliable against Google/.gov in headless and every
+  # browser-use Agent step is a paid Sonnet call; with this False the
+  # perspective agent leans on `web_fetch` (specific URLs) and
+  # `duckdb_query`, which together cover the analytical claims without
+  # the 60–90s + $$ tax per browse.
+  enable_web_browse: false
+  # Hard cap on web_browse calls per cell, in case a future axis flips
+  # browse back on. Belt-and-braces with the master toggle above.
+  max_browses_per_cell: 4
+  # Dollar ceiling per cell. Crossing it raises BudgetExceeded and the
+  # cell ends with status="error", reason="budget_exceeded". Tune up if
+  # a real study needs more depth.
+  max_cost_usd: 2.50
+
+# Concurrency: cells in flight at once. Mind your LLM rate limits.
+concurrency: 2
+
+# Multiverse axes. Cartesian product across axes generates the grid.
+# 2 x 2 x 2 = 8 cells.
+axes:
+  - name: taxonomy
+    label: Occasion taxonomy
+    description: >-
+      Frames the analysis through one of two competing occasion taxonomies.
+      A robust recommendation should not depend on which taxonomy is loaded
+      into the panel's prompt.
+    values:
+      - id: demand_space
+        label: Diageo demand-space taxonomy
+        addendum: >-
+          Frame the analysis through Diageo's demand-space taxonomy: occasion
+          archetypes (e.g. casual unwind, social celebration, intentional
+          discovery) drive the analyst panel's segmentation. Map findings back
+          to demand-space buckets when reporting.
+      - id: colab
+        label: CoLab Future-of-Socializing 13 occasion shifts
+        addendum: >-
+          Frame the analysis through the CoLab "Future of Socializing" 13
+          occasion shifts (e.g. moderation-led, hyper-local, micro-community,
+          etc.). Map findings back to CoLab shifts when reporting.
+
+  - name: cohort
+    label: Cohort emphasis
+    description: >-
+      The income/lifestage lens the panel applies. A robust recommendation
+      should not flip across plausible cohort lenses.
+    values:
+      - id: sub60k
+        label: Sub-$60k household-income value-tier
+        addendum: >-
+          Emphasise sub-$60k US household-income cohorts and value-tier
+          substitution dynamics. Treat trade-down to private label, value
+          tequila, and value RTDs as first-class outcomes.
+      - id: mixed
+        label: Full income distribution
+        addendum: >-
+          Cover the full US income distribution including premium-aspirational
+          and luxury cohorts; treat premiumisation and value tiers as both
+          live channels.
+
+  - name: window
+    label: Time-window emphasis
+    description: >-
+      Which historical window the panel weights most heavily for current-state
+      claims. A robust recommendation should not depend on whether the panel
+      reads the post-inflation window or the full cycle.
+    values:
+      - id: post_inflation
+        label: 2022-2025 post-inflation regime
+        addendum: >-
+          Weight evidence from 2022-2025 (post-inflation regime) most heavily.
+          Treat pre-2022 data as historical context, not as the reference
+          period for current-state claims.
+      - id: full_cycle
+        label: 2018-2025 full cycle
+        addendum: >-
+          Use the full 2018-2025 cycle, including pre-inflation baselines.
+          Compare current behaviour against pre-2022 baselines explicitly.

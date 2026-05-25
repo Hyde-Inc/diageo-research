@@ -32,6 +32,71 @@ diageo report <run_id>
 diageo serve  # FastAPI + SSE UI at http://127.0.0.1:8765/
 ```
 
+## Hypothesis Workbench (multiverse studies)
+
+```bash
+diageo study samples/study_pricing_pressure.yaml --no-browse --max-cost 1.50
+diageo serve         # workbench UI
+# In a second terminal:
+diageo mcp -u http://127.0.0.1:8765   # MCP server over stdio
+```
+
+The Workbench UI lives at `/`. It exposes:
+
+- **DAG of selected spec** — Dagster asset graph rendered live. Click a stage to open
+  the **lineage drawer** (partition_key, model, spend, SHA-256 hashes — sourced from
+  per-stage `AssetMaterialization` receipts written to
+  `runs/<run_id>/dagster_materializations.jsonl`).
+- **Universe** — 2D heatmap of cells across the first two axes, colored by per-cell
+  robustness across the spec curve.
+- **Compare specs** — clustered recommendations + falsifier status, axis-sensitivity
+  panel ("when we vary cohort, robustness drops 80% → 50%"), per-cell cost histogram.
+- **Cost** — full-page replica of the histogram with the cap-aware bars.
+- **Tool calls** — every `web_browse`, `web_fetch`, `duckdb_query` with outcome (so
+  "disabled by guardrails" or "hit cell cap" is visible).
+- **Personas** — drill into one persona's transcript + sub-report.
+- **Decision brief** — final synthesised brief.
+
+A **slash-command bar** at the bottom drives all of the above:
+
+```
+/lineage <cell?> <stage?>   open the Dagster lineage drawer
+/cell <id>                  focus a cell
+/sensitivity                Compare-specs (with axis sensitivity)
+/universe                   heatmap matrix
+/cost                       cost tab
+/brief                      decision brief
+```
+
+### MCP integration (chat-driven workbench)
+
+`diageo_research.mcp_server` wraps every Workbench endpoint as an MCP tool, so
+Claude Desktop / Cursor / Claude Code can drive the same views from chat:
+
+```jsonc
+// claude_desktop_config.json (or Cursor's mcp.json)
+{
+  "mcpServers": {
+    "diageo-workbench": {
+      "command": "python",
+      "args": ["-m", "diageo_research.mcp_server"],
+      "env": { "WORKBENCH_URL": "http://127.0.0.1:8765" }
+    }
+  }
+}
+```
+
+Tools exposed: `list_studies`, `get_study`, `get_spec_curve`, `get_axis_sensitivity`,
+`get_cost_rollup`, `list_run_materializations`, `get_run_manifest`, `get_run_stage`,
+`get_asset_graph`, `list_recipes`, `workbench_health`.
+
+For Dagster-native operations (re-run a partition, re-materialize an asset,
+inspect a run's GraphQL log), point `dagster-mcp`
+([pypi](https://pypi.org/project/dagster-mcp/)) at a long-running Dagster
+webserver. We use `DagsterInstance.ephemeral()` today, so swap to
+`dagster.DagsterInstance.from_config(...)` and run `dg dev` to expose
+`http://localhost:3000/graphql`.
+
 ## Architecture
 
 ```

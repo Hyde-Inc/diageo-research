@@ -31,6 +31,41 @@ app = typer.Typer(
 console = Console()
 
 
+# Empirical per-stage cost (USD) at the May-25 reference run with browse
+# OFF, n_personas=3, max_turns=3. Used to warn when a user-supplied
+# ``--max-cost`` is below the realistic floor for the panel they've
+# configured. These numbers are illustrative — the budget guard always
+# enforces the actual ``max_cost_usd``; this is just a cheap signpost.
+_PER_STAGE_BASELINE_USD = {
+    "question_analysis": 0.15,
+    "personas": 0.30,
+    "outline": 0.10,
+    "interviews_per_persona_turn": 0.10,  # ~$0.93 / (3 personas × 3 turns)
+    "synthesis": 1.00,                     # 6 section writers + exec answer
+}
+
+
+def _estimate_per_cell_cost_floor(
+    *, n_personas: int, max_turns: int
+) -> float:
+    """Crude floor estimate: empirical baselines from the May-25 run
+    scaled by the configured panel size. Conservative — real spend can
+    exceed this when interviews go long. Returns USD.
+    """
+    interviews = (
+        _PER_STAGE_BASELINE_USD["interviews_per_persona_turn"]
+        * max(1, n_personas)
+        * max(1, max_turns)
+    )
+    return (
+        _PER_STAGE_BASELINE_USD["question_analysis"]
+        + _PER_STAGE_BASELINE_USD["personas"]
+        + _PER_STAGE_BASELINE_USD["outline"]
+        + interviews
+        + _PER_STAGE_BASELINE_USD["synthesis"]
+    )
+
+
 _NOISY_LOGGERS = (
     "httpx",
     "httpcore",
@@ -512,6 +547,203 @@ def serve(
     import uvicorn
 
     uvicorn.run("diageo_research.web.api:app", host=host, port=port, reload=False)
+
+
+@app.command()
+def study(
+    spec: Path = typer.Argument(
+        ..., help="Path to a study YAML (see samples/study_*.yaml)."
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+    no_browse: bool = typer.Option(
+        False,
+        "--no-browse",
+        help=(
+            "Disable `web_browse` for every cell of this run, regardless of "
+            "what the spec says. Use this when the local Chromium path is "
+            "burning credits on Google CAPTCHAs and 403s. Cells lean on "
+            "`web_fetch` (specific URLs) and `duckdb_query` instead."
+        ),
+    ),
+    max_cost: Optional[float] = typer.Option(
+        None,
+        "--max-cost",
+        help=(
+            "Override `defaults.max_cost_usd` for every cell. The cell "
+            "stops with status=error, reason=budget_exceeded once it "
+            "crosses this dollar ceiling."
+        ),
+    ),
+    n_personas: Optional[int] = typer.Option(
+        None,
+        "--personas",
+        "-n",
+        help="Override `defaults.n_personas` for every cell.",
+    ),
+    max_turns: Optional[int] = typer.Option(
+        None,
+        "--turns",
+        "-t",
+        help="Override `defaults.max_turns` for every cell.",
+    ),
+) -> None:
+    """Run a multiverse study from a YAML spec.
+
+    Each cell of the grid is one orchestrator run with parameter overrides;
+    artefacts live under `runs/<study_id>_<cell_id>/`. The parent state is
+    `runs/<study_id>/study.json`. After all cells finish, a spec curve is
+    written to `runs/<study_id>/spec_curve.{json,md}`.
+    """
+    from .multiverse import load_spec, run_study
+    from .multiverse_report import write_spec_curve
+
+    _configure_logging(verbose, to_console=True)
+    spec_path = spec.resolve()
+    if not spec_path.exists():
+        console.print(f"[red]Spec not found:[/red] {spec_path}")
+        raise typer.Exit(code=1)
+
+    spec_obj = load_spec(spec_path)
+    overrides_applied: list[str] = []
+    if no_browse:
+        spec_obj.defaults.enable_web_browse = False
+        overrides_applied.append("enable_web_browse=False")
+    if max_cost is not None:
+        spec_obj.defaults.max_cost_usd = float(max_cost)
+        overrides_applied.append(f"max_cost_usd=${max_cost:.2f}")
+    if n_personas is not None:
+        spec_obj.defaults.n_personas = int(n_personas)
+        overrides_applied.append(f"n_personas={n_personas}")
+    if max_turns is not None:
+        spec_obj.defaults.max_turns = int(max_turns)
+        overrides_applied.append(f"max_turns={max_turns}")
+
+    # Empirical-floor sanity check on max_cost_usd. The May-25 8-cell run
+    # showed each cell's REAL cost is ~$2.50 with default settings (3
+    # personas × 3 turns × ~6 sections × Opus synthesis). A user-supplied
+    # `--max-cost` below that floor will trip the budget guard mid-cell
+    # and produce a partial brief — that's correct behaviour, but worth
+    # warning about so the user can re-run with a realistic ceiling.
+    floor = _estimate_per_cell_cost_floor(
+        n_personas=spec_obj.defaults.n_personas or get_settings().default_personas,
+        max_turns=spec_obj.defaults.max_turns or get_settings().default_max_turns,
+    )
+    cap = spec_obj.defaults.max_cost_usd
+    if cap is not None and cap < floor:
+        console.print(
+            f"[yellow]⚠ max_cost_usd=${cap:.2f} is below the empirical floor "
+            f"(~${floor:.2f}/cell) for n_personas={spec_obj.defaults.n_personas}, "
+            f"max_turns={spec_obj.defaults.max_turns}.[/yellow]"
+        )
+        console.print(
+            "[yellow]  Cells will likely trip the budget guard mid-synthesis "
+            "and produce a partial brief instead of a finished one.[/yellow]"
+        )
+        console.print(
+            f"[yellow]  Either raise the cap "
+            f"(`--max-cost {floor:.2f}` or higher) OR drop the panel size "
+            f"(`--personas 2 --turns 2`) so the floor matches the cap.[/yellow]"
+        )
+
+    console.print(f"[bold]Running study from[/bold] [cyan]{spec_path}[/cyan]")
+    if overrides_applied:
+        console.print(f"[dim]CLI overrides: {', '.join(overrides_applied)}[/dim]")
+    console.print(
+        f"[dim]Cost guardrails: enable_web_browse={spec_obj.defaults.enable_web_browse}, "
+        f"max_browses_per_cell={spec_obj.defaults.max_browses_per_cell}, "
+        f"max_cost_usd={spec_obj.defaults.max_cost_usd}[/dim]"
+    )
+
+    async def _go():
+        study = await run_study(spec_obj, spec_path=spec_path)
+        try:
+            write_spec_curve(study.id)
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[yellow]Spec curve write failed: {e}[/yellow]")
+        return study
+
+    study = asyncio.run(_go())
+    console.print(
+        f"[bold]Study {study.id}[/bold] finished — "
+        f"[cyan]{sum(1 for c in study.cells if c.status == 'complete')}[/cyan] complete · "
+        f"[red]{sum(1 for c in study.cells if c.status == 'error')}[/red] errors"
+    )
+    console.print(
+        f"[dim]Artefacts: {get_settings().runs_dir / study.id}[/dim]"
+    )
+    console.print(
+        f"[dim]Open the Workbench: `diageo serve` then http://127.0.0.1:8765/?study={study.id}[/dim]"
+    )
+
+
+@app.command()
+def studies() -> None:
+    """List all multiverse studies."""
+    from .multiverse import list_studies
+
+    rows = list_studies()
+    if not rows:
+        console.print("[dim]No studies yet.[/dim]")
+        return
+    t = Table(title=f"Studies (showing {len(rows)})", header_style="bold cyan")
+    t.add_column("Study ID", style="cyan", no_wrap=True)
+    t.add_column("Name")
+    t.add_column("Status")
+    t.add_column("Cells", justify="right")
+    t.add_column("Created")
+    t.add_column("Question")
+    for r in rows:
+        status_styled = {
+            "complete": "[green]complete[/green]",
+            "partial": "[yellow]partial[/yellow]",
+            "error": "[red]error[/red]",
+            "running": "[cyan]running[/cyan]",
+        }.get(r["status"], r["status"])
+        q = r["question"]
+        if len(q) > 60:
+            q = q[:57] + "…"
+        t.add_row(
+            r["id"], r["name"], status_styled,
+            f"{r['n_complete']}/{r['n_cells']}",
+            r["created_at"], q,
+        )
+    console.print(t)
+
+
+@app.command()
+def mcp(
+    workbench_url: str = typer.Option(
+        "http://localhost:8000",
+        "--workbench-url", "-u",
+        help="Base URL of the running Workbench FastAPI app.",
+    ),
+    transport: str = typer.Option(
+        "stdio", "--transport", "-t",
+        help="MCP transport: 'stdio' (Claude Desktop / Cursor / Claude Code) or 'sse' (browser).",
+    ),
+    host: str = typer.Option("127.0.0.1", "--host", help="SSE host (transport=sse only)."),
+    port: int = typer.Option(8765, "--port", help="SSE port (transport=sse only)."),
+) -> None:
+    """Run the MCP server that exposes the Workbench as tool calls.
+
+    The server wraps :mod:`diageo_research.web.api` so MCP clients (Cursor,
+    Claude Desktop, Claude Code) can list studies, fetch the spec curve,
+    inspect Dagster materializations, and pull cost rollups from chat.
+
+    Pair this with the FastAPI app: ``diageo serve`` in one terminal,
+    ``diageo mcp`` in another (or wired into the client's mcpServers
+    config).
+    """
+    import os
+
+    os.environ["WORKBENCH_URL"] = workbench_url
+    os.environ["MCP_TRANSPORT"] = transport
+    if transport == "sse":
+        os.environ["MCP_HOST"] = host
+        os.environ["MCP_PORT"] = str(port)
+    from . import mcp_server
+
+    mcp_server.main()
 
 
 if __name__ == "__main__":

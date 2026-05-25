@@ -1,0 +1,45 @@
+name: smoke_test
+question: >-
+  Smoke test: what's a single, defensible insight about US consumer
+  pricing pressure on spirits in 2024?
+
+prereg:
+  question: >-
+    Smoke test: what's a single, defensible insight about US consumer
+    pricing pressure on spirits in 2024?
+  decision_rule: >-
+    This is a smoke test. Recommend the cohort most squeezed by
+    real-wage compression on alcohol-away-from-home.
+  evidence_thresholds:
+    multiverse_agreement_min: 0.6
+    backcasting_pass_min: 0
+    effect_size_min: 0.5
+  falsifier_conditions:
+    - The recommendation does not survive a different cohort framing.
+  holdout_reservation: ""
+  signed_at: 2026-05-25T18:00:00Z
+  signed_by: smoke_test
+  notes: >-
+    Single-cell smoke test for the cost guardrails — this study should
+    cost roughly one Opus + a handful of Sonnet calls, total under $0.50,
+    and never spawn a browser.
+
+defaults:
+  n_personas: 2
+  max_turns: 2
+  enable_web_browse: false
+  max_browses_per_cell: 0
+  max_cost_usd: 1.50
+
+concurrency: 1
+
+axes:
+  - name: lens
+    label: Single-axis smoke
+    description: One axis, one value — produces a single-cell study.
+    values:
+      - id: solo
+        label: Solo
+        addendum: >-
+          Pick one cohort. Defend it briefly. No need for full multiverse;
+          this is a smoke test.

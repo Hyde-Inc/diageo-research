@@ -1,22 +1,34 @@
-"""Top-level pipeline: question → analyst panel → outline → parallel
-interviews → verifier → final report.
+"""Top-level pipeline composition.
 
-Pipeline order:
-  0. analyze_question (Opus) → QuestionPlan (panel size + lens seeds)
-  1. generate_personas (Opus) → analyst-only panel with checklists
-  2. draft_seed_outline (Opus) → outline-first spine
-  3. assign_sections (Sonnet) → each persona owns 1–2 sections
-  4. parallel interviews (Sonnet + parallel tool dispatch) → DialogueTurns
-  5. draft_subreport (Sonnet) → SubReport per persona with headline_claim
-  6. verify_subreports (DuckDB re-exec in parallel) → Citation.verified
-  7. synthesize (Opus, parallel section writers + charts/tables + evidence
-     appendix) → FinalReport
+Two entry points share the same per-stage adapters in
+:mod:`diageo_research.stages`:
 
-Contradictions between sub-reports are handled by the synthesizer itself —
-the previous cross-persona challenge round was removed because the section
-writer already has the full sub-report bundle and surfaces disagreements
-better than a separate "reactions" stage (which doubled wall time without
-adding insight).
+* :func:`run_research` — sequential async composition. The original,
+  simplest path. Used by ``POST /research`` and unit tests.
+* :func:`materialize_research_cell` — runs the same stages through
+  Dagster's executor so the declared :class:`Definitions` graph is the
+  one driving execution. Used by the multiverse runner so each cell
+  records :class:`AssetMaterialization` events into a Dagster instance
+  with the cell id as the dynamic partition key.
+
+Both paths build the exact same :class:`StageContext`, so the per-stage
+behaviour is bit-for-bit identical regardless of which executor runs
+the pipeline.
+
+Pipeline order::
+
+  question_analysis (Opus) → personas (Opus) → outline (Opus + Sonnet)
+    → interviews (Sonnet, parallel per-persona) → verifier (DuckDB)
+    → synthesis (Opus, parallel section writers)
+
+Why the executor is split via the worker thread in
+:func:`materialize_research_cell` is documented inline. The short
+version: ``dagster.materialize`` is a sync function that wants its own
+event loop, so we hand it one in a thread while the parent FastAPI
+loop continues to drive the bus, anthropic client, and SSE streams in
+its own loop. The asset bodies in :mod:`dagster_assets` schedule
+coroutines back onto the parent loop, keeping all I/O in the loop they
+were originally constructed in.
 """
 from __future__ import annotations
 
@@ -26,21 +38,24 @@ import time
 import uuid
 from typing import Any
 
-from anthropic import AsyncAnthropic
-
 from .config import get_settings
-from .events import EventBus, create_bus
-from .interviewer import Interviewer
-from .memory import DialogueMemory
-from .models import DialogueTurn, FinalReport, OutlineSection, Persona, SSEEvent, SubReport
-from .outline import assign_sections, draft_seed_outline
-from .persona_generator import generate_personas
-from .perspective import PerspectiveAgent
-from .question_analysis import analyze_question
-from .run_writer import RunWriter
-from .summarizer import draft_subreport, synthesize
-from .tools.duckdb_tool import schema_summary
-from .verifier import verify_subreports
+from .models import FinalReport, SSEEvent
+from .pricing import (
+    BudgetExceeded,
+    drop_tracker,
+    run_ctx,
+)
+from .stages import (
+    StageContext,
+    build_stage_context,
+    render_partial_brief,
+    stage_interviews,
+    stage_outline,
+    stage_personas,
+    stage_question_analysis,
+    stage_synthesis,
+    stage_verifier,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,433 +64,351 @@ def new_run_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
+# ----------------------------------------------------------- Sync composition
+
+
 async def run_research(
     question: str,
     run_id: str | None = None,
     n_personas: int | None = None,
     max_turns: int | None = None,
+    *,
+    enable_web_browse: bool | None = None,
+    max_browses_per_cell: int | None = None,
+    max_cost_usd: float | None = None,
 ) -> FinalReport:
-    """Run the multi-perspective research pipeline. If `n_personas` is None
-    (the common CLI default), the upfront question analyzer sizes the panel
-    to the question; the user override always wins when supplied."""
-    settings = get_settings()
+    """Run the multi-perspective research pipeline as a sequential
+    async composition over the per-stage adapters in :mod:`stages`.
+
+    Cost guardrails (all optional, all override settings when supplied):
+      - ``enable_web_browse``: master toggle; when False, web_browse
+        calls short-circuit to a hint and never spawn a browser.
+      - ``max_browses_per_cell``: hard cap on browse calls across the run.
+      - ``max_cost_usd``: dollar ceiling. Crossing it raises
+        :class:`pricing.BudgetExceeded` mid-run; the cell is marked
+        errored with a clear reason instead of bleeding budget silently.
+    """
     run_id = run_id or new_run_id()
-    user_persona_override = n_personas  # may be None
-    max_turns = max_turns or settings.default_max_turns
-
-    bus = create_bus(run_id, settings.runs_dir)
-    run_dir = settings.runs_dir / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
-    writer = RunWriter(run_dir)
-    stage_timings: list[tuple[str, float]] = []
-
-    t0 = time.monotonic()
-    settings_summary = {
-        "opus_model": settings.opus_model_id,
-        "sonnet_model": settings.sonnet_model_id,
-        "parallel_persona_limit": settings.parallel_persona_limit,
-        "parallel_section_limit": settings.parallel_section_limit,
-        "enable_verifier": settings.enable_verifier,
-        "browser_use_cloud": bool(settings.browser_use_api_key),
-        "browser_use_timeout_s": settings.browser_use_timeout_s,
-    }
-    client = AsyncAnthropic(api_key=settings.anthropic_api_key)
-    dataset_schema = schema_summary()
-
-    # 0. Question analysis (decide panel size + seed perspectives)
-    await bus.emit(SSEEvent(type="stage_started", run_id=run_id, data={"stage": "question_analysis"}))
-    t_stage = time.monotonic()
-    plan = await analyze_question(client, question, persona_override=user_persona_override)
-    n_personas = plan.recommended_personas
-    writer.write_question(question, n_personas, max_turns, settings_summary)
-    writer.write_question_plan(plan, user_override=user_persona_override)
-    elapsed_qa = round(time.monotonic() - t_stage, 1)
-    stage_timings.append(("question_analysis", elapsed_qa))
-    logger.info(
-        "stage question_analysis done in %ss — complexity=%s score=%d → %d personas (override=%s)",
-        elapsed_qa, plan.complexity, plan.complexity_score, n_personas, user_persona_override,
+    settings = get_settings()
+    parent_loop = asyncio.get_running_loop()
+    ctx = build_stage_context(
+        question=question,
+        run_id=run_id,
+        n_personas=n_personas,
+        max_turns=max_turns,
+        enable_web_browse=enable_web_browse,
+        max_browses_per_cell=max_browses_per_cell,
+        max_cost_usd=max_cost_usd,
+        parent_loop=parent_loop,
     )
-    await bus.emit(
-        SSEEvent(
-            type="run_started",
-            run_id=run_id,
-            data={
-                "question": question,
-                "personas": n_personas,
-                "max_turns": max_turns,
-            },
-        )
-    )
-    await bus.emit(
-        SSEEvent(
-            type="question_plan",
-            run_id=run_id,
-            data={
-                "complexity": plan.complexity,
-                "complexity_score": plan.complexity_score,
-                "recommended_personas": plan.recommended_personas,
-                "user_override": user_persona_override,
-                "axes": plan.axes,
-                "n_seeds": len(plan.must_have_perspectives),
-                "rationale": plan.rationale,
-            },
-        )
-    )
-    await bus.emit(SSEEvent(
-        type="stage_completed", run_id=run_id,
-        data={
-            "stage": "question_analysis",
-            "elapsed_s": elapsed_qa,
-            "complexity": plan.complexity,
-            "n_personas": n_personas,
-        },
-    ))
+
+    run_token = run_ctx(run_id)
+    run_token.__enter__()
 
     try:
-        # 1. Personas
-        await bus.emit(SSEEvent(type="stage_started", run_id=run_id, data={"stage": "personas"}))
-        t_stage = time.monotonic()
-        personas = await generate_personas(
-            client, question, n_personas, plan=plan, debug_dir=run_dir / "debug",
-        )
-        for p in personas:
-            await bus.emit(
-                SSEEvent(
-                    type="persona_created",
-                    run_id=run_id,
-                    persona_id=p.id,
-                    data=p.model_dump(),
-                )
-            )
-        writer.write_personas(personas)
-        elapsed_personas = round(time.monotonic() - t_stage, 1)
-        stage_timings.append(("personas", elapsed_personas))
-        # Panel is analyst-only by design; we still tally persona_type in case a
-        # future experiment re-enables synthetic consumer personas.
-        type_counts = {"consumer": 0, "expert": 0}
-        for p in personas:
-            type_counts[p.persona_type] = type_counts.get(p.persona_type, 0) + 1
-        logger.info(
-            "stage personas done in %ss — %d analysts (%s)",
-            elapsed_personas, len(personas),
-            ", ".join(f"{k}={v}" for k, v in type_counts.items() if v),
-        )
-        await bus.emit(SSEEvent(
-            type="stage_completed", run_id=run_id,
-            data={
-                "stage": "personas",
-                "elapsed_s": elapsed_personas,
-                "n_personas": len(personas),
-                "type_counts": type_counts,
-            },
-        ))
-
-        # 2. Seed outline + section assignments
-        await bus.emit(SSEEvent(type="stage_started", run_id=run_id, data={"stage": "outline"}))
-        t_stage = time.monotonic()
-        executive_intent, seed_sections = await draft_seed_outline(
-            client, question, personas, dataset_schema
-        )
-        await bus.emit(
-            SSEEvent(
-                type="seed_outline",
-                run_id=run_id,
-                data={
-                    "executive_intent": executive_intent,
-                    "sections": [s.model_dump() for s in seed_sections],
-                },
-            )
-        )
-        assignments = await assign_sections(client, question, personas, seed_sections)
-        personas = [
-            p.model_copy(update={"section_assignments": assignments.get(p.id, [])})
-            for p in personas
-        ]
-        for p in personas:
-            await bus.emit(
-                SSEEvent(
-                    type="persona_assigned",
-                    run_id=run_id,
-                    persona_id=p.id,
-                    data={"sections": p.section_assignments},
-                )
-            )
-        writer.write_seed_outline(executive_intent, seed_sections, assignments, personas)
-        elapsed_outline = round(time.monotonic() - t_stage, 1)
-        stage_timings.append(("outline", elapsed_outline))
-        logger.info(
-            "stage outline done in %ss — %d sections drafted, assignments=%s",
-            elapsed_outline, len(seed_sections),
-            {pid: len(hs) for pid, hs in assignments.items()},
-        )
-        await bus.emit(SSEEvent(
-            type="stage_completed", run_id=run_id,
-            data={
-                "stage": "outline",
-                "elapsed_s": elapsed_outline,
-                "n_sections": len(seed_sections),
-            },
-        ))
-
-        # 3. Parallel interviews
-        await bus.emit(SSEEvent(type="stage_started", run_id=run_id, data={"stage": "interviews"}))
-        t_stage = time.monotonic()
-        sem = asyncio.Semaphore(settings.parallel_persona_limit)
-
-        async def _persona_task(p: Persona) -> SubReport:
-            async with sem:
-                return await _interview_persona(
-                    client=client,
-                    bus=bus,
-                    run_id=run_id,
-                    question=question,
-                    persona=p,
-                    dataset_schema=dataset_schema,
-                    max_turns=max_turns,
-                    writer=writer,
-                )
-
-        results = await asyncio.gather(
-            *[_persona_task(p) for p in personas],
-            return_exceptions=True,
-        )
-        sub_reports: list[SubReport] = []
-        for p, r in zip(personas, results):
-            if isinstance(r, Exception):
-                logger.exception("persona %s failed", p.id, exc_info=r)
-                await bus.emit(
-                    SSEEvent(
-                        type="error",
-                        run_id=run_id,
-                        persona_id=p.id,
-                        data={"message": str(r)},
-                    )
-                )
-                continue
-            sub_reports.append(r)
-        if not sub_reports:
-            raise RuntimeError("All personas failed; no sub-reports to synthesize.")
-        writer.write_subreports(sub_reports)
-        elapsed_interviews = round(time.monotonic() - t_stage, 1)
-        stage_timings.append(("interviews", elapsed_interviews))
-        total_cites = sum(len(s.citations) for s in sub_reports)
-        logger.info(
-            "stage interviews done in %ss — %d/%d personas succeeded, %d total citations",
-            elapsed_interviews, len(sub_reports), n_personas, total_cites,
-        )
-        await bus.emit(SSEEvent(
-            type="stage_completed", run_id=run_id,
-            data={
-                "stage": "interviews",
-                "elapsed_s": elapsed_interviews,
-                "successful": len(sub_reports),
-                "failed": n_personas - len(sub_reports),
-                "total_citations": total_cites,
-            },
-        ))
-
-        # 4. Verifier (re-run [Q?] SQL in parallel)
-        verified = 0
-        flagged = 0
+        await stage_question_analysis(ctx)
+        await stage_personas(ctx)
+        await stage_outline(ctx)
+        await stage_interviews(ctx)
         if settings.enable_verifier:
-            await bus.emit(SSEEvent(type="stage_started", run_id=run_id, data={"stage": "verifier"}))
-            t_stage = time.monotonic()
-            sub_reports = await verify_subreports(sub_reports)
-            verified = sum(
-                1 for s in sub_reports for c in s.citations if c.verified is True
-            )
-            flagged = sum(
-                1 for s in sub_reports for c in s.citations if c.verified is False
-            )
-            writer.write_verifier(sub_reports)
-            elapsed_v = round(time.monotonic() - t_stage, 1)
-            stage_timings.append(("verifier", elapsed_v))
-            logger.info(
-                "stage verifier done in %ss — %d ✓ verified, %d ⚠ flagged",
-                elapsed_v, verified, flagged,
-            )
-            await bus.emit(SSEEvent(
-                type="stage_completed", run_id=run_id,
-                data={
-                    "stage": "verifier",
-                    "elapsed_s": elapsed_v,
-                    "verified": verified,
-                    "flagged": flagged,
-                },
-            ))
-
-        # 5. Synthesis (parallel section writers + evidence appendix)
-        await bus.emit(SSEEvent(
-            type="outline_started",
-            run_id=run_id,
-            data={"n_subreports": len(sub_reports)},
-        ))
-        await bus.emit(SSEEvent(type="stage_started", run_id=run_id, data={"stage": "synthesis"}))
-        t_stage = time.monotonic()
-        final = await synthesize(
-            client,
-            question,
-            sub_reports,
-            seed_sections=seed_sections,
-            executive_intent=executive_intent,
-        )
-
-        (run_dir / "final.md").write_text(final.markdown)
-        (run_dir / "final.json").write_text(final.model_dump_json(indent=2))
-        writer.write_final_outline(
-            final.outline[0] if final.outline else "",
-            final.outline[1:] if len(final.outline) > 1 else [],
-        )
-        elapsed_syn = round(time.monotonic() - t_stage, 1)
-        stage_timings.append(("synthesis", elapsed_syn))
-        logger.info(
-            "stage synthesis done in %ss — %d sections, %d citations, %d chars",
-            elapsed_syn, len(final.outline), len(final.citations), len(final.markdown),
-        )
-        await bus.emit(SSEEvent(
-            type="stage_completed", run_id=run_id,
-            data={"stage": "synthesis", "elapsed_s": elapsed_syn},
-        ))
-
-        total_elapsed = round(time.monotonic() - t0, 1)
-        writer.write_run_summary(
-            question=question,
-            elapsed_s=total_elapsed,
-            n_personas=len(personas),
-            n_subreports=len(sub_reports),
-            n_citations=len(final.citations),
-            verified=verified,
-            flagged=flagged,
-            n_reactions=0,  # challenge round removed
-            stage_timings=stage_timings,
-        )
-        writer.write_index()
-        logger.info(
-            "run %s complete in %ss — %d citations (%d ✓, %d ⚠)",
-            run_id, total_elapsed, len(final.citations), verified, flagged,
-        )
-        await bus.emit(
-            SSEEvent(
-                type="final_ready",
-                run_id=run_id,
-                data={
-                    "markdown_len": len(final.markdown),
-                    "n_citations": len(final.citations),
-                    "n_sections": len(final.outline),
-                    "elapsed_s": total_elapsed,
-                },
-            )
-        )
-        return final
+            await stage_verifier(ctx)
+        await stage_synthesis(ctx)
+        return await _finalize_run(ctx)
+    except BudgetExceeded as be:
+        await _handle_budget_exceeded(ctx, be)
+        raise
     except Exception as e:
         logger.exception("Run %s failed", run_id)
-        await bus.emit(
+        await ctx.bus.emit(
             SSEEvent(type="error", run_id=run_id, data={"message": str(e)})
         )
         raise
     finally:
-        await bus.close()
+        await _cleanup_run(ctx, run_token)
 
 
-async def _interview_persona(
-    client: AsyncAnthropic,
-    bus: EventBus,
-    run_id: str,
-    question: str,
-    persona: Persona,
-    dataset_schema: str,
-    max_turns: int,
-    writer: RunWriter | None = None,
-) -> SubReport:
-    memory = DialogueMemory()
-    interviewer = Interviewer(client, persona, question, memory)
-    perspective = PerspectiveAgent(client, persona, question, dataset_schema)
+async def _finalize_run(ctx: StageContext) -> FinalReport:
+    """Write run-summary + index after a successful pipeline.
 
-    turns: list[DialogueTurn] = []
-    for t in range(1, max_turns + 1):
-        q = await interviewer.next_question()
-        if q is None:
-            await bus.emit(
-                SSEEvent(
-                    type="interviewer_stopped",
-                    run_id=run_id,
-                    persona_id=persona.id,
-                    turn_idx=t,
-                    data={"reason": "checklist + sections covered"},
-                )
-            )
-            break
-
-        await bus.emit(
-            SSEEvent(
-                type="turn_started",
-                run_id=run_id,
-                persona_id=persona.id,
-                turn_idx=t,
-                data={"question": q},
-            )
-        )
-
-        async def on_event(name: str, payload: dict[str, Any]) -> None:
-            await bus.emit(
-                SSEEvent(
-                    type=name,
-                    run_id=run_id,
-                    persona_id=persona.id,
-                    turn_idx=t,
-                    data=payload,
-                )
-            )
-
-        turn = await perspective.answer(q, memory, t, on_event=on_event)
-        memory.append(turn)
-        turns.append(turn)
-        await memory.refresh_summary_if_needed(client)
-
-        await bus.emit(
-            SSEEvent(
-                type="turn_completed",
-                run_id=run_id,
-                persona_id=persona.id,
-                turn_idx=t,
-                data={
-                    "answer": turn.answer,
-                    "n_citations": len(turn.citations),
-                    "done": turn.done,
-                },
-            )
-        )
-        if turn.done:
-            break
-
-    sub_report = await draft_subreport(client, persona, question, turns)
-    # Persist per-persona transcript + sub-report
-    settings = get_settings()
-    persona_dir = settings.runs_dir / run_id / persona.id
-    persona_dir.mkdir(parents=True, exist_ok=True)
-    (persona_dir / "transcript.json").write_text(
-        "[" + ",\n".join(t.model_dump_json(indent=2) for t in turns) + "]"
+    Emits ``final_ready`` and finalises the manifest. Returns the
+    :class:`FinalReport` produced by :func:`stage_synthesis`.
+    """
+    if ctx.final is None:
+        raise RuntimeError("_finalize_run called before stage_synthesis populated ctx.final")
+    total_elapsed = round(time.monotonic() - ctx.t0, 1)
+    ctx.writer.write_run_summary(
+        question=ctx.question,
+        elapsed_s=total_elapsed,
+        n_personas=len(ctx.personas),
+        n_subreports=len(ctx.sub_reports),
+        n_citations=len(ctx.final.citations),
+        verified=ctx.verified_count,
+        flagged=ctx.flagged_count,
+        n_reactions=0,
+        stage_timings=ctx.stage_timings,
     )
-    (persona_dir / "subreport.md").write_text(sub_report.markdown)
-    if writer is not None:
-        writer.write_interview(persona, turns)
+    ctx.writer.write_index()
     logger.info(
-        "interview %s done — %d turns, %d citations, headline=%r",
-        persona.id, len(turns), len(sub_report.citations),
-        (sub_report.headline_claim or "")[:100],
+        "run %s complete in %ss — %d citations (%d ✓, %d ⚠)",
+        ctx.run_id, total_elapsed, len(ctx.final.citations),
+        ctx.verified_count, ctx.flagged_count,
     )
-
-    await bus.emit(
+    await ctx.bus.emit(
         SSEEvent(
-            type="subreport_ready",
-            run_id=run_id,
-            persona_id=persona.id,
+            type="final_ready",
+            run_id=ctx.run_id,
             data={
-                "markdown_len": len(sub_report.markdown),
-                "n_citations": len(sub_report.citations),
-                "n_turns": len(turns),
-                "headline_claim": sub_report.headline_claim,
+                "markdown_len": len(ctx.final.markdown),
+                "n_citations": len(ctx.final.citations),
+                "n_sections": len(ctx.final.outline),
+                "elapsed_s": total_elapsed,
             },
         )
     )
-    return sub_report
+    ctx.manifest.finalize()
+    return ctx.final
+
+
+async def _handle_budget_exceeded(ctx: StageContext, be: BudgetExceeded) -> None:
+    """Write a partial brief from whatever stages completed.
+
+    The cell still gets ``status="error"`` upstream, but the user gets a
+    file with the personas that ran, the headlines from completed
+    sub-reports, and a stage-by-stage spend breakdown so they can
+    right-size ``max_cost_usd`` next time.
+    """
+    logger.warning(
+        "Run %s halted by cost budget: projected $%.4f > limit $%.4f",
+        ctx.run_id, be.spent, be.limit,
+    )
+    try:
+        partial_md = render_partial_brief(
+            question=ctx.question,
+            personas=ctx.personas,
+            sub_reports=ctx.sub_reports,
+            seed_sections=ctx.seed_sections,
+            spent=be.spent,
+            limit=be.limit,
+            cost_breakdown=ctx.cost_tracker.to_json(),
+        )
+        (ctx.run_dir / "final.md").write_text(partial_md, encoding="utf-8")
+        (ctx.run_dir / "partial_brief.md").write_text(partial_md, encoding="utf-8")
+        logger.info("Run %s wrote partial brief (%d bytes)", ctx.run_id, len(partial_md))
+    except Exception:  # noqa: BLE001
+        logger.exception("partial brief write failed for %s", ctx.run_id)
+    await ctx.bus.emit(
+        SSEEvent(
+            type="error",
+            run_id=ctx.run_id,
+            data={
+                "message": str(be),
+                "reason": "budget_exceeded",
+                "spent_usd": be.spent,
+                "limit_usd": be.limit,
+                "partial_brief": True,
+                "n_subreports": len(ctx.sub_reports),
+            },
+        )
+    )
+
+
+async def _cleanup_run(ctx: StageContext, run_token: run_ctx) -> None:
+    """Final cleanup that always runs (even on hard errors).
+
+    Persists a cost summary to events.jsonl, drops the cost tracker from
+    the registry, and closes the event bus.
+    """
+    ctx.manifest.finalize()
+    try:
+        await ctx.bus.emit(
+            SSEEvent(
+                type="cost_summary",
+                run_id=ctx.run_id,
+                data=ctx.cost_tracker.to_json(),
+            )
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("cost_summary emit failed", exc_info=True)
+    try:
+        run_token.__exit__(None, None, None)
+    except Exception:  # noqa: BLE001
+        pass
+    drop_tracker(ctx.run_id)
+    await ctx.bus.close()
+
+
+# -------------------------------------------------- Dagster materialization
+
+
+async def materialize_research_cell(
+    question: str,
+    run_id: str | None = None,
+    n_personas: int | None = None,
+    max_turns: int | None = None,
+    *,
+    enable_web_browse: bool | None = None,
+    max_browses_per_cell: int | None = None,
+    max_cost_usd: float | None = None,
+) -> FinalReport:
+    """Execute one research cell through Dagster's asset graph.
+
+    Runs the same pipeline as :func:`run_research` — same stage
+    functions, same :class:`StageContext` — but the executor is Dagster.
+    Each declared ``@asset`` in :mod:`dagster_assets` becomes one node
+    in the run, with the cell ``run_id`` as the dynamic partition key.
+    The asset bodies look up the live :class:`StageContext` from the
+    process-local registry in :mod:`dagster_assets` and schedule the
+    matching async stage on the parent event loop.
+
+    The reason ``dagster.materialize`` runs in a worker thread: it's a
+    sync function that wants its own event loop. Calling it from inside
+    the parent FastAPI loop directly would error. ``asyncio.to_thread``
+    keeps the parent loop responsive (so SSE consumers continue to
+    drain the bus) while Dagster does its orchestration in the side
+    thread.
+
+    Returns the :class:`FinalReport` produced by ``stage_synthesis``,
+    or raises :class:`BudgetExceeded` (with the partial brief already
+    written) on budget exhaustion.
+    """
+    from .dagster_assets import (
+        ALL_ASSETS,
+        cell_partitions,
+        register_stage_context,
+        unregister_stage_context,
+    )
+
+    run_id = run_id or new_run_id()
+    settings = get_settings()
+    parent_loop = asyncio.get_running_loop()
+    ctx = build_stage_context(
+        question=question,
+        run_id=run_id,
+        n_personas=n_personas,
+        max_turns=max_turns,
+        enable_web_browse=enable_web_browse,
+        max_browses_per_cell=max_browses_per_cell,
+        max_cost_usd=max_cost_usd,
+        parent_loop=parent_loop,
+    )
+
+    register_stage_context(run_id, ctx)
+    run_token = run_ctx(run_id)
+    run_token.__enter__()
+
+    # Note: contextvars set via run_token are bound to the parent loop's
+    # task. The asset bodies run in a worker thread that does NOT inherit
+    # those tokens. To keep cost attribution working from inside the
+    # asset bodies, the asset adapters re-enter run_ctx(run_id) on the
+    # parent loop when they schedule the stage coroutine.
+
+    try:
+        result = await asyncio.to_thread(
+            _run_dagster_materialize,
+            run_id=run_id,
+            partition_set_name=cell_partitions.name,
+            assets=ALL_ASSETS,
+            run_verifier=settings.enable_verifier,
+        )
+        if not result.success:
+            # Surface the underlying failure cause if Dagster captured one.
+            failure_msgs = [
+                str(ev.message) for ev in (result.all_events or [])
+                if "step_failure" in str(ev.event_type_value).lower()
+            ]
+            raise RuntimeError(
+                "Dagster materialization failed for cell "
+                f"{run_id!r}: {failure_msgs or 'no step_failure events captured'}"
+            )
+        return await _finalize_run(ctx)
+    except BudgetExceeded as be:
+        await _handle_budget_exceeded(ctx, be)
+        raise
+    except Exception as e:
+        # If Dagster wrapped a BudgetExceeded inside its own DagsterError,
+        # unwrap and re-handle so the partial brief is written.
+        budget_err = _find_budget_exceeded(e)
+        if budget_err is not None:
+            await _handle_budget_exceeded(ctx, budget_err)
+            raise budget_err from e
+        logger.exception("Run %s failed", run_id)
+        await ctx.bus.emit(
+            SSEEvent(type="error", run_id=run_id, data={"message": str(e)})
+        )
+        raise
+    finally:
+        unregister_stage_context(run_id)
+        await _cleanup_run(ctx, run_token)
+
+
+def _run_dagster_materialize(
+    *,
+    run_id: str,
+    partition_set_name: str,
+    assets: list[Any],
+    run_verifier: bool,
+) -> Any:
+    """Synchronously execute one cell's assets through Dagster.
+
+    Runs in a worker thread so Dagster gets a fresh event loop and the
+    parent FastAPI loop stays responsive. The dynamic partition key is
+    added to an ephemeral instance immediately before
+    ``materialize`` so the partition set is non-empty when Dagster
+    looks it up.
+
+    The ``assets`` argument is the full list. If verification is
+    disabled in settings we skip the ``verifier`` asset by selecting
+    everything else explicitly.
+    """
+    from dagster import AssetSelection, DagsterInstance, materialize
+
+    instance = DagsterInstance.ephemeral()
+    instance.add_dynamic_partitions(partition_set_name, [run_id])
+    selection: AssetSelection | None = None
+    if not run_verifier:
+        selection = AssetSelection.all() - AssetSelection.keys("verifier")
+    return materialize(
+        assets,
+        partition_key=run_id,
+        instance=instance,
+        selection=selection,
+        raise_on_error=False,
+    )
+
+
+def _find_budget_exceeded(exc: BaseException) -> BudgetExceeded | None:
+    """Walk the exception chain looking for a :class:`BudgetExceeded`.
+
+    Dagster wraps op exceptions in ``DagsterUserCodeExecutionError`` /
+    ``DagsterExecutionStepExecutionError`` and similar, with the original
+    exception attached via ``__cause__`` or stored as an attribute. We
+    walk both sides so we can still surface budget exhaustion as the
+    semantic error type the rest of the system expects.
+    """
+    seen: set[int] = set()
+    stack: list[BaseException] = [exc]
+    while stack:
+        cur = stack.pop()
+        if id(cur) in seen:
+            continue
+        seen.add(id(cur))
+        if isinstance(cur, BudgetExceeded):
+            return cur
+        # Dagster's DagsterUserCodeExecutionError stashes the original
+        # exception on ``original_exc_info`` / ``user_exception``.
+        for attr in ("user_exception", "original_exception"):
+            inner = getattr(cur, attr, None)
+            if isinstance(inner, BaseException):
+                stack.append(inner)
+        if cur.__cause__ is not None:
+            stack.append(cur.__cause__)
+        if cur.__context__ is not None:
+            stack.append(cur.__context__)
+    return None
+
+
+__all__ = [
+    "materialize_research_cell",
+    "new_run_id",
+    "run_research",
+]
