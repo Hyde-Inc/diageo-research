@@ -28,6 +28,7 @@ from sse_starlette.sse import EventSourceResponse
 from .. import hitl
 from ..config import get_settings
 from ..events import create_bus, get_bus
+from ..followup import answer_followup
 from ..models import PlanEdit, PlanForReview, RunState
 from ..orchestrator import new_run_id, run_research
 
@@ -175,3 +176,37 @@ def submit_plan(run_id: str, edit: PlanEdit) -> dict[str, str]:
             detail="Plan review already resolved.",
         )
     return {"run_id": run_id, "decision": edit.decision}
+
+
+class FollowupRequest(BaseModel):
+    question: str = Field(..., min_length=1)
+
+
+@app.post("/research/{run_id}/followup")
+async def post_followup(run_id: str, req: FollowupRequest) -> EventSourceResponse:
+    """Stream a context-only follow-up answer about a completed run.
+
+    Loads `final.json` + per-persona sub-reports off disk and streams a
+    single Anthropic call back as SSE chunks (`token` deltas, terminal
+    `done` with cited `[S?]` IDs, or `error`). No tools, no panel re-run,
+    no `runs/` writes.
+
+    404 when the run hasn't synthesized a final brief yet — the agent has
+    nothing to cite.
+    """
+    settings = get_settings()
+    final = settings.runs_dir / run_id / "final.json"
+    if not final.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Run has no final report yet — wait for synthesis to complete.",
+        )
+
+    async def event_generator() -> AsyncIterator[dict[str, str]]:
+        async for chunk in answer_followup(run_id, req.question, settings):
+            yield {
+                "event": chunk.type,
+                "data": chunk.model_dump_json(),
+            }
+
+    return EventSourceResponse(event_generator())
