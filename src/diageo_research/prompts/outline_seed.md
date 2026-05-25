@@ -16,10 +16,12 @@ You are the **lead strategy synthesizer** sketching the outline of a Diageo stra
 Draft a **tight executive-level** outline:
 
 - One **executive intent** (1 sentence) — what the brief is trying to settle for a partner. This is your **internal note to the team**; the final executive *answer* is drafted post-hoc from the section drafts, so do NOT write the answer here.
-- **3–5 section headings** (fewer is better — partner-grade briefs are short). Each carries a 1–2 sentence `intent` telling the writer what claim that section delivers. Order them the way a partner wants to read them: direct verdict → biggest drivers (data) → cohort / channel / category fault lines → counter-evidence and risks → recommendations.
+- **3–5 section headings** (fewer is better — partner-grade briefs are short). Each carries a 1–2 sentence `intent` telling the writer what claim that section delivers. Order them the way a partner wants to read them: direct verdict → biggest drivers (data) → cohort / demographic fault lines → counter-evidence and risks → recommendations.
+
+Because the panel is **demographic-anchored** (each analyst owns a specific customer demographic, sometimes paired with a Diageo SKU), at least **one section must explicitly cut findings across the demographics on the panel** — whichever section makes the per-demographic split most consequential to the question. The intent for that section should call out "compare cohort A vs cohort B vs cohort C" by name when possible.
 
 The section headings will be used to:
-1. Assign 1–2 sections to each persona based on the lens they own.
+1. Assign 1–2 sections to each persona based on the demographic they own.
 2. Steer the parallel section writers at the end. Each section writer will be told about the chart + table aids auto-built from verified DuckDB citations, so favour section intents where evidence can be visualised (time series, cohort splits, category breakdowns).
 
 # Output format

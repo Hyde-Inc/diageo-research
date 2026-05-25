@@ -95,6 +95,8 @@ async def generate_personas(
                 description=str(row.get("description", "")),
                 system_prompt=str(row.get("system_prompt", "")),
                 persona_type=persona_type,  # type: ignore[arg-type]
+                demographic=str(row.get("demographic", "")).strip(),
+                sku_focus=str(row.get("sku_focus", "")).strip(),
                 checklist=checklist,
             )
         )
@@ -126,9 +128,10 @@ def _persist_debug(debug_dir: Path | None, filename: str, text: str) -> None:
 
 
 def _validate_diversity(personas: list[Persona], n: int) -> list[Persona]:
-    """Drop duplicates. For experts we deduplicate by normalized role family.
-    Consumers can share role wording ('shopper', 'drinker'); we dedupe them by
-    their full *name* anchor instead (which encodes their demographic).
+    """Drop duplicates. For demographic-anchored analysts (the current design)
+    we deduplicate primarily on the normalized `demographic` field; we fall
+    back to role/name normalisation for older personas that pre-date the
+    `demographic` field. Consumers (legacy) dedupe on the full name anchor.
     Raise if fewer than min(n, 2) distinct personas remain."""
     seen_expert: set[str] = set()
     seen_consumer: set[str] = set()
@@ -140,19 +143,33 @@ def _validate_diversity(personas: list[Persona], n: int) -> list[Persona]:
                 continue
             seen_consumer.add(key)
         else:
-            key = _normalize_role(p.role) or _normalize_role(p.name)
+            key = (
+                _normalize_demographic(p.demographic)
+                or _normalize_role(p.role)
+                or _normalize_role(p.name)
+            )
             if not key or key in seen_expert:
                 continue
             seen_expert.add(key)
         out.append(p)
     minimum = min(n, 2)
     if len(out) < minimum:
-        roles = [(p.persona_type, p.role) for p in personas]
+        roles = [(p.persona_type, p.demographic or p.role) for p in personas]
         raise RuntimeError(
             f"Persona generator produced too few diverse personas (got {len(out)}, "
             f"need {minimum}): {roles}"
         )
     return out
+
+
+def _normalize_demographic(demographic: str) -> str:
+    """Normalize a demographic anchor for de-duplication. Strips punctuation,
+    lowercases, collapses whitespace. "Gen Z Latino, LA, weekend buyer" and
+    "gen z latino la weekend buyer" map to the same key."""
+    s = demographic.lower()
+    s = re.sub(r"[^a-z0-9 ]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
 
 
 def _normalize_role(role: str) -> str:

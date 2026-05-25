@@ -22,6 +22,14 @@ class Persona(BaseModel):
     description: str
     system_prompt: str
     persona_type: PersonaType = "expert"
+    # Demographic anchor (geography × age × ethnicity × occasion / income tier)
+    # the analyst SPECIALISES on. Required to be non-empty in the seed plan
+    # so the brief can be answered per-demographic, but kept defaulted here
+    # for backward compatibility with older runs / saved JSONL.
+    demographic: str = ""
+    # Optional Diageo SKU the analyst weights toward (e.g. "Don Julio 1942",
+    # "Casamigos Blanco 750ml"). Empty when the analyst is portfolio-wide.
+    sku_focus: str = ""
     checklist: list[str] = Field(default_factory=list)
     section_assignments: list[str] = Field(default_factory=list)
 
