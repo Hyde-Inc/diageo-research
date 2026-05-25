@@ -54,6 +54,24 @@ class Settings(BaseSettings):
     # budget. Belt-and-braces against runaway loops where the model burns
     # the full token budget hitting CAPTCHAs.
     max_browses_per_cell: int = 6
+    # `web_fetch` caps. The model can otherwise spend its entire iteration
+    # budget retrying dead URLs (SSL errors, 4xx, empty bodies) on the
+    # very first turn — every fetch is 1–20 s + the next Sonnet round-trip.
+    # The per-turn cap forces synthesis after a handful of fetches; the
+    # per-cell cap is the belt-and-braces ceiling across all turns. Each
+    # fetch failure is also cached per-URL so the model can't retry the
+    # exact same URL twice in the same cell (see tools/web_fetch.py).
+    max_fetches_per_turn: int = 6
+    max_fetches_per_cell: int = 24
+    # When the model has run two consecutive iterations whose tool_results
+    # are all empty (snippets=[] or duckdb error/0-rows) AND the model
+    # produced no text content of its own, the loop bails to a "tools are
+    # failing — answer from training data" forced synthesis. This is
+    # separate from the regular `MAX_TOOL_ITERATIONS` ceiling: it fires
+    # earlier on dead-tool runs so we don't burn the full 6 round-trips
+    # against URLs that are never going to resolve. Configurable so cells
+    # can set it higher when tool latency itself is the expected failure.
+    max_unproductive_tool_iters: int = 2
     # Optional dollar ceiling. When set and the run's cumulative Anthropic
     # spend (token usage × pricing) crosses it, the next call raises and
     # the cell is marked errored with reason="budget_exceeded". `None`

@@ -19,6 +19,7 @@ turn from burning 30+ minutes on browse loops.
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlparse
 
 from ..config import get_settings
 from ..models import BrowserSnippet, Citation, PersonaType, QueryResult
@@ -26,6 +27,20 @@ from .browser import browse
 from .duckdb_tool import run_query
 from .web_fetch import TOOL_SPEC as WEB_FETCH_SPEC
 from .web_fetch import fetch as web_fetch
+
+
+def _fetch_failure_key(url: str) -> str:
+    """Normalize a URL to ``(host, path)`` for the per-cell failure cache.
+
+    Naive: lower-cases the netloc and keeps the path as-is. Punycode/IDN
+    edge cases are NOT handled — same logical host spelled differently
+    will dedupe imperfectly. For our use case (an LLM that retries an
+    identical string verbatim) that's fine.
+    """
+    parsed = urlparse((url or "").strip())
+    netloc = (parsed.netloc or "").lower()
+    path = parsed.path or "/"
+    return f"{netloc}{path}"
 
 TOOL_SPECS: list[dict[str, Any]] = [
     {
@@ -112,6 +127,19 @@ class ToolRegistry:
         self._browse_calls_this_turn = 0
         # Per-cell cap (does NOT reset; persists across turns).
         self._browse_calls_total = 0
+        # web_fetch caps mirror the browse pattern (per-turn + per-cell).
+        # Fetch is much cheaper than browse but Sonnet still spends a full
+        # round-trip per call, so a runaway fetch loop on dead URLs is a
+        # real cost vector. Caps are read from settings each dispatch so a
+        # test/spec can monkeypatch get_settings to tune them.
+        self._fetch_calls_this_turn = 0
+        self._fetch_calls_total = 0
+        # Per-URL failure cache: normalized "(host, path)" key → human
+        # reason ("ssl_error", "http_404", "empty_body", …). Populated by
+        # `web_fetch.fetch()` when we hand it this dict; read here on the
+        # next dispatch so a verbatim retry short-circuits before any
+        # network call. Lives for the registry's lifetime (= one cell).
+        self._failed_urls: dict[str, str] = {}
         self._enable_web_browse: bool = (
             settings.enable_web_browse if enable_web_browse is None else bool(enable_web_browse)
         )
@@ -124,6 +152,7 @@ class ToolRegistry:
     def start_turn(self) -> None:
         """Reset per-turn counters at the top of each `PerspectiveAgent.answer()`."""
         self._browse_calls_this_turn = 0
+        self._fetch_calls_this_turn = 0
 
     @property
     def allowed_tool_names(self) -> set[str]:
@@ -131,8 +160,26 @@ class ToolRegistry:
 
     @property
     def specs(self) -> list[dict[str, Any]]:
+        """Anthropic tool specs filtered by persona allowlist AND by
+        operational state. If `web_browse` is disabled (kill switch) or
+        the per-cell cap is already exhausted, the spec is dropped from
+        the list entirely so Sonnet cannot emit a `tool_use` for it on
+        its next round-trip. The dispatcher's short-circuit (empty-hint
+        return) stays as a safety net for in-flight calls already in the
+        pipeline when state changes mid-turn."""
         allowed = self.allowed_tool_names
-        return [s for s in TOOL_SPECS if s["name"] in allowed]
+        browse_unavailable = (
+            not self._enable_web_browse
+            or self._browse_calls_total >= self._max_browses_per_cell
+        )
+        out: list[dict[str, Any]] = []
+        for spec in TOOL_SPECS:
+            if spec["name"] not in allowed:
+                continue
+            if spec["name"] == "web_browse" and browse_unavailable:
+                continue
+            out.append(spec)
+        return out
 
     async def dispatch(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         if name not in self.allowed_tool_names:
@@ -200,11 +247,92 @@ class ToolRegistry:
             return self._assign_browser_snippets(raw, query)
 
         if name == "web_fetch":
+            settings = get_settings()
             url = args.get("url", "")
+            # Per-cell cap first: an exhausted cell shouldn't even check
+            # the cache, the model needs to stop fetching entirely.
+            if self._fetch_calls_total >= settings.max_fetches_per_cell:
+                self.tool_call_log.append(
+                    {"tool": "web_fetch", "url": url, "outcome": "cell_cap"}
+                )
+                return {
+                    "snippets": [],
+                    "query": url,
+                    "hint": (
+                        f"`web_fetch` budget for this cell is exhausted "
+                        f"(cap={settings.max_fetches_per_cell} total). Synthesize "
+                        f"from the snippets and query results you already have, or "
+                        f"use `duckdb_query` for any remaining quantitative claim."
+                    ),
+                }
+            if self._fetch_calls_this_turn >= settings.max_fetches_per_turn:
+                self.tool_call_log.append(
+                    {"tool": "web_fetch", "url": url, "outcome": "turn_cap"}
+                )
+                return {
+                    "snippets": [],
+                    "query": url,
+                    "hint": (
+                        f"`web_fetch` budget for this turn is exhausted "
+                        f"(cap={settings.max_fetches_per_turn}). Stop fetching new "
+                        f"URLs this turn — synthesize from what you have or use "
+                        f"`duckdb_query`. The cap protects the round-trip budget."
+                    ),
+                }
+            # Per-URL failure cache: if we've already seen this URL fail in
+            # this cell, return the cached reason immediately without a
+            # network call. Stops the loop where Sonnet keeps re-fetching
+            # the same dead URL across iterations.
+            cache_key = _fetch_failure_key(url)
+            cached_reason = self._failed_urls.get(cache_key)
+            if cached_reason:
+                self.tool_call_log.append(
+                    {
+                        "tool": "web_fetch",
+                        "url": url,
+                        "outcome": "cached_failure",
+                        "reason": cached_reason,
+                    }
+                )
+                return {
+                    "snippets": [],
+                    "query": url,
+                    "hint": (
+                        f"URL {url!r} already failed this cell with `{cached_reason}`; "
+                        f"pick a different domain or try `duckdb_query` for a "
+                        f"quantitative angle. Do not re-fetch this URL."
+                    ),
+                }
+            self._fetch_calls_this_turn += 1
+            self._fetch_calls_total += 1
             raw = await web_fetch(
                 url,
                 query=args.get("focus_query") or None,
+                failed_urls=self._failed_urls,
             )
+            # If the fetch failed, `web_fetch.fetch()` already wrote the
+            # reason into `self._failed_urls[cache_key]`. Surface that as a
+            # hint so the model sees WHY (not just "empty"), and so the
+            # tool_call_log captures it for the asset viewer.
+            if not raw:
+                failure_reason = self._failed_urls.get(cache_key, "unknown")
+                self.tool_call_log.append(
+                    {
+                        "tool": "web_fetch",
+                        "url": url,
+                        "outcome": "failed",
+                        "reason": failure_reason,
+                    }
+                )
+                return {
+                    "snippets": [],
+                    "query": url,
+                    "hint": (
+                        f"URL {url!r} failed with `{failure_reason}`. Pick a "
+                        f"different domain or try `duckdb_query`. This URL is "
+                        f"now cached as failed for the rest of this cell."
+                    ),
+                }
             self.tool_call_log.append(
                 {"tool": "web_fetch", "url": url, "outcome": "ok", "n_snippets": len(raw)}
             )

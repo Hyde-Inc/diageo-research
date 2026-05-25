@@ -40,12 +40,15 @@ async def test_parallel_dispatch_runs_concurrently(monkeypatch):
     ]
     loop = asyncio.get_event_loop()
     start = loop.time()
-    out = await agent._dispatch_parallel(pending, on_event=None)
+    raws, out = await agent._dispatch_parallel(pending, on_event=None)
     elapsed = loop.time() - start
 
     assert len(out) == 3
+    assert len(raws) == 3
     # If the dispatch were sequential it'd take ~3*sleep_s. Parallel should be
     # ~1*sleep_s. Give a generous ceiling to avoid flakes on slow CI.
     assert elapsed < sleep_s * 2.0
     # tool_result blocks come back in the same order as pending.
     assert [r["tool_use_id"] for r in out] == ["id1", "id2", "id3"]
+    # Raws are the dispatcher dicts, also ordered.
+    assert [r["name"] for r in raws] == ["duckdb_query", "duckdb_query", "web_browse"]

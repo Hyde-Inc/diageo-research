@@ -28,11 +28,26 @@ _USER_AGENT = (
 )
 
 
-async def fetch(url: str, query: str | None = None) -> list[dict[str, str]]:
+async def fetch(
+    url: str,
+    query: str | None = None,
+    *,
+    failed_urls: dict[str, str] | None = None,
+) -> list[dict[str, str]]:
     """Fetch one URL and return a one-element snippet list. Returns [] on
-    failure so the caller sees an empty tool_result and can fall back."""
+    failure so the caller sees an empty tool_result and can fall back.
+
+    When ``failed_urls`` is provided (a mutable dict, typically owned by
+    ``ToolRegistry``), each failure path writes a short reason into it
+    keyed by ``(host, path)`` so the registry can short-circuit a
+    verbatim retry of the same URL on a later iteration without issuing
+    another network call. This is the primary defence against the
+    Sonnet loop where the model keeps re-fetching a dead URL until the
+    iteration budget is gone.
+    """
     if not _is_valid_http_url(url):
         logger.warning("web_fetch: rejecting non-HTTP url=%r", url)
+        _record_failure(failed_urls, url, "invalid_url")
         return []
 
     headers = {
@@ -47,12 +62,22 @@ async def fetch(url: str, query: str | None = None) -> list[dict[str, str]]:
             headers=headers,
         ) as client:
             resp = await client.get(url)
+    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as e:
+        logger.warning("web_fetch: network error url=%r err=%s", url, e)
+        _record_failure(failed_urls, url, f"network_error: {type(e).__name__}")
+        return []
     except Exception as e:  # noqa: BLE001
+        # SSLError lives at httpx.SSLError (a re-export). Catching it
+        # alongside the catch-all gives the same cache treatment but
+        # surfaces a friendlier reason string for the model.
+        reason = "ssl_error" if "SSL" in type(e).__name__.upper() else f"error: {type(e).__name__}"
         logger.warning("web_fetch: error url=%r err=%s", url, e)
+        _record_failure(failed_urls, url, reason)
         return []
 
     if resp.status_code >= 400:
         logger.warning("web_fetch: status=%d url=%r", resp.status_code, url)
+        _record_failure(failed_urls, url, f"http_{resp.status_code}")
         return []
 
     content_type = resp.headers.get("content-type", "").lower()
@@ -68,11 +93,14 @@ async def fetch(url: str, query: str | None = None) -> list[dict[str, str]]:
                 return [{"url": str(resp.url), "title": title[:200], "text": body_text[:_MAX_TEXT_CHARS]}]
         except Exception as e:  # noqa: BLE001
             logger.warning("web_fetch: failed to parse JSON url=%r err=%s", url, e)
+            _record_failure(failed_urls, url, f"json_parse_error: {type(e).__name__}")
             return []
+        _record_failure(failed_urls, url, "empty_body")
         return []
 
     if "html" not in content_type and "text" not in content_type and "xml" not in content_type:
         logger.warning("web_fetch: skipping non-text content-type=%r url=%r", content_type, url)
+        _record_failure(failed_urls, url, f"unsupported_content_type: {content_type[:60]}")
         return []
 
     html = resp.text
@@ -80,6 +108,7 @@ async def fetch(url: str, query: str | None = None) -> list[dict[str, str]]:
     body_text = _extract_body_text(html, query)
     if not body_text:
         logger.warning("web_fetch: no extractable text url=%r", url)
+        _record_failure(failed_urls, url, "empty_body")
         return []
     logger.info("web_fetch: ok url=%r status=%d chars=%d", url, resp.status_code, len(body_text))
     return [
@@ -89,6 +118,21 @@ async def fetch(url: str, query: str | None = None) -> list[dict[str, str]]:
             "text": body_text[:_MAX_TEXT_CHARS],
         }
     ]
+
+
+def _record_failure(
+    failed_urls: dict[str, str] | None, url: str, reason: str
+) -> None:
+    """Write a failure reason into the caller's per-cell cache, keyed by
+    a naive ``(host, path)`` normalization. No-op when no cache is
+    provided (lets ``fetch()`` keep its existing standalone behaviour
+    for direct test use)."""
+    if failed_urls is None:
+        return
+    parsed = urlparse((url or "").strip())
+    netloc = (parsed.netloc or "").lower()
+    path = parsed.path or "/"
+    failed_urls[f"{netloc}{path}"] = reason
 
 
 def _is_valid_http_url(url: str) -> bool:

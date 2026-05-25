@@ -42,6 +42,19 @@ FORCE_SYNTHESIS_PROMPT = (
     "up on the next turn. Only end your answer with <<DONE>> if there is "
     "genuinely nothing left for you to explore."
 )
+# Separate prompt for the "dead tools" early-bail path (Settings.
+# max_unproductive_tool_iters consecutive empty tool-results). The
+# difference vs the cap-exhausted prompt: we explicitly tell the model
+# its tools are failing transiently and to lean on training data,
+# rather than just synthesizing from the (probably empty) evidence pile.
+DEAD_TOOLS_SYNTHESIS_PROMPT = (
+    "Your tools are failing in this run (probably transient — dead URLs, "
+    "SSL errors, or rate limits hit by the harness). Stop calling tools. "
+    "Answer the interviewer's question from your training-data knowledge only, "
+    "and flag any data-gap uncertainties explicitly in the headline claim. "
+    "Do not invent citations. Only end your answer with <<DONE>> if there is "
+    "genuinely nothing left for you to explore."
+)
 
 OnEvent = Callable[[str, dict[str, Any]], Awaitable[None]]
 
@@ -94,7 +107,17 @@ class PerspectiveAgent:
         user_msg = self._build_user_message(question, memory)
         messages: list[dict[str, Any]] = [{"role": "user", "content": user_msg}]
         queries: list[str] = []
+        # Track consecutive iterations where every tool_result came back
+        # empty (snippets=[] or duckdb error/0-rows) AND the model produced
+        # no text content of its own. Two of these in a row → bail to the
+        # "dead tools" forced-synthesis path so we don't burn the full
+        # MAX_TOOL_ITERATIONS round-trips against URLs that never resolve.
+        unproductive_iters = 0
+        max_unproductive = max(1, settings.max_unproductive_tool_iters)
+        forced_prompt = FORCE_SYNTHESIS_PROMPT
+        forced_reason = "iteration_cap"
 
+        loop_completed_normally = True
         for _ in range(MAX_TOOL_ITERATIONS):
             resp = await self.client.messages.create(
                 model=settings.sonnet_model_id,
@@ -114,6 +137,7 @@ class PerspectiveAgent:
                 assistant_blocks: list[dict[str, Any]] = []
                 pending_tools: list[tuple[str, str, dict[str, Any]]] = []
                 # (tool_use_id, name, args) collected so we can dispatch in parallel
+                model_text_emitted = False
                 for block in resp.content:
                     block_type = getattr(block, "type", None)
                     if block_type == "tool_use":
@@ -136,10 +160,32 @@ class PerspectiveAgent:
                             )
                     elif block_type == "text" and block.text:
                         assistant_blocks.append({"type": "text", "text": block.text})
+                        model_text_emitted = True
 
-                tool_results = await self._dispatch_parallel(pending_tools, on_event)
+                raw_results, tool_results = await self._dispatch_parallel(
+                    pending_tools, on_event
+                )
                 messages.append({"role": "assistant", "content": assistant_blocks})
                 messages.append({"role": "user", "content": tool_results})
+
+                # Productivity check: an iteration is "unproductive" when
+                # the model produced no text of its own AND every tool
+                # result came back empty (no snippets / no rows / errored).
+                all_empty = bool(pending_tools) and all(
+                    _is_unproductive_result(name, raw)
+                    for (_tu_id, name, _args), raw in zip(pending_tools, raw_results)
+                )
+                if all_empty and not model_text_emitted:
+                    unproductive_iters += 1
+                    if unproductive_iters >= max_unproductive:
+                        forced_prompt = DEAD_TOOLS_SYNTHESIS_PROMPT
+                        forced_reason = "dead_tools_fast_fail"
+                        loop_completed_normally = False
+                        break
+                else:
+                    # Reset on any productive iteration so transient
+                    # empties don't accumulate across a healthy run.
+                    unproductive_iters = 0
                 continue
 
             answer_text = "".join(
@@ -157,13 +203,23 @@ class PerspectiveAgent:
                 done=done,
             )
 
-        logger.warning(
-            "Perspective for persona %s hit tool-use iteration cap on turn %d; "
-            "forcing synthesis without further tools.",
-            self.persona.id,
-            turn_idx,
-        )
-        messages.append({"role": "user", "content": FORCE_SYNTHESIS_PROMPT})
+        if loop_completed_normally:
+            logger.warning(
+                "Perspective for persona %s hit tool-use iteration cap on turn %d; "
+                "forcing synthesis without further tools.",
+                self.persona.id,
+                turn_idx,
+            )
+        else:
+            logger.warning(
+                "Perspective for persona %s bailing early on turn %d (%s): "
+                "%d consecutive unproductive tool iterations.",
+                self.persona.id,
+                turn_idx,
+                forced_reason,
+                unproductive_iters,
+            )
+        messages.append({"role": "user", "content": forced_prompt})
         resp = await self.client.messages.create(
             model=settings.sonnet_model_id,
             max_tokens=2200,
@@ -195,13 +251,19 @@ class PerspectiveAgent:
         self,
         pending: list[tuple[str, str, dict[str, Any]]],
         on_event: OnEvent | None,
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Run every queued tool_use block in parallel. Anthropic accepts
         multiple `tool_result` blocks in one user message as long as each
         `tool_use_id` matches the assistant message's tool_use blocks.
-        Order of the returned list matches the order in `pending`."""
+
+        Returns ``(raw_results, tool_result_blocks)`` — both in the same
+        order as ``pending``. The raw results are the dispatcher's dicts
+        ({"snippets": [...], "hint": ..., ...}) so the caller can decide
+        whether the iteration was productive without re-parsing the
+        wrapped tool_result content strings.
+        """
         if not pending:
-            return []
+            return [], []
         if len(pending) == 1:
             tu_id, name, args = pending[0]
             result = await self.registry.dispatch(name, args)
@@ -210,7 +272,7 @@ class PerspectiveAgent:
                     "tool_result",
                     {"name": name, "result": _truncate_for_event(result)},
                 )
-            return [
+            return [result], [
                 {
                     "type": "tool_result",
                     "tool_use_id": tu_id,
@@ -222,12 +284,14 @@ class PerspectiveAgent:
             return_exceptions=False,
         )
         out: list[dict[str, Any]] = []
+        raws: list[dict[str, Any]] = []
         for (tu_id, name, _args), result in zip(pending, results):
             if on_event is not None:
                 await on_event(
                     "tool_result",
                     {"name": name, "result": _truncate_for_event(result)},
                 )
+            raws.append(result)
             out.append(
                 {
                     "type": "tool_result",
@@ -235,7 +299,7 @@ class PerspectiveAgent:
                     "content": _wrap_tool_result(name, result),
                 }
             )
-        return out
+        return raws, out
 
     def _persona_tools_block(self) -> str:
         """Render the persona's tool allowlist into the system prompt so the
@@ -310,3 +374,19 @@ def _truncate_for_event(d: dict[str, Any], n: int = 600) -> dict[str, Any]:
     if len(s) <= n:
         return d
     return {"_truncated": True, "preview": s[:n]}
+
+
+def _is_unproductive_result(name: str, raw: dict[str, Any]) -> bool:
+    """A tool result is 'unproductive' when it carries no new evidence the
+    model can cite. For browse/fetch that's an empty `snippets` list;
+    for duckdb it's an error or an empty `rows` list. Anything else
+    (including an unknown tool name) is conservatively treated as
+    productive so we don't bail early on a healthy run."""
+    if name in ("web_browse", "web_fetch"):
+        snippets = raw.get("snippets")
+        return not snippets
+    if name == "duckdb_query":
+        if raw.get("error"):
+            return True
+        return not raw.get("rows")
+    return False
