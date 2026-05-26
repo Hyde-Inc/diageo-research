@@ -10,6 +10,7 @@
 
 import Link from 'next/link';
 import { ArrowRight, ShieldAlert, Sparkles } from 'lucide-react';
+import { ConfidencePanel } from '@/components/study/confidence-panel';
 import { FocusCard, StudyShell } from '@/components/study/study-shell';
 import { useStudyData, withStudy } from '@/components/study/use-study';
 import { Badge } from '@/components/ui/badge';
@@ -18,7 +19,7 @@ import type { SpecCurve } from '@/components/workbench/types';
 
 export default function AnswerPage() {
   const data = useStudyData();
-  const { detail, curve, loadingCurve, loadingDetail, studyId } = data;
+  const { detail, curve, loadingCurve, loadingDetail, prereg, studyId } = data;
   const lead = curve?.rows[0] ?? null;
 
   return (
@@ -82,6 +83,27 @@ export default function AnswerPage() {
               <Caveat curve={curve} fragileSpecs={lead.fragile_specs} />
             </div>
           </FocusCard>
+          <ConfidencePanel
+            curve={curve}
+            prereg={prereg}
+            interval={{
+              kind: 'confidence interval',
+              available: false,
+              requiredData:
+                'observed outcome data or a holdout sample tied to the agreed decision rule.',
+            }}
+            provenance={{
+              source: 'Study pre-registration, scenario outputs, and evidence traces',
+              transformation: 'Recommendation clustering and robustness scoring',
+              output: 'Executive answer plus caveats',
+              available: true,
+            }}
+            raiseConfidence={[
+              'Attach observed outcome data so the answer can carry a real confidence interval.',
+              'Review any scenario framings where the recommendation weakens or flips.',
+              'Validate that the conditions that would prove us wrong are still acceptable to stakeholders.',
+            ]}
+          />
           <div className="flex flex-wrap items-center gap-2">
             <Link
               href={withStudy('/robustness', studyId)}
@@ -156,10 +178,10 @@ function Caveat({
   let sentence: string;
   if (triggered) {
     sentence =
-      'A falsifier condition triggered — read the caveats before acting on this answer.';
+      'A condition that would prove us wrong triggered — read the caveats before acting on this answer.';
   } else if (partial) {
     sentence =
-      'Some falsifier conditions are borderline or need bespoke checks before this is decision-grade.';
+      'Some conditions that would prove us wrong are borderline or need bespoke checks before this is decision-grade.';
   } else if (fragileSpecs.length > 0) {
     const preview = fragileSpecs.slice(0, 2).join(', ');
     const more =
@@ -167,7 +189,7 @@ function Caveat({
     sentence = `Fragile under ${preview}${more} — flips when those framings are used.`;
   } else {
     sentence =
-      'No falsifier triggered and the lead recommendation survives every defensible framing.';
+      'No wrong-way condition triggered and the lead recommendation survives every defensible framing.';
   }
   return <p className="text-sm leading-snug text-slate-600">{sentence}</p>;
 }

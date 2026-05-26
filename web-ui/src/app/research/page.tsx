@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { ArrowRight, FlaskConical } from 'lucide-react';
 import { ClickableBrief } from '@/components/study/clickable-brief';
+import { ConfidencePanel } from '@/components/study/confidence-panel';
 import { TopRiskHero } from '@/components/study/top-risk-hero';
 import { simulationPromptChips } from '@/components/study/simulation-pane';
 import { FocusCard, StudyShell } from '@/components/study/study-shell';
@@ -12,7 +13,7 @@ import { wb, type ResearchSummary } from '@/components/workbench/types';
 
 export default function ResearchPage() {
   const data = useStudyData();
-  const { studyId, loadingDetail } = data;
+  const { studyId, loadingDetail, curve, prereg } = data;
   const [researchFetch, setResearchFetch] = useState<{
     key: string;
     value: ResearchSummary | null;
@@ -91,6 +92,27 @@ export default function ResearchPage() {
               </p>
             )}
           </FocusCard>
+          <ConfidencePanel
+            curve={curve}
+            prereg={prereg}
+            interval={{
+              kind: 'confidence interval',
+              available: false,
+              requiredData:
+                'connected outcome observations or a reserved holdout for the agreed research question.',
+            }}
+            provenance={{
+              source: 'Research brief, top-risk cards, and clicked evidence traces',
+              transformation: 'Pre-registered rubric plus scenario clustering',
+              output: 'Plain-language brief and candidate simulations',
+              available: Boolean(summary.brief_markdown),
+            }}
+            raiseConfidence={[
+              'Estimate the confidence interval from observed outcome or holdout data.',
+              'Confirm the pre-registered decision rule with stakeholders before reading the brief.',
+              'Run the same question across the exposed occasion and priority audience cuts.',
+            ]}
+          />
           <section className="grid gap-2">
             <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
               Next simulations to run

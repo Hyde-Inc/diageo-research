@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * /why-it-could-be-wrong — falsifier conditions in plain English.
+ * /why-it-could-be-wrong — what would prove us wrong in plain English.
  *
  * Each prereg falsifier becomes one card with a current-state pill:
  *   not triggered / borderline / triggered / requires bespoke check
@@ -13,6 +13,7 @@
 
 import { useMemo } from 'react';
 import { CheckCircle2, ShieldAlert, Sparkles, XCircle } from 'lucide-react';
+import { ConfidencePanel } from '@/components/study/confidence-panel';
 import { FocusCard, FocusPlaceholder, StudyShell } from '@/components/study/study-shell';
 import { useStudyData } from '@/components/study/use-study';
 import { Badge } from '@/components/ui/badge';
@@ -36,8 +37,8 @@ export default function WhyItCouldBeWrongPage() {
     <StudyShell
       data={data}
       eyebrow="Why it could be wrong"
-      title="Falsifier conditions and where they currently stand."
-      intro="Pre-registered conditions that would invalidate the study, evaluated against the current spec curve."
+      title="What would prove us wrong?"
+      intro="Pre-registered conditions that would overturn or weaken the study, tied back to the same confidence checks."
     >
       {!studyId ? null : loadingPrereg || loadingCurve ? (
         <FocusCard tone="muted">
@@ -60,12 +61,18 @@ export default function WhyItCouldBeWrongPage() {
         </FocusCard>
       ) : items.length === 0 ? (
         <FocusPlaceholder
-          title="No falsifier conditions registered"
-          body="This study didn't pre-register any falsifiers. The audit pack will read as a positive answer with no escape clauses — flag this if you expected explicit fail-safes."
+          title="No conditions registered"
+          body="This study did not pre-register what would prove it wrong. Flag this before treating the answer as decision-grade."
         />
       ) : (
         <>
           <FocusCard>
+            <a
+              href="#confidence-panel"
+              className="mb-3 inline-flex text-[12px] font-medium text-slate-700 underline-offset-4 hover:underline"
+            >
+              See how these conditions affect confidence
+            </a>
             <div className="grid gap-2">
               {items.map((item, idx) => (
                 <FalsifierCard key={idx} item={item} />
@@ -73,6 +80,27 @@ export default function WhyItCouldBeWrongPage() {
             </div>
           </FocusCard>
           <Recap curve={curve} />
+          <ConfidencePanel
+            curve={curve}
+            prereg={prereg}
+            interval={{
+              kind: 'confidence interval',
+              available: false,
+              requiredData:
+                'observed outcomes or holdout data that can test the pre-registered wrong-way conditions.',
+            }}
+            provenance={{
+              source: 'Pre-registered wrong-way conditions and spec curve notes',
+              transformation: 'Condition matching against current scenario evidence',
+              output: 'Status for each condition that would prove us wrong',
+              available: true,
+            }}
+            raiseConfidence={[
+              'Turn every wrong-way condition into a measurable threshold before the next run.',
+              'Connect outcome data so triggered and borderline conditions can be tested statistically.',
+              'Review the confidence panel whenever a condition moves from not triggered to borderline or triggered.',
+            ]}
+          />
         </>
       )}
     </StudyShell>
@@ -125,12 +153,12 @@ function Recap({ curve }: { curve: SpecCurve | null }) {
   const status = curve.falsifier_status;
   const label =
     status === 'fully_triggered'
-      ? 'A falsifier triggered. Treat the answer as overturned until reviewed.'
+      ? 'A condition that would prove us wrong triggered. Treat the answer as overturned until reviewed.'
       : status === 'partially_triggered'
-        ? 'Some falsifiers are borderline. The answer is conditional on bespoke checks.'
+        ? 'Some conditions that would prove us wrong are borderline. The answer is conditional on bespoke checks.'
         : status === 'not_triggered'
-          ? 'No falsifier triggered against the current cells.'
-          : 'Falsifier evaluation is pending — the curve hasn\'t produced enough evidence yet.';
+          ? 'No condition that would prove us wrong triggered against the current scenarios.'
+          : 'Wrong-way condition evaluation is pending — the curve has not produced enough evidence yet.';
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-[12px] leading-snug text-slate-600 shadow-sm">
       <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-slate-500">

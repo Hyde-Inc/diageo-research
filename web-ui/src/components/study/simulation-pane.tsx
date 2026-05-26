@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useMemo } from 'react';
 import { Badge } from '@/components/ui/badge';
+import { ConfidencePanel } from '@/components/study/confidence-panel';
 import { PaneCard } from '@/components/workbench/pane-layout';
 import { cn } from '@/lib/utils';
 import { withStudy } from '@/components/study/use-study';
@@ -27,23 +28,14 @@ export function SimulationPane({
   prefs: SimulationPrefs;
   onTraceChip: (traceId: string, label: string) => void;
 }) {
-  const lead = curve?.rows[0];
-  const robustness = lead?.robustness ?? 0.55;
-
   const outcome = useMemo(() => {
     const discountLift = prefs.discountPct * 0.9;
     const bundleLift = prefs.discountPct * 0.72 + 4;
     const winner =
       bundleLift > discountLift ? ('bundling' as const) : ('discount' as const);
     const margin = Math.abs(bundleLift - discountLift);
-    const confidence =
-      robustness >= 0.65 && margin >= 3
-        ? 'High'
-        : robustness >= 0.4
-          ? 'Medium'
-          : 'Low';
-    return { discountLift, bundleLift, winner, margin, confidence };
-  }, [prefs.discountPct, robustness]);
+    return { discountLift, bundleLift, winner, margin };
+  }, [prefs.discountPct]);
 
   return (
     <div className="grid gap-4">
@@ -55,71 +47,104 @@ export function SimulationPane({
       </Badge>
 
       <p className="text-sm text-slate-600">
-        For consumers in <strong>{topOccasion}</strong>, does a{' '}
-        {prefs.discountPct}% discount or bundling preserve Don Julio spend
-        better?
+        Closed question: in <strong>{topOccasion}</strong>, the most exposed
+        occasion, does a {prefs.discountPct}% discount or bundling better
+        preserve Don Julio spend?
       </p>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <OutcomeCard
-          title="Discount"
-          subtitle={`${prefs.discountPct}% off shelf price`}
-          value={`+${outcome.discountLift.toFixed(1)}pp`}
-          detail="Estimated Don Julio spend retention vs baseline."
-          winner={outcome.winner === 'discount'}
-          chips={[
-            {
-              label: 'Loyalty indicator',
-              asset: 'runs/loyalty_panel.csv',
-              traceId: 'loyalty',
-            },
-            {
-              label: 'Price sensitivity',
-              asset: 'runs/elasticity_note.md',
-              traceId: 'elasticity',
-            },
+      <div className="grid gap-3 md:grid-cols-3">
+        <InputBlock
+          title="Evidence inputs"
+          items={[
+            'Occasion risk and spend-pressure signals from the current research brief.',
+            'Clickable traces for loyalty, price sensitivity, and occasion mix.',
+            'Current spec curve agreement, if the study has finished running.',
           ]}
-          onTraceChip={onTraceChip}
         />
-        <OutcomeCard
-          title="Bundling"
-          subtitle="Mixer + serve bundle"
-          value={`+${outcome.bundleLift.toFixed(1)}pp`}
-          detail="Estimated Don Julio spend retention vs baseline."
-          winner={outcome.winner === 'bundling'}
-          chips={[
-            {
-              label: 'Occasion volume share',
-              asset: 'runs/occasion_mix.json',
-              traceId: 'occasion_share',
-            },
-            {
-              label: 'Price sensitivity',
-              asset: 'runs/elasticity_note.md',
-              traceId: 'elasticity',
-            },
+        <InputBlock
+          title="Assumptions"
+          items={[
+            `${prefs.discountPct}% discount uses an illustrative retention multiplier, not observed promo lift.`,
+            'Bundling assumes mixer + serve value protects premium spend better than a straight discount.',
+            'No connected promo holdout data yet, so interval estimates are placeholders.',
           ]}
-          onTraceChip={onTraceChip}
         />
+        <InputBlock
+          title="Validate next"
+          items={[
+            'Validate with promo data before scaling the recommendation.',
+            'Reserve a holdout or backtest against past Don Julio promo cells.',
+            'Could cut by sub60k, Hispanic audience, or on-premise once data is connected.',
+          ]}
+        />
+      </div>
+
+      <div className="grid gap-3">
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+          Simulated output
+        </h3>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <OutcomeCard
+            title="Discount"
+            subtitle={`${prefs.discountPct}% off shelf price`}
+            value={`+${outcome.discountLift.toFixed(1)}pp`}
+            detail="Illustrative Don Julio spend retention vs baseline."
+            winner={outcome.winner === 'discount'}
+            chips={[
+              {
+                label: 'Loyalty indicator',
+                asset: 'runs/loyalty_panel.csv',
+                traceId: 'loyalty',
+              },
+              {
+                label: 'Price sensitivity',
+                asset: 'runs/elasticity_note.md',
+                traceId: 'elasticity',
+              },
+            ]}
+            onTraceChip={onTraceChip}
+          />
+          <OutcomeCard
+            title="Bundling"
+            subtitle="Mixer + serve bundle"
+            value={`+${outcome.bundleLift.toFixed(1)}pp`}
+            detail="Illustrative Don Julio spend retention vs baseline."
+            winner={outcome.winner === 'bundling'}
+            chips={[
+              {
+                label: 'Occasion volume share',
+                asset: 'runs/occasion_mix.json',
+                traceId: 'occasion_share',
+              },
+              {
+                label: 'Price sensitivity',
+                asset: 'runs/elasticity_note.md',
+                traceId: 'elasticity',
+              },
+            ]}
+            onTraceChip={onTraceChip}
+          />
+        </div>
       </div>
 
       <PaneCard
         title="Readout"
-        meta={`Self-confidence · ${outcome.confidence}`}
-        description="Mock-but-grounded comparison for the Wednesday demo."
+        meta="Illustrative model output"
+        description="Mock-grounded comparison for the Wednesday demo; not decision-grade until validated."
       >
         <p className="text-sm font-medium text-slate-900">
           {outcome.winner === 'bundling' ? 'Bundling' : 'Discount'} wins by{' '}
           {outcome.margin.toFixed(1)} percentage points on modeled spend
           retention.
         </p>
-        <ConfidencePill level={outcome.confidence} />
         <p className="mt-2 text-[12px] text-slate-600">
-          {outcome.confidence === 'High'
-            ? 'Validate with a holdout promo cell before scaling.'
-            : outcome.confidence === 'Medium'
-              ? 'Run one more scenario cut on cohort before recommending.'
-              : 'Treat as directional only — scenarios still disagree.'}
+          Prediction interval: not yet estimated. Required data: connected promo
+          or holdout observations for Don Julio spend retention in this
+          occasion.
+        </p>
+        <p className="mt-2 text-[12px] font-medium text-slate-800">
+          CTA: validate with promo data before recommending discount or bundle
+          spend shifts.
         </p>
         {studyId ? (
           <Link
@@ -130,6 +155,43 @@ export function SimulationPane({
           </Link>
         ) : null}
       </PaneCard>
+
+      <ConfidencePanel
+        curve={curve}
+        interval={{
+          kind: 'prediction interval',
+          available: false,
+          requiredData:
+            'connected Don Julio promo, loyalty, and holdout outcome observations for this occasion.',
+        }}
+        provenance={{
+          source: 'Research brief traces plus simulation settings',
+          transformation: 'Illustrative discount and bundling retention model',
+          output: 'Side-by-side simulated spend retention readout',
+          available: true,
+        }}
+        raiseConfidence={[
+          'Connect promo data and estimate a real prediction interval for spend retention.',
+          'Run a holdout or backtest for discount and bundle cells in the exposed occasion.',
+          'Cut sensitivity by sub60k, Hispanic audience, and on-premise once those segment fields are connected.',
+        ]}
+      />
+    </div>
+  );
+}
+
+function InputBlock({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <h3 className="text-[12px] font-semibold text-slate-900">{title}</h3>
+      <ul className="mt-2 grid gap-1.5 text-[12px] leading-snug text-slate-600">
+        {items.map((item) => (
+          <li key={item} className="flex gap-2">
+            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" />
+            <span>{item}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -187,25 +249,6 @@ function OutcomeCard({
         ))}
       </div>
     </div>
-  );
-}
-
-function ConfidencePill({ level }: { level: string }) {
-  const tone =
-    level === 'High'
-      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-      : level === 'Medium'
-        ? 'border-yellow-200 bg-yellow-50 text-yellow-800'
-        : 'border-orange-200 bg-orange-50 text-orange-800';
-  return (
-    <span
-      className={cn(
-        'mt-2 inline-flex rounded-full border px-2.5 py-0.5 text-[11px] font-semibold',
-        tone,
-      )}
-    >
-      Confidence · {level}
-    </span>
   );
 }
 
