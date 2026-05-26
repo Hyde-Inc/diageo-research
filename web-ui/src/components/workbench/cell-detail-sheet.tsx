@@ -94,7 +94,7 @@ export function CellDetailSheet({
     <Sheet open={ctx !== null} onOpenChange={(o) => !o && onClose()}>
       <SheetContent
         side="right"
-        className="w-full max-w-[640px] overflow-y-auto"
+        className="w-full max-w-[640px] overflow-y-auto border-l border-slate-200 bg-slate-50"
       >
         {ctx ? (
           <CellDetailBody
@@ -129,7 +129,7 @@ function CellDetailBody({
 
   return (
     <>
-      <SheetHeader className="space-y-2">
+      <SheetHeader className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
           <StatusBadge status={cell.status} />
           <SheetTitle className="font-mono text-[13px]">{cell.id}</SheetTitle>
@@ -146,7 +146,7 @@ function CellDetailBody({
         <SectionHeader icon={Layers} label="Axes" />
         <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
           {axesEntries.map(([axis, value]) => (
-            <div key={axis} className="border bg-background px-2 py-1">
+            <div key={axis} className="rounded-xl border border-slate-200 bg-white px-2 py-1.5 shadow-sm">
               <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
                 {axis}
               </div>
@@ -159,7 +159,7 @@ function CellDetailBody({
       {cell.error ? (
         <section className="mt-4 grid gap-2">
           <SectionHeader icon={AlertTriangle} label="Error" tone="warn" />
-          <pre className="overflow-x-auto whitespace-pre-wrap border bg-muted/30 p-2 font-mono text-[10px]">
+          <pre className="overflow-x-auto whitespace-pre-wrap rounded-xl border border-orange-200 bg-orange-50 p-2 font-mono text-[10px] text-orange-900">
             {cell.error}
           </pre>
         </section>
@@ -180,7 +180,7 @@ function CellDetailBody({
             {participantRows.slice(0, 12).map(({ row, status }) => (
               <div
                 key={row.cluster_id}
-                className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2 border bg-background p-2"
+                className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2 rounded-xl border border-slate-200 bg-white p-2 shadow-sm"
               >
                 <RowStatusGlyph status={status} />
                 <div className="min-w-0">
@@ -241,7 +241,7 @@ function CellDetailBody({
 
 function MaterializationCard({ m }: { m: Materialization }) {
   return (
-    <div className="grid gap-1 border bg-background p-2">
+    <div className="grid gap-1 rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="outline" className="font-mono text-[9px]">
           {m.stage}
@@ -348,8 +348,8 @@ function EmptyHint({
   return (
     <div
       className={cn(
-        'border bg-muted/20 p-2 text-[11px] leading-snug',
-        tone === 'warn' ? 'text-orange-500' : 'text-muted-foreground',
+        'rounded-xl border border-slate-200 bg-white p-2 text-[11px] leading-snug shadow-sm',
+        tone === 'warn' ? 'border-orange-200 bg-orange-50 text-orange-700' : 'text-slate-500',
       )}
     >
       {children}

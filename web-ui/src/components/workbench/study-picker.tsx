@@ -39,7 +39,7 @@ export function StudyPicker({
 
   if (!ordered.length) {
     return (
-      <Badge variant="outline" className="font-mono text-xs">
+      <Badge variant="outline" className="border-slate-200 bg-white font-mono text-xs text-slate-600 shadow-sm">
         no studies yet · run `diageo study`
       </Badge>
     );
@@ -48,7 +48,7 @@ export function StudyPicker({
   return (
     <Select value={studyId ?? undefined} onValueChange={onChange}>
       <SelectTrigger
-        className="h-8 min-w-[280px] gap-2 text-sm"
+        className="h-8 min-w-[280px] gap-2 rounded-full border-slate-200 bg-white text-sm shadow-sm hover:bg-slate-50"
         aria-label="Select study"
       >
         <FlaskConical className="h-3.5 w-3.5 text-muted-foreground" />

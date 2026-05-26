@@ -156,7 +156,7 @@ export function PaneRecipe({
   }
   if (loadingDetail || !detail) {
     return (
-      <div className="grid place-items-center py-12 text-sm text-muted-foreground">
+      <div className="grid place-items-center rounded-2xl border border-slate-200 bg-white/90 py-12 text-sm text-slate-500 shadow-sm">
         <Loader2 className="mb-2 h-4 w-4 animate-spin" />
         Loading recipe…
       </div>
@@ -164,7 +164,7 @@ export function PaneRecipe({
   }
 
   return (
-    <div className="grid gap-8" data-testid="pane-recipe">
+    <div className="grid gap-4" data-testid="pane-recipe">
       <RecipeMeta detail={detail} />
 
       <Section
@@ -226,11 +226,14 @@ function RecipeMeta({ detail }: { detail: StudyDetail }) {
   if (detail.spec_path) parts.push(['spec', detail.spec_path]);
   if (detail.prereg_path) parts.push(['prereg', detail.prereg_path]);
   return (
-    <dl className="flex flex-wrap gap-x-6 gap-y-1 font-mono text-xs text-muted-foreground">
+    <dl className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white/90 p-3 text-xs shadow-sm">
       {parts.map(([k, v]) => (
-        <div key={k} className="flex gap-2">
-          <dt className="text-muted-foreground/70">{k}</dt>
-          <dd className="text-foreground/80">{v}</dd>
+        <div
+          key={k}
+          className="flex min-w-0 items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1"
+        >
+          <dt className="font-semibold uppercase tracking-wide text-slate-500">{k}</dt>
+          <dd className="truncate font-mono text-slate-700">{v}</dd>
         </div>
       ))}
     </dl>
@@ -253,17 +256,19 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="grid gap-3">
-      <header className="grid gap-1 border-b pb-2">
+    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white/95 shadow-sm shadow-slate-950/[0.04]">
+      <header className="grid gap-1 border-b border-slate-100 bg-slate-50/70 px-4 py-3">
         <div className="flex flex-wrap items-baseline gap-3">
-          <h3 className="text-base font-semibold tracking-tight">{title}</h3>
+          <h3 className="text-sm font-semibold tracking-tight text-slate-900">
+            {title}
+          </h3>
           {meta ? (
             <span
               className={cn(
-                'text-xs',
-                metaTone === 'warn' && 'text-orange-500',
-                metaTone === 'good' && 'text-green-600 dark:text-green-400',
-                !metaTone && 'text-muted-foreground',
+                'rounded-full border bg-white px-2 py-0.5 text-[11px] font-medium shadow-sm',
+                metaTone === 'warn' && 'border-orange-200 text-orange-700',
+                metaTone === 'good' && 'border-emerald-200 text-emerald-700',
+                !metaTone && 'border-slate-200 text-slate-500',
               )}
             >
               {meta}
@@ -271,10 +276,10 @@ function Section({
           ) : null}
         </div>
         {hint ? (
-          <p className="max-w-3xl text-xs text-muted-foreground">{hint}</p>
+          <p className="max-w-3xl text-xs text-slate-500">{hint}</p>
         ) : null}
       </header>
-      <div>{children}</div>
+      <div className="p-4">{children}</div>
     </section>
   );
 }
@@ -302,15 +307,15 @@ function AxesList({ axes }: { axes: AxesIndex }) {
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       {entries.map(([name, values]) => (
-        <div key={name} className="grid gap-1.5">
-          <div className="font-mono text-xs uppercase tracking-wide text-muted-foreground">
+        <div key={name} className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
             {name}
           </div>
           <div className="flex flex-wrap gap-1.5">
             {values.map((v) => (
               <span
                 key={v}
-                className="inline-flex items-center border border-border bg-background px-2 py-0.5 font-mono text-xs"
+                className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 font-mono text-xs text-slate-700 shadow-sm"
               >
                 {v}
               </span>
@@ -355,14 +360,18 @@ function DefaultsList({
     );
   }
   return (
-    <div className="grid gap-x-6 gap-y-1 sm:grid-cols-[max-content_1fr]">
+    <dl className="grid overflow-hidden rounded-xl border border-slate-200 sm:grid-cols-[max-content_1fr]">
       {entries.map(([k, v]) => (
         <div key={k} className="contents">
-          <dt className="font-mono text-sm text-muted-foreground">{k}</dt>
-          <dd className="font-mono text-sm text-foreground">{formatValue(v)}</dd>
+          <dt className="border-b border-slate-100 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-500">
+            {k}
+          </dt>
+          <dd className="border-b border-slate-100 px-3 py-2 font-mono text-xs text-slate-800">
+            {formatValue(v)}
+          </dd>
         </div>
       ))}
-    </div>
+    </dl>
   );
 }
 
@@ -392,13 +401,13 @@ function PreregBody({ prereg }: { prereg: Prereg | null }) {
 
   return (
     <div className="grid gap-4">
-      <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-[max-content_1fr]">
+      <dl className="grid overflow-hidden rounded-xl border border-slate-200 sm:grid-cols-[max-content_1fr]">
         {rows.map(([k, v]) => (
           <div key={k} className="contents">
-            <dt className="font-mono text-xs uppercase tracking-wide text-muted-foreground">
+            <dt className="border-b border-slate-100 bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
               {k}
             </dt>
-            <dd className="text-sm leading-snug text-foreground">{v}</dd>
+            <dd className="border-b border-slate-100 px-3 py-2 text-sm leading-snug text-slate-800">{v}</dd>
           </div>
         ))}
       </dl>
@@ -412,7 +421,7 @@ function PreregBody({ prereg }: { prereg: Prereg | null }) {
               <Badge
                 key={k}
                 variant="outline"
-                className="font-mono text-xs"
+                className="border-blue-200 bg-blue-50 font-mono text-xs text-blue-700"
               >
                 {k} = {formatValue(v)}
               </Badge>
@@ -516,7 +525,7 @@ function FalsifiersList({
           <div
             key={i}
             className={cn(
-              'grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 border-l-2 bg-background px-3 py-2.5',
+              'grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 rounded-xl border bg-white px-3 py-2.5 shadow-sm',
               borderTone,
             )}
           >
@@ -549,6 +558,8 @@ function FalsifiersList({
 
 function EmptyHint({ children }: { children: React.ReactNode }) {
   return (
-    <div className="text-sm text-muted-foreground">{children}</div>
+    <div className="rounded-2xl border border-dashed border-slate-300 bg-white/80 p-4 text-sm text-slate-500 shadow-sm">
+      {children}
+    </div>
   );
 }

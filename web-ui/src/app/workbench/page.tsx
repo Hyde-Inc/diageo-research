@@ -11,7 +11,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Activity,
   BookOpen,
+  DatabaseZap,
   GitGraph,
   RefreshCw,
   Telescope,
@@ -159,16 +161,26 @@ export default function WorkbenchPage() {
   }, []);
 
   return (
-    <div className="grid min-h-svh grid-rows-[auto_1fr] bg-background">
-      <header className="border-b bg-background px-4 py-3 sm:px-6">
-        <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center gap-3">
-          <div>
-            <h1 className="text-base font-semibold tracking-tight">
-              Hypothesis Workbench
-            </h1>
-            <p className="text-xs text-muted-foreground">
-              Multiverse research runs over a single question.
-            </p>
+    <div className="min-h-svh bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.10),transparent_32rem),linear-gradient(180deg,#f8fafc_0%,#eef2f7_100%)] font-sans text-slate-950">
+      <header className="border-b border-slate-200/80 bg-white/80 px-4 py-3 shadow-sm shadow-slate-950/[0.03] backdrop-blur sm:px-6">
+        <div className="mx-auto flex w-full max-w-[1500px] flex-wrap items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-blue-200 bg-blue-50 text-blue-700 shadow-sm">
+              <DatabaseZap className="h-4.5 w-4.5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-sm font-semibold tracking-tight text-slate-950 sm:text-base">
+                  Hypothesis Workbench
+                </h1>
+                <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  Multiverse
+                </span>
+              </div>
+              <p className="truncate text-xs text-slate-500">
+                Run orchestration, lineage, sensitivity, and cost in one pane dashboard.
+              </p>
+            </div>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <StudyPicker
@@ -182,7 +194,7 @@ export default function WorkbenchPage() {
             <Button
               variant="outline"
               size="sm"
-              className="h-8 gap-1.5 text-xs"
+              className="h-8 gap-1.5 rounded-full border-slate-200 bg-white px-3 text-xs shadow-sm hover:bg-slate-50"
               onClick={handleRefresh}
               disabled={!studyId || loadingCurve || loadingCost}
             >
@@ -198,8 +210,8 @@ export default function WorkbenchPage() {
         </div>
       </header>
 
-      <main className="px-4 py-6 sm:px-6">
-        <div className="mx-auto grid w-full max-w-7xl gap-6">
+      <main className="px-4 py-5 sm:px-6">
+        <div className="mx-auto grid w-full max-w-[1500px] gap-4">
           <Subject
             detail={detail}
             summary={studySummary}
@@ -260,7 +272,7 @@ function Subject({
 }) {
   if (studiesError) {
     return (
-      <div className="border-l-2 border-orange-500 bg-orange-500/5 px-4 py-3 text-sm text-orange-600 dark:text-orange-400">
+      <div className="rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm font-medium text-orange-700 shadow-sm">
         Workbench API unreachable · {studiesError}
       </div>
     );
@@ -269,14 +281,16 @@ function Subject({
   if (!detail) {
     if (loading) {
       return (
-        <div className="grid gap-2">
-          <div className="h-7 w-2/3 animate-pulse rounded bg-muted" />
-          <div className="h-4 w-1/3 animate-pulse rounded bg-muted" />
+        <div className="rounded-3xl border border-slate-200 bg-white/90 p-5 shadow-sm">
+          <div className="grid gap-2">
+            <div className="h-7 w-2/3 animate-pulse rounded-lg bg-slate-200" />
+            <div className="h-4 w-1/3 animate-pulse rounded-lg bg-slate-100" />
+          </div>
         </div>
       );
     }
     return (
-      <div className="text-sm text-muted-foreground">
+      <div className="rounded-3xl border border-dashed border-slate-300 bg-white/70 p-5 text-sm text-slate-500 shadow-sm">
         Pick a study from the top right to begin.
       </div>
     );
@@ -290,26 +304,42 @@ function Subject({
   const cellCount = summary?.n_cells ?? detail.cells.length;
 
   return (
-    <section className="grid gap-3">
-      <h2 className="max-w-4xl text-lg font-semibold leading-snug tracking-tight text-foreground md:text-xl">
-        {detail.question}
-      </h2>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
-        <StatusPill status={detail.status} />
-        <span>
-          <span className="text-foreground">{completeCount}</span>
-          <span className="text-muted-foreground"> / {cellCount} cells</span>
-        </span>
-        {errorCount > 0 ? (
-          <span className="text-orange-500">
-            {errorCount} {errorCount === 1 ? 'error' : 'errors'}
-          </span>
-        ) : null}
-        <span className="font-mono text-muted-foreground/80">{detail.id}</span>
-        {created ? (
-          <span className="text-muted-foreground/80">
-            started {created.toLocaleString()}
-          </span>
+    <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white/90 shadow-sm shadow-slate-950/[0.04] backdrop-blur">
+      <div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+        <div className="grid min-w-0 gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusPill status={detail.status} />
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
+              <Activity className="h-3.5 w-3.5 text-slate-400" />
+              {completeCount}/{cellCount} cells complete
+            </span>
+            {errorCount > 0 ? (
+              <span className="rounded-full bg-orange-50 px-2.5 py-1 text-xs font-medium text-orange-700">
+                {errorCount} {errorCount === 1 ? 'error' : 'errors'}
+              </span>
+            ) : null}
+          </div>
+          <h2 className="max-w-5xl text-balance text-2xl font-semibold leading-tight tracking-tight text-slate-950 md:text-3xl">
+            {detail.question}
+          </h2>
+        </div>
+        <dl className="grid gap-1.5 rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-xs shadow-inner lg:min-w-[280px]">
+          <div className="flex min-w-0 justify-between gap-3">
+            <dt className="text-slate-500">Study ID</dt>
+            <dd className="truncate font-mono text-slate-700">{detail.id}</dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-slate-500">Started</dt>
+            <dd className="text-right text-slate-700">
+              {created ? created.toLocaleString() : '—'}
+            </dd>
+          </div>
+        </dl>
+      </div>
+      <div className="border-t border-slate-100 bg-slate-50/70 px-5 py-2.5 text-xs text-slate-500">
+        <span className="font-medium text-slate-700">{detail.name}</span>
+        {detail.spec_path ? (
+          <span className="ml-2 font-mono text-slate-500">{detail.spec_path}</span>
         ) : null}
       </div>
     </section>
@@ -319,26 +349,26 @@ function Subject({
 function StatusPill({ status }: { status: StudyDetail['status'] }) {
   const tone =
     status === 'complete'
-      ? 'bg-green-500/15 text-green-600 dark:text-green-400'
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
       : status === 'running'
-        ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400'
+        ? 'border-blue-200 bg-blue-50 text-blue-700'
         : status === 'error'
-          ? 'bg-orange-500/15 text-orange-600 dark:text-orange-400'
-          : 'bg-muted text-muted-foreground';
+          ? 'border-orange-200 bg-orange-50 text-orange-700'
+          : 'border-slate-200 bg-slate-100 text-slate-600';
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-sm px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide',
+        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide shadow-sm',
         tone,
       )}
     >
       <span
         className={cn(
           'h-1.5 w-1.5 rounded-full',
-          status === 'complete' && 'bg-green-500',
+          status === 'complete' && 'bg-emerald-500',
           status === 'running' && 'animate-pulse bg-blue-500',
           status === 'error' && 'bg-orange-500',
-          status === 'pending' && 'bg-muted-foreground',
+          status === 'pending' && 'bg-slate-400',
         )}
       />
       {status}
@@ -354,27 +384,34 @@ function Tabs({
   onPane: (p: PaneId) => void;
 }) {
   return (
-    <nav className="-mb-px flex flex-wrap items-end gap-1 border-b">
-      {PANES.map((p) => {
-        const active = pane === p.id;
-        return (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => onPane(p.id)}
-            className={cn(
-              'inline-flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition-colors',
-              active
-                ? 'border-foreground text-foreground'
-                : 'border-transparent text-muted-foreground hover:text-foreground',
-            )}
-            aria-current={active ? 'page' : undefined}
-          >
-            <p.Icon className="h-4 w-4" />
-            {p.label}
-          </button>
-        );
-      })}
+    <nav className="rounded-2xl border border-slate-200 bg-white/90 p-1.5 shadow-sm shadow-slate-950/[0.03] backdrop-blur">
+      <div className="grid gap-1 sm:grid-cols-4">
+        {PANES.map((p) => {
+          const active = pane === p.id;
+          return (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => onPane(p.id)}
+              className={cn(
+                'inline-flex h-10 items-center justify-center gap-2 rounded-xl px-3 text-sm font-medium transition-all',
+                active
+                  ? 'bg-slate-950 text-white shadow-sm'
+                  : 'text-slate-500 hover:bg-slate-100 hover:text-slate-950',
+              )}
+              aria-current={active ? 'page' : undefined}
+            >
+              <p.Icon
+                className={cn(
+                  'h-4 w-4',
+                  active ? 'text-blue-200' : 'text-slate-400',
+                )}
+              />
+              {p.label}
+            </button>
+          );
+        })}
+      </div>
     </nav>
   );
 }

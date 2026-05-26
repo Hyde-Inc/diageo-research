@@ -210,21 +210,22 @@ function ClustersTable({
   }
 
   return (
-    <div className="overflow-x-auto border bg-background">
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="overflow-x-auto">
       <table className="min-w-full border-collapse text-[11px]">
-        <thead className="bg-muted/40 text-[10px] uppercase tracking-wider text-muted-foreground">
+        <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500">
           <tr>
-            <th className="border-r px-2 py-1.5 text-left font-semibold">#</th>
-            <th className="border-r px-2 py-1.5 text-left font-semibold">
+            <th className="border-r border-slate-200 px-2 py-2 text-left font-semibold">#</th>
+            <th className="border-r border-slate-200 px-2 py-2 text-left font-semibold">
               Recommendation
             </th>
-            <th className="border-r px-2 py-1.5 text-left font-semibold">
+            <th className="border-r border-slate-200 px-2 py-2 text-left font-semibold">
               Robustness
             </th>
             {curve.cells.map((c) => (
               <th
                 key={c.id}
-                className="border-r px-1.5 py-1.5 text-center font-mono normal-case"
+                className="border-r border-slate-200 px-1.5 py-2 text-center font-mono normal-case"
                 title={c.id}
               >
                 <div className="grid gap-0">
@@ -244,18 +245,18 @@ function ClustersTable({
               key={row.cluster_id}
               className={cn(
                 'align-top',
-                idx % 2 === 0 ? 'bg-background' : 'bg-muted/10',
+                idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/60',
               )}
             >
-              <td className="border-r px-2 py-1.5 text-center font-mono text-[10px] text-muted-foreground">
+              <td className="border-r border-slate-200 px-2 py-2 text-center font-mono text-[10px] text-slate-500">
                 {idx + 1}
               </td>
-              <td className="border-r px-2 py-1.5">
+              <td className="border-r border-slate-200 px-2 py-2">
                 <div className="line-clamp-3 leading-snug">
                   {row.representative}
                 </div>
               </td>
-              <td className="border-r px-2 py-1.5">
+              <td className="border-r border-slate-200 px-2 py-2">
                 <RobustnessBar
                   pct={Math.round(row.robustness * 100)}
                   agree={row.n_agree}
@@ -271,8 +272,8 @@ function ClustersTable({
                   <td
                     key={c.id}
                     className={cn(
-                      'border-r px-1.5 py-1.5 text-center',
-                      activeCellId === c.id && 'bg-foreground/5',
+                      'border-r border-slate-200 px-1.5 py-2 text-center',
+                      activeCellId === c.id && 'bg-blue-50',
                     )}
                   >
                     <button
@@ -290,6 +291,7 @@ function ClustersTable({
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -311,9 +313,9 @@ function RobustnessBar({
         : 'bg-orange-500';
   return (
     <div className="grid w-[112px] gap-0.5">
-      <div className="relative h-1.5 w-full overflow-hidden bg-muted">
+      <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
         <div
-          className={cn('absolute left-0 top-0 h-full', tone)}
+          className={cn('absolute left-0 top-0 h-full rounded-full', tone)}
           style={{ width: `${pct}%` }}
         />
       </div>
@@ -395,7 +397,7 @@ function CostHistogram({
             >
               <XAxis
                 dataKey="short"
-                stroke="hsl(var(--muted-foreground))"
+                stroke="#64748b"
                 tick={{ fontSize: 10, fontFamily: 'ui-monospace' }}
                 angle={-12}
                 textAnchor="end"
@@ -403,20 +405,22 @@ function CostHistogram({
                 interval={0}
               />
               <YAxis
-                stroke="hsl(var(--muted-foreground))"
+                stroke="#64748b"
                 tick={{ fontSize: 10 }}
                 tickFormatter={(v) => `$${Number(v).toFixed(2)}`}
                 width={56}
               />
               <Tooltip
-                cursor={{ fill: 'hsl(var(--muted-foreground) / 0.08)' }}
+                cursor={{ fill: 'rgba(100, 116, 139, 0.08)' }}
                 contentStyle={{
-                  background: 'hsl(var(--background))',
-                  border: '1px solid hsl(var(--border))',
+                  background: '#ffffff',
+                  border: '1px solid #e2e8f0',
                   fontSize: 11,
                   fontFamily: 'ui-monospace',
+                  borderRadius: 12,
+                  boxShadow: '0 10px 24px rgba(15, 23, 42, 0.08)',
                 }}
-                labelStyle={{ color: 'hsl(var(--foreground))' }}
+                labelStyle={{ color: '#0f172a' }}
                 formatter={(value: unknown, _name, payload) => {
                   const b = payload?.payload as CostBar | undefined;
                   if (!b) return [String(value), 'cost'];
@@ -511,13 +515,13 @@ function DiagnosticsSummary({
 }) {
   return (
     <div className="grid gap-2 text-xs">
-      <div className="grid grid-cols-2 gap-1.5 font-mono text-[11px]">
+      <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
         <Metric label="complete" value={String(diagnostics.complete)} />
         <Metric label="running" value={String(diagnostics.running)} />
         <Metric label="pending" value={String(diagnostics.pending)} />
         <Metric label="error" value={String(diagnostics.error)} />
       </div>
-      <div className="border-t pt-2 text-muted-foreground">
+      <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-2 text-slate-500">
         <p>falsifier: {diagnostics.falsifierStatus.replace(/_/g, ' ')}</p>
         <p>fragile specs in lead: {diagnostics.fragileSpecs}</p>
         <p>
@@ -530,9 +534,9 @@ function DiagnosticsSummary({
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded border bg-background px-2 py-1">
-      <div className="uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className="text-foreground">{value}</div>
+    <div className="rounded-xl border border-slate-200 bg-white px-2 py-1.5 shadow-sm">
+      <div className="uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="text-base font-semibold text-slate-900">{value}</div>
     </div>
   );
 }

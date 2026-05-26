@@ -152,9 +152,9 @@ function StageNode({ data }: NodeProps<StageNodeT>) {
   return (
     <div
       className={cn(
-        'grid h-[84px] w-[240px] gap-1 border bg-background px-3 py-2 text-left shadow-sm transition-colors',
+        'grid h-[84px] w-[240px] gap-1 rounded-xl border bg-white px-3 py-2 text-left shadow-sm transition-colors',
         statusBorder(status),
-        data.highlighted && 'ring-2 ring-foreground/60',
+        data.highlighted && 'ring-2 ring-slate-950/60',
       )}
     >
       <Handle type="target" position={Position.Left} className="!bg-muted-foreground/40" />
@@ -192,7 +192,7 @@ function WorkbenchEdge(props: EdgeProps) {
       id={props.id}
       path={d}
       style={{
-        stroke: 'hsl(var(--muted-foreground) / 0.5)',
+        stroke: '#94a3b8',
         strokeWidth: 1.2,
       }}
     />
@@ -343,7 +343,7 @@ export function PaneDag({
               Fetching <code>/assets/graph</code>…
             </PaneEmpty>
           ) : (
-            <div className="mt-2 h-[520px] rounded border bg-muted/5">
+            <div className="mt-3 h-[520px] overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
               <DagFlow
                 nodes={nodes}
                 edges={edges}
@@ -420,13 +420,13 @@ function DagLegend({
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b pb-2">
       <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
-        <span className="text-xs text-muted-foreground">
+        <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-xs font-medium text-slate-500">
           partitions: {partitionSet}
         </span>
       </div>
       <div className="flex items-center gap-3">
         {selectedCell ? (
-          <span className="font-mono text-xs text-muted-foreground">
+          <span className="rounded-full bg-slate-100 px-2 py-1 font-mono text-xs text-slate-600">
             {selectedCell.id} · {selectedCell.status}
           </span>
         ) : (
@@ -437,7 +437,7 @@ function DagLegend({
         <Button
           variant="outline"
           size="sm"
-          className="h-8 gap-1.5 text-xs"
+          className="h-8 gap-1.5 rounded-full border-slate-200 bg-white px-3 text-xs shadow-sm hover:bg-slate-50"
           onClick={onRefresh}
         >
           <RefreshCw className="h-3.5 w-3.5" />
@@ -477,10 +477,10 @@ function CellRailSummary({
             type="button"
             onClick={() => onSelect(cell.id)}
             className={cn(
-              'grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border bg-background px-2.5 py-1.5 text-left transition-colors',
+              'grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-xl border bg-white px-2.5 py-1.5 text-left shadow-sm transition-colors',
               activeCellId === cell.id
-                ? 'border-foreground'
-                : 'border-border hover:border-foreground/40',
+                ? 'border-slate-950 bg-slate-50'
+                : 'border-slate-200 hover:border-slate-400',
             )}
           >
             <CellStatusGlyph status={cell.status} />
@@ -525,8 +525,8 @@ function statusToStage(s: CellSummary['status']): StageStatus {
 }
 
 function statusBorder(status: StageStatus): string {
-  if (status === 'complete') return 'border-green-500/40';
-  if (status === 'running') return 'border-blue-500/40';
-  if (status === 'error') return 'border-orange-500/40';
-  return 'border-muted-foreground/30';
+  if (status === 'complete') return 'border-emerald-300';
+  if (status === 'running') return 'border-blue-300';
+  if (status === 'error') return 'border-orange-300';
+  return 'border-slate-200';
 }

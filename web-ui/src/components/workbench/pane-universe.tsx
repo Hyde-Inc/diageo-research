@@ -125,7 +125,7 @@ function UniverseStats({
         ? 'text-green-600 dark:text-green-400'
         : 'text-muted-foreground';
   return (
-    <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2 text-sm">
+    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
       <Stat label="cells" value={String(cellCount)} />
       <Stat label="clusters" value={String(clusterCount)} />
       <Stat
@@ -151,11 +151,11 @@ function Stat({
   valueClassName?: string;
 }) {
   return (
-    <div className="flex items-baseline gap-1.5">
-      <span className="font-mono text-xs uppercase tracking-wide text-muted-foreground">
+    <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 shadow-inner">
+      <span className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500">
         {label}
       </span>
-      <span className={cn('font-semibold tabular-nums', valueClassName)}>
+      <span className={cn('mt-1 block text-xl font-semibold tabular-nums text-slate-900', valueClassName)}>
         {value}
       </span>
     </div>
@@ -170,7 +170,7 @@ function UniverseLegend() {
     { status: 'missing', label: 'missing', cls: 'bg-muted-foreground/30' },
   ];
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
+    <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-xs text-slate-500">
       {items.map((it) => (
         <div key={it.status} className="flex items-center gap-1.5">
           <span className={cn('inline-block h-3 w-3 rounded-[2px]', it.cls)} />
@@ -215,10 +215,11 @@ function HeatmapGrid({
   const colTemplate = `minmax(220px, 320px) repeat(${cells.length}, minmax(72px, 1fr))`;
 
   return (
-    <div className="overflow-x-auto border bg-background">
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="overflow-x-auto">
       <div className="grid min-w-full" style={{ gridTemplateColumns: colTemplate }}>
         {/* Header row */}
-        <div className="sticky left-0 z-10 border-b border-r bg-background px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <div className="sticky left-0 z-10 border-b border-r border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
           Recommendation cluster
         </div>
         {cells.map((cell) => (
@@ -227,8 +228,8 @@ function HeatmapGrid({
             type="button"
             onClick={() => onSelectCell(cell)}
             className={cn(
-              'border-b border-r px-2 py-2 text-left text-[10px] transition-colors hover:bg-muted/40',
-              activeCellId === cell.id && 'bg-foreground/5',
+              'border-b border-r border-slate-200 bg-slate-50/70 px-2 py-2 text-left text-[10px] transition-colors hover:bg-white',
+              activeCellId === cell.id && 'bg-blue-50',
             )}
             title={cell.id}
           >
@@ -262,8 +263,9 @@ function HeatmapGrid({
           />
         ))}
       </div>
+      </div>
       {curve.rows.length > rows.length ? (
-        <div className="border-t bg-muted/10 px-3 py-1.5 text-[10px] text-muted-foreground">
+        <div className="border-t border-slate-200 bg-slate-50 px-3 py-1.5 text-[10px] text-slate-500">
           Showing top {rows.length} of {curve.rows.length} clusters by
           robustness; open the Spec curve pane for the full table.
         </div>
@@ -292,10 +294,10 @@ function CellList({
           type="button"
           onClick={() => onSelectCell(cell.id)}
           className={cn(
-            'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded border px-2 py-1.5 text-left text-[11px]',
+            'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-xl border bg-white px-2 py-1.5 text-left text-[11px] shadow-sm',
             activeCellId === cell.id
-              ? 'border-foreground bg-foreground/5'
-              : 'border-border hover:border-foreground/40',
+              ? 'border-slate-950 bg-slate-50'
+              : 'border-slate-200 hover:border-slate-400',
           )}
         >
           <div className="min-w-0">
@@ -340,7 +342,7 @@ function PersonasSummary({ cells }: { cells: CellSummary[] }) {
       {personaEntries.slice(0, 8).map(([key, count]) => (
         <div
           key={key}
-          className="flex items-center justify-between rounded border px-2 py-1 text-[11px]"
+          className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-[11px] shadow-sm"
         >
           <span className="truncate font-mono">{key}</span>
           <span className="font-mono text-muted-foreground">{count}</span>
@@ -365,7 +367,7 @@ function RowGroup({
   return (
     <>
       <div
-        className="sticky left-0 z-10 border-b border-r bg-background px-3 py-2 text-[11px]"
+        className="sticky left-0 z-10 border-b border-r border-slate-200 bg-white px-3 py-2 text-[11px]"
         title={row.representative}
       >
         <div className="line-clamp-2 leading-snug">{row.representative}</div>
@@ -383,8 +385,8 @@ function RowGroup({
             onClick={() => onSelectCell(cell)}
             title={`${cell.id} — ${status}`}
             className={cn(
-              'group relative border-b border-r p-0 transition-transform hover:z-20 hover:scale-[1.08]',
-              activeCellId === cell.id && 'ring-2 ring-foreground/40',
+              'group relative border-b border-r border-slate-200 p-0 transition-transform hover:z-20 hover:scale-[1.08]',
+              activeCellId === cell.id && 'ring-2 ring-slate-950/40',
             )}
           >
             <div
