@@ -26,6 +26,7 @@ export function StudyShell({
   intro,
   back,
   actions,
+  contentClassName,
   children,
 }: {
   data: StudyData;
@@ -34,6 +35,7 @@ export function StudyShell({
   intro?: string;
   back?: { href: string; label: string };
   actions?: React.ReactNode;
+  contentClassName?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -75,7 +77,7 @@ export function StudyShell({
         </div>
       </header>
       <main className="px-4 py-6 sm:px-6">
-        <div className="mx-auto grid w-full max-w-3xl gap-4">
+        <div className={cn('mx-auto grid w-full max-w-3xl gap-4', contentClassName)}>
           {data.studiesError ? (
             <div className="rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm font-medium text-orange-700 shadow-sm">
               Workbench API unreachable · {data.studiesError}

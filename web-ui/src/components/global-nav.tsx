@@ -29,6 +29,7 @@ import {
   Settings2,
   ShieldAlert,
   Telescope,
+  TrendingUp,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -62,6 +63,12 @@ const NAV: NavItem[] = [
     label: 'Scenario',
     Icon: ListChecks,
     match: '/scenario',
+    tone: 'primary',
+  },
+  {
+    href: '/growth-driver',
+    label: 'Growth Driver',
+    Icon: TrendingUp,
     tone: 'primary',
   },
   {
