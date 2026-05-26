@@ -43,7 +43,6 @@ import {
   Circle,
   Clock,
   Cpu,
-  GitGraph,
   Loader2,
   RefreshCw,
 } from 'lucide-react';
@@ -57,6 +56,7 @@ import {
   type Materialization,
   type SpecCurve,
 } from './types';
+import { PaneCard, PaneDeck, PaneEmpty, PaneGrid } from './pane-layout';
 import { CellDetailSheet, type CellDetailContext } from './cell-detail-sheet';
 
 const NODE_WIDTH = 240;
@@ -292,64 +292,62 @@ export function PaneDag({
     return { nodes: enriched, edges: laidEdges };
   }, [graph, mats, selectedCell]);
 
-  const handleNodeClick = useCallback(
-    (_evt: unknown, _node: StageNodeT) => {
-      if (!selectedCell || !curve) return;
-      setDetailCtx({ cell: selectedCell, rows: curve.rows });
-    },
-    [selectedCell, curve],
-  );
+  const handleNodeClick = useCallback(() => {
+    if (!selectedCell || !curve) return;
+    setDetailCtx({ cell: selectedCell, rows: curve.rows });
+  }, [selectedCell, curve]);
 
   return (
-    <div className="grid gap-3" data-testid="pane-dag">
-      <DagLegend
-        partitionSet={graph?.partition_set ?? 'study_cells'}
-        onRefresh={() => setRefreshKey((k) => k + 1)}
-        nodeCount={graph?.nodes.length ?? 0}
-        edgeCount={graph?.edges.length ?? 0}
-        selectedCell={selectedCell}
-      />
-
-      {graphError ? (
-        <div className="border bg-muted/20 p-4 text-[11px] text-orange-500">
-          Failed to load asset graph: {graphError}. The FastAPI workbench
-          must be running on http://127.0.0.1:8765 (or set
-          <code className="mx-1 font-mono">WORKBENCH_API_BASE</code> in
-          the FE&apos;s .env.local).
-        </div>
-      ) : !graph ? (
-        <div className="grid place-items-center border bg-muted/10 p-8 text-[11px] text-muted-foreground">
-          <Loader2 className="mb-2 h-4 w-4 animate-spin" />
-          Fetching <code>/assets/graph</code>…
-        </div>
-      ) : (
-        <div className="h-[560px] border bg-muted/5">
-          <DagFlow
-            nodes={nodes}
-            edges={edges}
-            onNodeClick={handleNodeClick}
+    <PaneDeck data-testid="pane-dag">
+      <PaneGrid className="xl:grid-cols-3">
+        <PaneCard
+          title="DAG / lineage"
+          meta={`${graph?.nodes.length ?? 0} assets · ${graph?.edges.length ?? 0} deps`}
+          className="xl:col-span-2"
+        >
+          <DagLegend
+            partitionSet={graph?.partition_set ?? 'study_cells'}
+            onRefresh={() => setRefreshKey((k) => k + 1)}
+            selectedCell={selectedCell}
           />
-        </div>
-      )}
-
-      {curveLoading ? (
-        <div className="border bg-muted/20 p-2 text-[10px] text-muted-foreground">
-          Loading study spec curve…
-        </div>
-      ) : !curve ? (
-        <div className="border bg-muted/20 p-2 text-[10px] text-muted-foreground">
-          Pick a study to enrich the DAG with cell-level materializations.
-        </div>
-      ) : (
-        <CellRailSummary
-          curve={curve}
-          activeCellId={cellId}
-          onSelect={onSelectCell}
-        />
-      )}
-
+          {graphError ? (
+            <PaneEmpty className="mt-2 border-orange-500/50 text-orange-500">
+              Failed to load asset graph: {graphError}. Ensure the workbench API
+              is reachable.
+            </PaneEmpty>
+          ) : !graph ? (
+            <PaneEmpty className="mt-2 grid place-items-center">
+              <Loader2 className="mb-2 h-4 w-4 animate-spin" />
+              Fetching <code>/assets/graph</code>…
+            </PaneEmpty>
+          ) : (
+            <div className="mt-2 h-[520px] rounded border bg-muted/5">
+              <DagFlow
+                nodes={nodes}
+                edges={edges}
+                onNodeClick={handleNodeClick}
+              />
+            </div>
+          )}
+        </PaneCard>
+        <PaneCard title="Cell lineage context" meta={selectedCell?.id ?? 'no cell selected'}>
+          {curveLoading ? (
+            <PaneEmpty className="text-[11px]">Loading study spec curve…</PaneEmpty>
+          ) : !curve ? (
+            <PaneEmpty className="text-[11px]">
+              Pick a study to enrich DAG stages with cell materializations.
+            </PaneEmpty>
+          ) : (
+            <CellRailSummary
+              curve={curve}
+              activeCellId={cellId}
+              onSelect={onSelectCell}
+            />
+          )}
+        </PaneCard>
+      </PaneGrid>
       <CellDetailSheet ctx={detailCtx} onClose={() => setDetailCtx(null)} />
-    </div>
+    </PaneDeck>
   );
 }
 
@@ -360,7 +358,7 @@ function DagFlow({
 }: {
   nodes: StageNodeT[];
   edges: Edge[];
-  onNodeClick: (evt: unknown, node: StageNodeT) => void;
+  onNodeClick: () => void;
 }) {
   // We re-derive nodes/edges from props on every change rather than
   // using useNodesState (whose change types are noisy in v12). The
@@ -372,7 +370,7 @@ function DagFlow({
         edges={edges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        onNodeClick={onNodeClick as (e: unknown, n: unknown) => void}
+        onNodeClick={onNodeClick as () => void}
         fitView
         fitViewOptions={{ padding: 0.18 }}
         proOptions={{ hideAttribution: true }}
@@ -391,22 +389,17 @@ function DagFlow({
 function DagLegend({
   partitionSet,
   onRefresh,
-  nodeCount,
-  edgeCount,
   selectedCell,
 }: {
   partitionSet: string;
   onRefresh: () => void;
-  nodeCount: number;
-  edgeCount: number;
   selectedCell: CellSummary | null;
 }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b pb-2">
       <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
-        <span className="font-semibold tracking-tight">Asset graph</span>
         <span className="text-xs text-muted-foreground">
-          {nodeCount} assets · {edgeCount} deps · partitions: {partitionSet}
+          partitions: {partitionSet}
         </span>
       </div>
       <div className="flex items-center gap-3">
@@ -455,7 +448,7 @@ function CellRailSummary({
         <Cpu className="h-3.5 w-3.5" />
         <span>Cells — click to load that cell&apos;s materializations</span>
       </div>
-      <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid max-h-[520px] gap-1.5 overflow-y-auto pr-1">
         {curve.cells.map((cell) => (
           <button
             key={cell.id}

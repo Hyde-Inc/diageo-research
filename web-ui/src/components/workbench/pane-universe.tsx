@@ -24,6 +24,7 @@ import {
   type SpecCurve,
   type SpecCurveRow,
 } from './types';
+import { PaneCard, PaneDeck, PaneEmpty, PaneGrid } from './pane-layout';
 import {
   CellDetailSheet,
   type CellDetailContext,
@@ -44,9 +45,9 @@ export function PaneUniverse({
 
   if (loading || !curve) {
     return (
-      <div className="py-6 text-sm text-muted-foreground">
+      <PaneEmpty>
         {loading ? 'Loading multiverse…' : 'Pick a study to see its universe.'}
-      </div>
+      </PaneEmpty>
     );
   }
 
@@ -57,27 +58,52 @@ export function PaneUniverse({
         curve.rows.length;
 
   return (
-    <div className="grid gap-4" data-testid="pane-universe">
-      <UniverseStats
-        cellCount={curve.cells.length}
-        clusterCount={curve.rows.length}
-        avgRobustness={avgRobustness}
-        falsifierStatus={curve.falsifier_status}
-      />
-      <UniverseLegend />
-      <HeatmapGrid
-        curve={curve}
-        activeCellId={cellId}
-        onSelectCell={(cell) => {
-          onSelectCell(cell.id);
-          setDetailCtx({ cell, rows: curve.rows });
-        }}
-      />
+    <PaneDeck data-testid="pane-universe">
+      <PaneGrid className="xl:grid-cols-3">
+        <PaneCard
+          title="Universe"
+          meta={`${curve.cells.length} cells · ${curve.rows.length} clusters`}
+          className="xl:col-span-2"
+        >
+          <UniverseStats
+            cellCount={curve.cells.length}
+            clusterCount={curve.rows.length}
+            avgRobustness={avgRobustness}
+            falsifierStatus={curve.falsifier_status}
+          />
+        </PaneCard>
+        <PaneCard title="Personas" meta="Derived from cell axes">
+          <PersonasSummary cells={curve.cells} />
+        </PaneCard>
+      </PaneGrid>
+
+      <PaneCard title="Universe / cell list" meta="Click a cell to inspect details">
+        <CellList
+          cells={curve.cells}
+          activeCellId={cellId}
+          onSelectCell={onSelectCell}
+        />
+      </PaneCard>
+
+      <PaneCard
+        title="Compare heatmap"
+        meta="Rows: recommendation clusters · Columns: cells"
+      >
+        <UniverseLegend />
+        <HeatmapGrid
+          curve={curve}
+          activeCellId={cellId}
+          onSelectCell={(cell) => {
+            onSelectCell(cell.id);
+            setDetailCtx({ cell, rows: curve.rows });
+          }}
+        />
+      </PaneCard>
       <CellDetailSheet
         ctx={detailCtx}
         onClose={() => setDetailCtx(null)}
       />
-    </div>
+    </PaneDeck>
   );
 }
 
@@ -172,18 +198,16 @@ function HeatmapGrid({
 
   if (cells.length === 0) {
     return (
-      <div className="border bg-muted/20 p-4 text-[11px] text-muted-foreground">
-        No cells in this study.
-      </div>
+      <PaneEmpty className="text-[11px]">No cells in this study.</PaneEmpty>
     );
   }
   if (rows.length === 0) {
     return (
-      <div className="border bg-muted/20 p-4 text-[11px] text-muted-foreground">
+      <PaneEmpty className="text-[11px]">
         Spec curve hasn&apos;t produced clustered recommendations yet.
         Either no cells are complete or no recommendation-shaped
         sentences were found in the briefs.
-      </div>
+      </PaneEmpty>
     );
   }
 
@@ -244,6 +268,84 @@ function HeatmapGrid({
           robustness; open the Spec curve pane for the full table.
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function CellList({
+  cells,
+  activeCellId,
+  onSelectCell,
+}: {
+  cells: CellSummary[];
+  activeCellId: string | null;
+  onSelectCell: (cellId: string) => void;
+}) {
+  if (cells.length === 0) {
+    return <PaneEmpty>No cells available yet.</PaneEmpty>;
+  }
+  return (
+    <div className="grid max-h-[220px] gap-1 overflow-y-auto pr-1">
+      {cells.map((cell) => (
+        <button
+          key={cell.id}
+          type="button"
+          onClick={() => onSelectCell(cell.id)}
+          className={cn(
+            'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded border px-2 py-1.5 text-left text-[11px]',
+            activeCellId === cell.id
+              ? 'border-foreground bg-foreground/5'
+              : 'border-border hover:border-foreground/40',
+          )}
+        >
+          <div className="min-w-0">
+            <div className="truncate font-mono">{cell.id}</div>
+            <div className="truncate font-mono text-[10px] text-muted-foreground">
+              {Object.entries(cell.axes)
+                .map(([k, v]) => `${k}:${v}`)
+                .join(' · ')}
+            </div>
+          </div>
+          <span className="font-mono text-[10px] text-muted-foreground">
+            {cell.status}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function PersonasSummary({ cells }: { cells: CellSummary[] }) {
+  const personaEntries = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const cell of cells) {
+      for (const [axis, value] of Object.entries(cell.axes)) {
+        if (!/persona|audience|stakeholder/i.test(axis)) continue;
+        const key = `${axis}=${value}`;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  }, [cells]);
+
+  if (personaEntries.length === 0) {
+    return (
+      <PaneEmpty className="text-xs">
+        No explicit persona axis in this study&apos;s cell definitions.
+      </PaneEmpty>
+    );
+  }
+  return (
+    <div className="grid gap-1">
+      {personaEntries.slice(0, 8).map(([key, count]) => (
+        <div
+          key={key}
+          className="flex items-center justify-between rounded border px-2 py-1 text-[11px]"
+        >
+          <span className="truncate font-mono">{key}</span>
+          <span className="font-mono text-muted-foreground">{count}</span>
+        </div>
+      ))}
     </div>
   );
 }

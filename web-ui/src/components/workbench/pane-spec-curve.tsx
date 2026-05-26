@@ -36,12 +36,14 @@ import {
   YAxis,
 } from 'recharts';
 import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
 import {
   type CellRowStatus,
   type CellSummary,
   type SpecCurve,
   type StudyCost,
 } from './types';
+import { PaneCard, PaneDeck, PaneEmpty, PaneGrid } from './pane-layout';
 import {
   CellDetailSheet,
   type CellDetailContext,
@@ -66,18 +68,35 @@ export function PaneSpecCurve({
 
   if (loading || !curve) {
     return (
-      <div className="py-6 text-sm text-muted-foreground">
+      <PaneEmpty>
         {loading ? 'Loading spec curve…' : 'Pick a study to see its spec curve.'}
-      </div>
+      </PaneEmpty>
     );
   }
 
-  return (
-    <div className="grid gap-6" data-testid="pane-spec-curve">
-      <LeadSummary curve={curve} />
+  const diagnostics = summarizeDiagnostics(curve, cost);
 
-      <SubSection
-        title="Clustered recommendations"
+  return (
+    <PaneDeck data-testid="pane-spec-curve">
+      <PaneGrid className="xl:grid-cols-3">
+        <PaneCard
+          title="Brief"
+          meta={`Lead ${(diagnostics.leadRobustness * 100).toFixed(0)}% robust`}
+          className="xl:col-span-2"
+        >
+          <LeadSummary curve={curve} />
+        </PaneCard>
+        <PaneCard
+          title="Tools / diagnostics"
+          meta={`${diagnostics.complete} complete · ${diagnostics.error} error`}
+          description="Quick run-health snapshot from curve and cost rollups."
+        >
+          <DiagnosticsSummary diagnostics={diagnostics} />
+        </PaneCard>
+      </PaneGrid>
+
+      <PaneCard
+        title="Compare / sensitivity / spec curve"
         meta={`${curve.rows.length} clusters · ${curve.n_complete}/${curve.n_cells} cells complete`}
       >
         <ClustersTable
@@ -88,10 +107,10 @@ export function PaneSpecCurve({
             setDetailCtx({ cell, rows: curve.rows });
           }}
         />
-      </SubSection>
+      </PaneCard>
 
-      <SubSection
-        title="Per-cell cost · cap-aware"
+      <PaneCard
+        title="Cost"
         meta={
           cost
             ? `total $${cost.total_cost_usd.toFixed(4)} · ${cost.total_calls} calls`
@@ -103,28 +122,22 @@ export function PaneSpecCurve({
         <CostHistogram
           curve={curve}
           cost={cost}
-          loading={costLoading}
           onSelectCell={(cell) => {
             onSelectCell(cell.id);
             setDetailCtx({ cell, rows: curve.rows });
           }}
         />
-      </SubSection>
+      </PaneCard>
 
       <CellDetailSheet ctx={detailCtx} onClose={() => setDetailCtx(null)} />
-    </div>
+    </PaneDeck>
   );
 }
 
 function LeadSummary({ curve }: { curve: SpecCurve }) {
   const leadRow = curve.rows[0];
   if (!leadRow) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        No clustered recommendations yet. The curve is rebuilt on every
-        request — wait for cells to write their final.md.
-      </p>
-    );
+    return <PaneEmpty>No clustered recommendations yet.</PaneEmpty>;
   }
   const total =
     leadRow.n_agree + leadRow.n_weaker + leadRow.n_flips + leadRow.n_missing;
@@ -140,9 +153,22 @@ function LeadSummary({ curve }: { curve: SpecCurve }) {
           {leadRow.n_agree}/{total} cells agree
         </span>
       </div>
-      <p className="max-w-4xl text-base leading-relaxed text-foreground">
+      <p className="max-w-4xl text-sm leading-relaxed text-foreground">
         {leadRow.representative}
       </p>
+      {leadRow.fragile_specs.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {leadRow.fragile_specs.slice(0, 4).map((spec) => (
+            <Badge
+              key={spec}
+              variant="outline"
+              className="font-mono text-[10px] text-orange-500"
+            >
+              fragile: {spec}
+            </Badge>
+          ))}
+        </div>
+      ) : null}
       {curve.falsifier_notes.length > 0 ? (
         <details className="text-xs text-muted-foreground">
           <summary className="cursor-pointer select-none">
@@ -157,28 +183,6 @@ function LeadSummary({ curve }: { curve: SpecCurve }) {
         </details>
       ) : null}
     </div>
-  );
-}
-
-function SubSection({
-  title,
-  meta,
-  children,
-}: {
-  title: string;
-  meta?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="grid gap-2">
-      <header className="flex flex-wrap items-baseline justify-between gap-2 border-b pb-2">
-        <h3 className="text-base font-semibold tracking-tight">{title}</h3>
-        {meta ? (
-          <span className="text-xs text-muted-foreground">{meta}</span>
-        ) : null}
-      </header>
-      {children}
-    </section>
   );
 }
 
@@ -199,9 +203,9 @@ function ClustersTable({
 
   if (curve.rows.length === 0) {
     return (
-      <div className="border bg-muted/20 p-3 text-[11px] text-muted-foreground">
+      <PaneEmpty className="text-[11px]">
         No clustered recommendations to show yet.
-      </div>
+      </PaneEmpty>
     );
   }
 
@@ -345,12 +349,10 @@ type CostBar = {
 function CostHistogram({
   curve,
   cost,
-  loading,
   onSelectCell,
 }: {
   curve: SpecCurve;
   cost: StudyCost | null;
-  loading: boolean;
   onSelectCell: (cell: CellSummary) => void;
 }) {
   const cellsById = useMemo(() => {
@@ -380,9 +382,7 @@ function CostHistogram({
   return (
     <div className="grid gap-2">
       {bars.length === 0 ? (
-        <div className="text-sm text-muted-foreground">
-          No cost rollup yet for this study.
-        </div>
+        <PaneEmpty>No cost rollup yet for this study.</PaneEmpty>
       ) : (
         <div
           className="h-[260px] w-full"
@@ -436,10 +436,6 @@ function CostHistogram({
               />
               <Bar
                 dataKey="cost_usd"
-                onClick={(_data: unknown, _idx, evt) => {
-                  // recharts forwards the original payload at evt.payload? Not reliably;
-                  // we look up by the bar payload available via internal hooks
-                }}
               >
                 {bars.map((b) => (
                   <RCell
@@ -469,6 +465,74 @@ function CostHistogram({
         </div>
       ) : null}
       <CapLegend />
+    </div>
+  );
+}
+
+type DiagnosticsSummaryData = {
+  complete: number;
+  running: number;
+  pending: number;
+  error: number;
+  leadRobustness: number;
+  fragileSpecs: number;
+  zeroCostCells: number;
+  totalCells: number;
+  falsifierStatus: SpecCurve['falsifier_status'];
+};
+
+function summarizeDiagnostics(
+  curve: SpecCurve,
+  cost: StudyCost | null,
+): DiagnosticsSummaryData {
+  const byStatus = curve.cells.reduce(
+    (acc, cell) => {
+      acc[cell.status] += 1;
+      return acc;
+    },
+    { complete: 0, running: 0, pending: 0, error: 0 },
+  );
+  const lead = curve.rows[0];
+  const zeroCostCells = cost?.cells.filter((c) => (c.cost_usd ?? 0) === 0).length ?? 0;
+  return {
+    ...byStatus,
+    leadRobustness: lead?.robustness ?? 0,
+    fragileSpecs: lead?.fragile_specs.length ?? 0,
+    zeroCostCells,
+    totalCells: curve.cells.length,
+    falsifierStatus: curve.falsifier_status,
+  };
+}
+
+function DiagnosticsSummary({
+  diagnostics,
+}: {
+  diagnostics: DiagnosticsSummaryData;
+}) {
+  return (
+    <div className="grid gap-2 text-xs">
+      <div className="grid grid-cols-2 gap-1.5 font-mono text-[11px]">
+        <Metric label="complete" value={String(diagnostics.complete)} />
+        <Metric label="running" value={String(diagnostics.running)} />
+        <Metric label="pending" value={String(diagnostics.pending)} />
+        <Metric label="error" value={String(diagnostics.error)} />
+      </div>
+      <div className="border-t pt-2 text-muted-foreground">
+        <p>falsifier: {diagnostics.falsifierStatus.replace(/_/g, ' ')}</p>
+        <p>fragile specs in lead: {diagnostics.fragileSpecs}</p>
+        <p>
+          zero-cost cells: {diagnostics.zeroCostCells}/{diagnostics.totalCells}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded border bg-background px-2 py-1">
+      <div className="uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-foreground">{value}</div>
     </div>
   );
 }
