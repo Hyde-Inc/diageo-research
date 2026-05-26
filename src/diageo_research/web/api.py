@@ -48,8 +48,14 @@ from ..study_plan import (
     revision_from_instruction,
     rerun_single_cell,
 )
+from .. import keys as _keys
 from ..config import get_settings
-from ..dagster_assets import asset_graph_json
+from ..dagster_assets import (
+    asset_graph_json,
+    asset_lineage,
+    fetch_asset_history,
+    list_cell_materializations,
+)
 from ..events import EventBus, create_bus, get_bus
 from ..manifest import read_manifest
 from ..models import RunState
@@ -62,7 +68,12 @@ from ..multiverse import (
     run_study,
 )
 from ..multiverse_report import build_spec_curve, write_spec_curve
-from ..orchestrator import new_run_id, run_research
+from ..orchestrator import (
+    _resolve_dagster_instance,
+    materialize_research_cell,
+    new_run_id,
+    run_research,
+)
 from ..prereg import PreregError
 from ..run_writer import list_stage_files
 
@@ -179,6 +190,281 @@ def get_assets_graph() -> dict[str, Any]:
     list).
     """
     return asset_graph_json()
+
+
+# ---------------------------------------------- Asset read-path (Dagster)
+#
+# These endpoints surface materialization history that lives in the
+# persistent Dagster instance (``.dagster_home``). They sit alongside
+# the file-based ``/runs/.../*`` endpoints rather than replacing them —
+# the FE keeps reading the file-based artefacts for the existing panes
+# and pulls from these endpoints when it needs lineage, history, or a
+# trigger-new-run hook.
+#
+# Asset keys travel through the URL as a base64-encoded JSON list (see
+# :func:`diageo_research.keys.encode_asset_key`). The encoding keeps
+# arbitrary path components (``research_cell/<hash>/<sig>``) safe in a
+# URL without us needing to invent a string-escape scheme.
+
+
+class AssetMaterializeRequest(BaseModel):
+    """Body for ``POST /assets/{key}/materialize``.
+
+    For declared partitioned assets, ``partition_key`` is mandatory so
+    we know which partition to re-run. For the content-addressed
+    ``research_cell`` family the body also needs ``question`` and
+    ``axes`` so we can rebuild the stage context — past materializations
+    don't carry the full input (just the hashes), so we ask the caller
+    to re-supply them.
+    """
+
+    partition_key: str | None = None
+    question: str | None = None
+    axes: dict[str, str] | None = None
+    n_personas: int | None = Field(default=None, ge=1, le=8)
+    max_turns: int | None = Field(default=None, ge=1, le=12)
+    max_cost_usd: float | None = Field(default=None, ge=0)
+
+
+_asset_materialize_tasks: dict[str, asyncio.Task[Any]] = {}
+
+
+def _safe_decode_asset_key(key_b64: str) -> list[str]:
+    try:
+        return _keys.decode_asset_key(key_b64)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"bad asset key: {e}")
+
+
+@app.get("/assets")
+def list_assets(limit: int = 50) -> dict[str, Any]:
+    """List materialized assets, newest first.
+
+    The listing covers two surfaces:
+
+    * **Declared static assets** (the six pipeline stages) — one row
+      per asset key with the latest materialization across all
+      partitions / runs.
+    * **Content-addressed cell briefs** — one row per cell signature
+      under ``research_cells``.
+
+    The shape is friendly for a workbench listing view: ``asset_key``
+    (list of strings), ``asset_key_encoded`` (URL-safe handle),
+    ``partition_key``, ``timestamp``, plus the metadata bundle Dagster
+    persisted.
+    """
+    instance = _resolve_dagster_instance()
+    try:
+        rows: list[dict[str, Any]] = []
+
+        # Declared stage assets — one summary row each. Filter out the
+        # content-addressed ``research_cell`` family; those land in the
+        # ``cell`` block below so we don't double-list them.
+        try:
+            declared_keys = list(instance.all_asset_keys())
+        except Exception:  # noqa: BLE001
+            declared_keys = []
+        for key in declared_keys:
+            if key.path and key.path[0] == _keys.CELL_ASSET_KEY_PREFIX:
+                continue
+            try:
+                hist = fetch_asset_history(instance, asset_key_path=list(key.path), limit=1)
+            except Exception:  # noqa: BLE001
+                continue
+            if not hist:
+                rows.append(
+                    {
+                        "asset_key": list(key.path),
+                        "asset_key_encoded": _keys.encode_asset_key(key.path),
+                        "partition_key": None,
+                        "timestamp": 0.0,
+                        "run_id": "",
+                        "metadata": {},
+                        "kind": "declared",
+                    }
+                )
+                continue
+            row = hist[0]
+            row["kind"] = "declared"
+            rows.append(row)
+
+        # Content-addressed research_cell rows (one per signature).
+        try:
+            cell_rows = list_cell_materializations(instance, limit=limit)
+        except Exception:  # noqa: BLE001
+            cell_rows = []
+        for row in cell_rows:
+            row["kind"] = "cell"
+            rows.append(row)
+
+        rows.sort(key=lambda r: r.get("timestamp", 0.0), reverse=True)
+        return {
+            "assets": rows[:limit],
+            "partition_sets": {
+                "study_cells": "Per-cell stage assets (study-scoped run_id)",
+                "research_cells": "Content-addressed cell briefs (cross-study)",
+            },
+        }
+    finally:
+        try:
+            instance.dispose()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+@app.get("/assets/{key_b64}")
+def get_asset(key_b64: str) -> dict[str, Any]:
+    """Detail view for one asset key: latest materialization + metadata."""
+    if key_b64 == "graph":
+        raise HTTPException(status_code=404, detail="route reserved")
+    path = _safe_decode_asset_key(key_b64)
+    instance = _resolve_dagster_instance()
+    try:
+        history = fetch_asset_history(instance, asset_key_path=path, limit=5)
+        latest = history[0] if history else None
+        return {
+            "asset_key": path,
+            "asset_key_encoded": key_b64,
+            "latest": latest,
+            "recent": history,
+            "lineage": asset_lineage(path),
+        }
+    finally:
+        try:
+            instance.dispose()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+@app.get("/assets/{key_b64}/lineage")
+def get_asset_lineage(key_b64: str) -> dict[str, Any]:
+    """Upstream + downstream asset keys for one asset.
+
+    Reads from the declared :class:`Definitions` graph for declared
+    assets; for the content-addressed ``research_cell`` family, returns
+    the synthesis stage as upstream (the brief's immediate producer).
+    """
+    path = _safe_decode_asset_key(key_b64)
+    lineage = asset_lineage(path)
+    return {
+        "asset_key": path,
+        "asset_key_encoded": key_b64,
+        "upstream": [
+            {"asset_key": p, "asset_key_encoded": _keys.encode_asset_key(p)}
+            for p in lineage["upstream"]
+        ],
+        "downstream": [
+            {"asset_key": p, "asset_key_encoded": _keys.encode_asset_key(p)}
+            for p in lineage["downstream"]
+        ],
+    }
+
+
+@app.get("/assets/{key_b64}/history")
+def get_asset_history(key_b64: str, limit: int = 25) -> dict[str, Any]:
+    """Last N materializations for an asset, newest first."""
+    path = _safe_decode_asset_key(key_b64)
+    instance = _resolve_dagster_instance()
+    try:
+        history = fetch_asset_history(
+            instance, asset_key_path=path, limit=max(1, min(limit, 200))
+        )
+        return {
+            "asset_key": path,
+            "asset_key_encoded": key_b64,
+            "history": history,
+        }
+    finally:
+        try:
+            instance.dispose()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+@app.post("/assets/{key_b64}/materialize")
+async def post_asset_materialize(
+    key_b64: str, req: AssetMaterializeRequest
+) -> dict[str, Any]:
+    """Re-materialize an asset.
+
+    Two flavours:
+
+    * For the ``research_cell`` content-addressed key, the caller must
+      supply ``question`` + ``axes`` (we don't store the original
+      question text in event log metadata at full resolution). We
+      kick off a normal ``materialize_research_cell`` in the
+      background and return a task handle so the FE can poll
+      ``/runs/{run_id}/materializations`` for progress.
+    * For declared stage assets (``question_analysis``, ``personas``,
+      ...), re-materialization requires a live StageContext, which
+      only the orchestrator can construct. We return ``400`` with a
+      hint to use the cell-level entry point instead.
+
+    Guardrailed: even when upstream stages are missing, the cell
+    materialization path is responsible for orchestrating the full
+    pipeline, so we never call ``dagster.materialize`` for a stage
+    asset in isolation.
+    """
+    path = _safe_decode_asset_key(key_b64)
+    if not path:
+        raise HTTPException(status_code=400, detail="empty asset key")
+
+    head = path[0]
+    if head != _keys.CELL_ASSET_KEY_PREFIX:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "stage assets cannot be re-materialized in isolation; "
+                "rerun the parent cell via the research_cell asset "
+                "(asset key starts with 'research_cell')."
+            ),
+        )
+
+    if not req.question:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "research_cell materialization requires `question` in the "
+                "request body. Dagster's event-log metadata only stores "
+                "the question hash; pass the full text to re-run."
+            ),
+        )
+
+    run_id = req.partition_key or new_run_id()
+    state = RunState(run_id=run_id, question=req.question, status="running")
+    _runs[run_id] = state
+
+    async def _runner() -> None:
+        try:
+            await materialize_research_cell(
+                question=req.question or "",
+                run_id=run_id,
+                n_personas=req.n_personas,
+                max_turns=req.max_turns,
+                max_cost_usd=req.max_cost_usd,
+                axes=req.axes or None,
+            )
+            state.status = "complete"
+        except Exception as e:  # noqa: BLE001
+            logger.exception("re-materialization for asset %s failed", path)
+            state.status = "error"
+            state.error = str(e)
+
+    task = asyncio.create_task(_runner())
+    _asset_materialize_tasks[run_id] = task
+
+    expected_path = _keys.cell_asset_key_path(req.question, req.axes)
+    expected_encoded = _keys.encode_asset_key(expected_path)
+    return {
+        "run_id": run_id,
+        "status": "running",
+        "asset_key": path,
+        "asset_key_encoded": key_b64,
+        "expected_asset_key": expected_path,
+        "expected_asset_key_encoded": expected_encoded,
+        "stream_url": f"/research/{run_id}/stream",
+        "materializations_url": f"/runs/{run_id}/materializations",
+    }
 
 
 # ---------------------------------------------------- Single research (legacy)
