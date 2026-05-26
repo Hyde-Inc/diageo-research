@@ -146,30 +146,6 @@ export type RunFinal = {
   json?: Record<string, unknown>;
 };
 
-// ─── Ask ────────────────────────────────────────────────────────────
-//
-// POST /studies/{id}/ask. Plain-language Q&A over a study's own
-// artefacts. Optional ``scenario_id`` narrows context to one cell. The
-// backend uses the ``diageo_research.ask`` answerer; the FE just hands
-// over the user's question and renders the structured response.
-
-export type AskCitation = {
-  source: string;
-  snippet: string;
-  link?: string | null;
-};
-
-export type AskRequest = {
-  question: string;
-  scenario_id?: string | null;
-};
-
-export type AskResponse = {
-  answer: string;
-  citations: AskCitation[];
-  unknowns: string[];
-};
-
 // ─── Study detail + pre-registration ───────────────────────────────
 //
 // These are the shapes returned by GET /studies/{id} and
@@ -214,6 +190,83 @@ export type Prereg = {
   notes?: string;
 };
 
+// ─── Ask (grounded Q&A) ────────────────────────────────────────────
+//
+// Mirrors AskRequest / AskResponse in src/diageo_research/web/api.py.
+// The endpoint POST /studies/{id}/ask answers a natural-language
+// question over the study's own artefacts.
+
+export type AskCitation = {
+  source: string;
+  snippet: string;
+  link?: string | null;
+};
+
+export type AskRequest = {
+  question: string;
+  scenario_id?: string | null;
+};
+
+export type AskResponse = {
+  answer: string;
+  citations: AskCitation[];
+  unknowns: string[];
+};
+
+export type TopRiskCard = {
+  occasion: string;
+  line: string;
+  robustness: number;
+  robustness_label: string;
+  illustrative: boolean;
+  source_assets: string[];
+};
+
+export type ResearchSummary = {
+  study_id: string;
+  question: string;
+  top_risks: TopRiskCard[];
+  brief_markdown: string;
+  brief_illustrative: boolean;
+  lead_cluster_id: number | null;
+};
+
+export type PlanReviseRequest = {
+  instruction: string;
+  apply?: boolean;
+  rerun?: boolean;
+};
+
+export type PlanReviseResponse = {
+  instruction: string;
+  diff_lines: string[];
+  spec_before: Record<string, unknown>;
+  spec_after: Record<string, unknown>;
+  applied: boolean;
+  queued_cell_id: string | null;
+  queued_run_id: string | null;
+};
+
+export type TraceStep = {
+  kind: string;
+  title: string;
+  detail: string;
+  asset_ref?: string | null;
+  timestamp?: string | null;
+  code_version?: string | null;
+  prompt_version?: string | null;
+};
+
+export type TraceResponse = {
+  trace_id: string;
+  label: string;
+  value_display: string;
+  steps: TraceStep[];
+  run_id: string | null;
+  cluster_id: number | null;
+  illustrative: boolean;
+};
+
 // ─── Fetch helpers ─────────────────────────────────────────────────
 
 const BASE = '/api/workbench';
@@ -249,4 +302,29 @@ export const wb = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
+  research: (studyId: string) =>
+    wbFetch<ResearchSummary>(`/studies/${studyId}/research`),
+  planRevise: (studyId: string, body: PlanReviseRequest) =>
+    wbFetch<PlanReviseResponse>(`/studies/${studyId}/plan/revise`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  trace: (
+    studyId: string,
+    params: {
+      trace_id: string;
+      cluster_id?: number;
+      run_id?: string;
+      metric?: string;
+    },
+  ) => {
+    const q = new URLSearchParams({ trace_id: params.trace_id });
+    if (params.cluster_id != null) {
+      q.set('cluster_id', String(params.cluster_id));
+    }
+    if (params.run_id) q.set('run_id', params.run_id);
+    if (params.metric) q.set('metric', params.metric);
+    return wbFetch<TraceResponse>(`/studies/${studyId}/trace?${q}`);
+  },
 };

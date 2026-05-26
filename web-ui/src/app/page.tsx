@@ -23,6 +23,13 @@ type Tile = {
 
 const TILES: Tile[] = [
   {
+    href: '/research',
+    Icon: FlaskConical,
+    title: 'Research',
+    body: 'Top occasions at risk, full brief with clickable evidence traces, and simulation chips.',
+    tone: 'primary',
+  },
+  {
     href: '/answer',
     Icon: Lightbulb,
     title: 'Answer',

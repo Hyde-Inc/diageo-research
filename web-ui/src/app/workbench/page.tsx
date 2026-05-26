@@ -297,7 +297,12 @@ export default function WorkbenchPage() {
               onOpenInLineage={handleOpenInLineage}
             />
           ) : (
-            <PaneAsk detail={detail} curve={curve} />
+            <PaneAsk
+              studyId={studyId}
+              detail={detail}
+              curve={curve}
+              activeCellId={activeCellId}
+            />
           )}
         </div>
       </main>

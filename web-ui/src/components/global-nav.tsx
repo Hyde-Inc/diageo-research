@@ -19,13 +19,16 @@ import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import {
   Compass,
+  FlaskConical,
   Grid2X2,
   HelpCircle,
   Lightbulb,
   ListChecks,
   MessageCircle,
+  PencilLine,
   Settings2,
   ShieldAlert,
+  Telescope,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -40,6 +43,12 @@ type NavItem = {
 };
 
 const NAV: NavItem[] = [
+  {
+    href: '/research',
+    label: 'Research',
+    Icon: Telescope,
+    tone: 'primary',
+  },
   { href: '/answer', label: 'Answer', Icon: Lightbulb, tone: 'primary' },
   { href: '/robustness', label: 'Robustness', Icon: Compass, tone: 'primary' },
   {
@@ -64,6 +73,13 @@ const NAV: NavItem[] = [
   },
   { href: '/setup', label: 'Setup', Icon: Settings2, tone: 'primary' },
   { href: '/ask', label: 'Ask', Icon: MessageCircle, tone: 'primary' },
+  { href: '/plan', label: 'Plan', Icon: PencilLine, tone: 'primary' },
+  {
+    href: '/simulation',
+    label: 'Simulation',
+    Icon: FlaskConical,
+    tone: 'primary',
+  },
   {
     href: '/workbench',
     label: 'Workbench',
