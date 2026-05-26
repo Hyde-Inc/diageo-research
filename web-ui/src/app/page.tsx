@@ -2,6 +2,7 @@ import Link from "next/link";
 import {
   ArrowRight,
   Compass,
+  DatabaseZap,
   FlaskConical,
   Grid2X2,
   HelpCircle,
@@ -62,6 +63,13 @@ const TILES: Tile[] = [
     Icon: HelpCircle,
     title: 'Evidence',
     body: 'Claim → source → transformation → output number, one claim per page.',
+    tone: 'primary',
+  },
+  {
+    href: '/assets',
+    Icon: DatabaseZap,
+    title: 'Assets / Evidence',
+    body: 'Validate receipts, review metadata, trigger eligible cells, and inspect lineage.',
     tone: 'primary',
   },
   {

@@ -106,6 +106,73 @@ export type AssetGraph = {
   partition_set: string;
 };
 
+export type AssetMetadata = Record<string, unknown>;
+
+export type AssetSummary = {
+  asset_key: string[];
+  asset_key_encoded: string;
+  partition_key: string | null;
+  timestamp: number | string | null;
+  run_id: string;
+  description?: string;
+  metadata: AssetMetadata;
+  kind?: string;
+};
+
+export type AssetsListResponse = {
+  assets: AssetSummary[];
+  partition_sets: Record<string, string>;
+};
+
+export type AssetLineageItem = {
+  asset_key: string[];
+  asset_key_encoded: string;
+};
+
+export type AssetLineageResponse = {
+  asset_key: string[];
+  asset_key_encoded: string;
+  upstream: AssetLineageItem[];
+  downstream: AssetLineageItem[];
+};
+
+export type AssetDetailResponse = {
+  asset_key: string[];
+  asset_key_encoded: string;
+  latest: AssetSummary | null;
+  recent: AssetSummary[];
+  lineage: {
+    upstream: string[][];
+    downstream: string[][];
+  };
+};
+
+export type AssetHistoryResponse = {
+  asset_key: string[];
+  asset_key_encoded: string;
+  history: AssetSummary[];
+};
+
+export type AssetMaterializeRequest = {
+  question: string;
+  axes?: Record<string, string> | null;
+  partition_key?: string | null;
+  n_personas?: number | null;
+  max_turns?: number | null;
+  max_cost_usd?: number | null;
+};
+
+export type AssetMaterializeResponse = {
+  run_id: string;
+  status: string;
+  asset_key: string[];
+  asset_key_encoded: string;
+  expected_asset_key: string[];
+  expected_asset_key_encoded: string;
+  stream_url: string;
+  materializations_url: string;
+};
+
 export type Materialization = {
   asset_key: string;
   partition_key: string;
@@ -292,6 +359,18 @@ export const wb = {
   specCurve: (studyId: string) =>
     wbFetch<SpecCurve>(`/studies/${studyId}/spec_curve`),
   cost: (studyId: string) => wbFetch<StudyCost>(`/studies/${studyId}/cost`),
+  assets: () => wbFetch<AssetsListResponse>('/assets'),
+  asset: (key: string) => wbFetch<AssetDetailResponse>(`/assets/${key}`),
+  assetHistory: (key: string) =>
+    wbFetch<AssetHistoryResponse>(`/assets/${key}/history`),
+  assetLineage: (key: string) =>
+    wbFetch<AssetLineageResponse>(`/assets/${key}/lineage`),
+  materializeAsset: (key: string, body: AssetMaterializeRequest) =>
+    wbFetch<AssetMaterializeResponse>(`/assets/${key}/materialize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
   assetGraph: () => wbFetch<AssetGraph>('/assets/graph'),
   materializations: (runId: string) =>
     wbFetch<MaterializationsResponse>(`/runs/${runId}/materializations`),

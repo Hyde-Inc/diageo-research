@@ -19,6 +19,7 @@ import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import {
   Compass,
+  DatabaseZap,
   FlaskConical,
   Grid2X2,
   HelpCircle,
@@ -76,6 +77,13 @@ const NAV: NavItem[] = [
     label: 'Evidence',
     Icon: HelpCircle,
     match: '/evidence',
+    tone: 'primary',
+  },
+  {
+    href: '/assets',
+    label: 'Assets',
+    Icon: DatabaseZap,
+    match: '/assets',
     tone: 'primary',
   },
   { href: '/setup', label: 'Setup', Icon: Settings2, tone: 'primary' },
