@@ -16,6 +16,11 @@ data/*.duckdb
 data/raw/
 runs/
 
+# Dagster instance state (SQLite DBs, compute logs, schedules) created by
+# `diageo dagster-dev`. Pure local state; the schema-level config lives in
+# the committed `dagster.yaml` at the repo root.
+.dagster_home/
+
 # Editor
 .vscode/
 .idea/

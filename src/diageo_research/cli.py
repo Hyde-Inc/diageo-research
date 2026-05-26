@@ -549,6 +549,107 @@ def serve(
     uvicorn.run("diageo_research.web.api:app", host=host, port=port, reload=False)
 
 
+@app.command("dagster-dev")
+def dagster_dev(
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind address for the Dagster UI."),
+    port: int = typer.Option(3000, "--port", help="Port for the Dagster UI (Dagit)."),
+    dagster_home: Path = typer.Option(
+        Path(".dagster_home"),
+        "--dagster-home",
+        "-d",
+        help=(
+            "Directory for Dagster's persistent state (runs, events, "
+            "compute logs). Created if missing. Gitignored."
+        ),
+    ),
+    workspace: Path = typer.Option(
+        Path("workspace.yaml"),
+        "--workspace",
+        "-w",
+        help="Path to workspace.yaml; defaults to the one at the repo root.",
+    ),
+) -> None:
+    """Launch the real Dagster webserver (Dagit) over the research pipeline.
+
+    Wraps ``dagster dev`` with three things baked in:
+
+    1. ``DAGSTER_HOME`` is set to the ``--dagster-home`` directory so the
+       SQLite-backed run/event/schedule stores defined in ``dagster.yaml``
+       persist across process restarts.
+    2. The repo-root ``dagster.yaml`` is copied into ``DAGSTER_HOME`` (where
+       Dagster expects it) so the storage providers actually take effect;
+       without this Dagster prints a warning and falls back to defaults.
+    3. The package-resolved ``Definitions`` (six research-pipeline assets +
+       the ``study_cells`` dynamic partition set) is loaded via
+       ``workspace.yaml``'s ``python_module`` entry, so the UI sees the
+       same asset graph as the FastAPI server and the ``diageo study``
+       executor.
+
+    After this command exits with Ctrl-C, the SQLite DBs under
+    ``DAGSTER_HOME`` are preserved — re-running the command brings them
+    back with full history.
+    """
+    import os
+    import shutil
+    import subprocess
+    import sys
+
+    dagster_home = dagster_home.resolve()
+    workspace = workspace.resolve()
+    if not workspace.exists():
+        console.print(
+            f"[red]workspace.yaml not found at[/red] {workspace}.\n"
+            "[dim]Run `diageo dagster-dev` from the repo root, or pass "
+            "`--workspace <path>`.[/dim]"
+        )
+        raise typer.Exit(code=1)
+
+    dagster_home.mkdir(parents=True, exist_ok=True)
+
+    repo_yaml = Path("dagster.yaml").resolve()
+    target_yaml = dagster_home / "dagster.yaml"
+    if repo_yaml.exists():
+        try:
+            shutil.copyfile(repo_yaml, target_yaml)
+        except OSError as e:  # noqa: BLE001
+            console.print(
+                f"[yellow]Could not copy {repo_yaml} → {target_yaml}: {e}[/yellow]"
+            )
+            console.print("[yellow]Continuing with Dagster defaults.[/yellow]")
+    else:
+        console.print(
+            f"[yellow]No dagster.yaml at {repo_yaml}; Dagster will fall back "
+            "to its defaults (still persistent, just less explicit).[/yellow]"
+        )
+
+    env = os.environ.copy()
+    env["DAGSTER_HOME"] = str(dagster_home)
+
+    console.print(f"[dim]DAGSTER_HOME={dagster_home}[/dim]")
+    console.print(f"[dim]workspace=  {workspace}[/dim]")
+    console.print(
+        f"[bold]Opening Dagit at[/bold] [cyan]http://{host}:{port}/[/cyan] "
+        "(Ctrl-C to stop)"
+    )
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "dagster",
+        "dev",
+        "-w",
+        str(workspace),
+        "-h",
+        host,
+        "-p",
+        str(port),
+    ]
+    try:
+        subprocess.run(cmd, env=env, check=False)
+    except KeyboardInterrupt:
+        pass
+
+
 @app.command()
 def study(
     spec: Path = typer.Argument(

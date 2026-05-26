@@ -1,0 +1,14 @@
+# Dagster workspace — tells `dagster dev` (and `dagster-webserver`) which
+# code location to load. We ship a single installable package and the
+# top-level `Definitions` object lives at
+# `diageo_research.dagster_assets.defs`, so a python_module load is the
+# cleanest option (no need to thread a file path through).
+#
+# Used by:
+#   `diageo dagster-dev`  (wraps `dagster dev -w workspace.yaml`)
+#   `dagster dev -w workspace.yaml`
+
+load_from:
+  - python_module:
+      module_name: diageo_research.dagster_assets
+      location_name: diageo_research

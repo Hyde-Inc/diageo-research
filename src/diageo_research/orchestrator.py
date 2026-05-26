@@ -352,17 +352,34 @@ def _run_dagster_materialize(
 
     Runs in a worker thread so Dagster gets a fresh event loop and the
     parent FastAPI loop stays responsive. The dynamic partition key is
-    added to an ephemeral instance immediately before
-    ``materialize`` so the partition set is non-empty when Dagster
-    looks it up.
+    added to the resolved instance immediately before ``materialize``
+    so the partition set is non-empty when Dagster looks it up.
+
+    Instance selection:
+
+    * If the ``DAGSTER_HOME`` env var is set, use
+      :meth:`DagsterInstance.get` so run history, asset materializations,
+      and compute logs land in the persistent store and are visible in
+      Dagit (``diageo dagster-dev``). This is the path the FastAPI server
+      and the ``diageo study`` CLI take when launched alongside the
+      webserver.
+    * Otherwise fall back to :meth:`DagsterInstance.ephemeral` so unit
+      tests and one-off CLI invocations don't require touching disk or
+      polluting a shared SQLite. The 150-test suite relies on this
+      fallback to stay hermetic.
 
     The ``assets`` argument is the full list. If verification is
     disabled in settings we skip the ``verifier`` asset by selecting
     everything else explicitly.
     """
+    import os
+
     from dagster import AssetSelection, DagsterInstance, materialize
 
-    instance = DagsterInstance.ephemeral()
+    if os.environ.get("DAGSTER_HOME"):
+        instance = DagsterInstance.get()
+    else:
+        instance = DagsterInstance.ephemeral()
     instance.add_dynamic_partitions(partition_set_name, [run_id])
     selection: AssetSelection | None = None
     if not run_verifier:

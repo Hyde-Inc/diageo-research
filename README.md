@@ -55,7 +55,7 @@ disk-level change, so the explicit URL is the reliable hand-off).
 Two smoke checks confirming the install:
 
 ```bash
-uv run pytest -q                                       # expect: 147 passed
+uv run pytest -q                                       # expect: 155 passed
 curl -s http://127.0.0.1:8765/assets/graph | uv run python -c "import json,sys;print(len(json.load(sys.stdin)['nodes']))"
                                                        # expect: 6
 ```
@@ -156,6 +156,56 @@ Slash-command bar at the bottom (`/help` for the full list):
 | `/tools` | Tool-calls tab. |
 | `/personas` | Personas tab. |
 
+## Dagster orchestration
+
+For demos, audits, and anyone who wants to see the asset graph in its
+native form, point `dagster dev` at the same `Definitions` object the
+workbench uses. Three terminals:
+
+```bash
+# Terminal 1: workbench API + SSE
+uv run --env-file .env.local diageo serve     # → http://127.0.0.1:8765/
+
+# Terminal 2: Dagster UI (Dagit) — asset graph, partitions, run history
+diageo dagster-dev                            # → http://127.0.0.1:3000/
+
+# Terminal 3: Next.js Hypothesis Workbench
+cd web-ui && pnpm dev                         # → http://localhost:3001/workbench
+```
+
+The Dagster UI is the source of truth for asset lineage, partition
+history, and materialization receipts. Use it to launch runs, drill into
+a step's stdout/stderr, and walk the asset graph in its native form. The
+`web-ui` workbench at `:3001` wraps the same data with decision-grade
+framing (multiverse cells, spec curve, pre-registration, falsifiers) for
+stakeholder reviews.
+
+`diageo dagster-dev` sets `DAGSTER_HOME=./.dagster_home`, copies the
+repo-root `dagster.yaml` into it (so the SqliteRunStorage /
+SqliteEventLogStorage / SqliteScheduleStorage providers actually take
+effect), and launches `dagster dev` against `workspace.yaml` — which
+loads `diageo_research.dagster_assets` as a code location. The
+`.dagster_home/` directory is gitignored; run history accumulates there
+across restarts.
+
+Backfill the UI with materializations from earlier ephemeral runs:
+
+```bash
+DAGSTER_HOME=$(pwd)/.dagster_home uv run \
+    python scripts/seed_dagster_from_runs.py
+```
+
+That script reads each `runs/<id>/dagster_materializations.jsonl` and
+reports the rows as runless `AssetMaterialization` events into the
+persistent instance — so a freshly-launched Dagit shows the same
+provenance the workbench already shows from disk, without re-running
+any LLM calls.
+
+When the FastAPI server (`diageo serve`) and `diageo study` are launched
+while `DAGSTER_HOME` is set in the environment, the in-process
+materializer also writes into the persistent instance, so new runs
+appear in Dagit immediately alongside the seeded history.
+
 ## MCP integration
 
 `diageo mcp` wraps the workbench HTTP API as MCP tools, so Cursor / Claude
@@ -195,13 +245,12 @@ MCP server exposes 11 tools, all backed by the same FastAPI endpoints:
 | `list_recipes` | Saved YAML study specs in `samples/` — clone-and-parameterise templates. |
 | `workbench_health` | Sanity check — `{ok, asset_count, edge_count, workbench_url}`. |
 
-Pair this with [`dagster-mcp`](https://pypi.org/project/dagster-mcp/) once a
-long-running Dagster webserver is wired up: that one wraps Dagster's
-GraphQL surface (`get_runs`, `launch_job`, etc.) so a chat client can
-re-materialize a partition or replay a stage by name. We use
-`DagsterInstance.ephemeral()` today, so Dagster GraphQL is not queryable
-across runs — `dagster-mcp` becomes the right path the moment we point
-`dg dev` at a persistent instance.
+Pair this with [`dagster-mcp`](https://pypi.org/project/dagster-mcp/)
+once you want a chat client to drive Dagit's GraphQL surface
+(`get_runs`, `launch_job`, re-materialize a partition by name). With
+`diageo dagster-dev` running, the Dagster webserver is up on
+`http://127.0.0.1:3000` and GraphQL at `/graphql` is reachable — that's
+what `dagster-mcp` connects to.
 
 ## Datasets
 
@@ -264,16 +313,21 @@ hits all three. The `Definitions` object is the single source of truth: the
 mermaid view in the workbench, the `/assets/graph` endpoint, and the test
 pins in `tests/test_dagster_assets.py` all introspect the same object.
 
-**Why an ephemeral DagsterInstance + our own JSONL receipts.** A persistent
-Dagster instance (postgres-backed event log, daemon, webserver) is great
-infrastructure but adds operational cost we do not need yet. Each cell
-spins up `DagsterInstance.ephemeral()`, runs the six assets in-process, and
-writes our own per-stage `dagster_materializations.jsonl` with the same
-metadata Dagster would have logged. The workbench reads the JSONL files
-(via `GET /runs/{run_id}/materializations`) so the lineage UI works without
-a Dagster webserver. When we want the Dagster UI itself, we point `dg dev`
-at a persistent instance and the existing `Definitions` object is already
-the right shape.
+**DagsterInstance: persistent when DAGSTER_HOME is set, ephemeral otherwise.**
+Each cell's materializer (`orchestrator._run_dagster_materialize`) calls
+`DagsterInstance.get()` when `DAGSTER_HOME` is set in the environment and
+falls back to `DagsterInstance.ephemeral()` otherwise. The persistent
+path keeps Dagit (`diageo dagster-dev`) populated with run history,
+asset materializations, and compute logs across process restarts — its
+storage providers are declared in the repo-root `dagster.yaml`
+(`SqliteRunStorage`, `SqliteEventLogStorage`, `SqliteScheduleStorage`,
+`LocalComputeLogManager`, `LocalArtifactStorage`) and the SQLite DBs
+live under `./.dagster_home/` (gitignored). The ephemeral path keeps the
+test suite hermetic and one-off CLI runs from polluting a shared DB.
+Either way, every stage *also* writes our own per-cell
+`dagster_materializations.jsonl` so the FastAPI workbench keeps
+rendering lineage even when the Dagster webserver is not running — the
+two surfaces are independent and read the same metadata.
 
 ## Models, pricing, budget caps
 
