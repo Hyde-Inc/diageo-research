@@ -1,0 +1,41 @@
+# Workbench dev stack — `diageo dev` reads this file and launches every
+# `enabled` service as a child process with prefixed log streams.
+#
+# Change a port → save → re-run `diageo dev`. No code edits required.
+# Set `enabled: false` to skip a service; use `--only api,web_ui` for an
+# ad-hoc subset.
+
+services:
+  # FastAPI + SSE backend. Hosts /studies, /runs/*, /research, /assets/graph.
+  # The web-ui's Next.js rewrite proxies /api/workbench/* here, so changing
+  # `api.port` automatically retargets the FE (web_ui.workbench_api_base
+  # below is auto-derived when null).
+  api:
+    enabled: true
+    host: 127.0.0.1
+    port: 8765
+    env_file: .env.local   # loaded into the api child's env (ANTHROPIC_API_KEY, etc.)
+
+  # Dagster UI (Dagit). Mirrors `diageo dagster-dev`: DAGSTER_HOME is
+  # exported and dagster.yaml copied in so the SQLite stores persist.
+  dagit:
+    enabled: true
+    host: 127.0.0.1
+    port: 3000
+    dagster_home: .dagster_home
+    workspace: workspace.yaml
+
+  # Next.js Hypothesis Workbench. `pnpm dev` (or `npm run dev`) inside
+  # ./web-ui. WORKBENCH_API_BASE is auto-set from api.host:api.port unless
+  # you override it here (e.g. point at a remote/staging FastAPI).
+  web_ui:
+    enabled: true
+    host: 127.0.0.1
+    port: 3001
+    package_manager: pnpm        # pnpm | npm
+    cwd: web-ui
+    workbench_api_base: null     # null → derived from api.host:api.port
+
+# Optional shared env vars merged into every child's env. Per-service
+# overrides (api.env_file, web_ui.workbench_api_base) win over these.
+env: {}

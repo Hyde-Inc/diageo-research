@@ -812,6 +812,54 @@ def studies() -> None:
 
 
 @app.command()
+def dev(
+    spec: Path = typer.Option(
+        Path("deploy.yaml"),
+        "--spec",
+        help="Path to the deploy.yaml describing api/dagit/web_ui ports + env.",
+    ),
+    only: Optional[str] = typer.Option(
+        None,
+        "--only",
+        help=(
+            "Comma-separated subset of services to launch "
+            "(e.g. 'api,web_ui'). Omitted = all enabled services in deploy.yaml."
+        ),
+    ),
+) -> None:
+    """Launch FastAPI + Dagit + Next.js web-ui in one terminal.
+
+    Reads ``deploy.yaml`` and spawns each enabled service as a child process
+    with a coloured ``[api]`` / ``[dagit]`` / ``[web]`` prefix on every log
+    line. Ctrl-C terminates all three cleanly. Edit ``deploy.yaml`` to
+    change ports without touching code.
+    """
+    from .dev_launcher import parse_only, run_dev
+
+    spec_path = spec.resolve()
+    if not spec_path.exists():
+        console.print(f"[red]Deploy spec not found:[/red] {spec_path}")
+        console.print(
+            "[dim]Create one at the repo root or pass --spec PATH. "
+            "See the committed deploy.yaml for the schema.[/dim]"
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        only_list = parse_only(only)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1) from e
+
+    try:
+        rc = run_dev(spec_path, only_list, console=console)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1) from e
+    raise typer.Exit(code=rc)
+
+
+@app.command()
 def mcp(
     workbench_url: str = typer.Option(
         "http://localhost:8000",
