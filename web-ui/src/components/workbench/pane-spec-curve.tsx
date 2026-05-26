@@ -56,6 +56,7 @@ export function PaneSpecCurve({
   costLoading,
   cellId,
   onSelectCell,
+  onOpenInLineage,
 }: {
   curve: SpecCurve | null;
   cost: StudyCost | null;
@@ -63,6 +64,7 @@ export function PaneSpecCurve({
   costLoading: boolean;
   cellId: string | null;
   onSelectCell: (cellId: string) => void;
+  onOpenInLineage?: (cellId: string) => void;
 }) {
   const [detailCtx, setDetailCtx] = useState<CellDetailContext | null>(null);
 
@@ -78,26 +80,30 @@ export function PaneSpecCurve({
 
   return (
     <PaneDeck data-testid="pane-spec-curve">
+      <ExplainerCard rowCount={curve.rows.length} cellCount={curve.cells.length} />
+
       <PaneGrid className="xl:grid-cols-3">
         <PaneCard
-          title="Brief"
-          meta={`Lead ${(diagnostics.leadRobustness * 100).toFixed(0)}% robust`}
+          title="Lead recommendation"
+          meta={`${(diagnostics.leadRobustness * 100).toFixed(0)}% robust`}
+          description="The recommendation that survives the most defensible specifications."
           className="xl:col-span-2"
         >
           <LeadSummary curve={curve} />
         </PaneCard>
         <PaneCard
-          title="Tools / diagnostics"
+          title="Run health"
           meta={`${diagnostics.complete} complete · ${diagnostics.error} error`}
-          description="Quick run-health snapshot from curve and cost rollups."
+          description="Snapshot from the curve and cost rollups."
         >
           <DiagnosticsSummary diagnostics={diagnostics} />
         </PaneCard>
       </PaneGrid>
 
       <PaneCard
-        title="Compare / sensitivity / spec curve"
+        title="Spec curve"
         meta={`${curve.rows.length} clusters · ${curve.n_complete}/${curve.n_cells} cells complete`}
+        description="Robustness across cells per recommendation. Click a cell column to inspect that specification."
       >
         <ClustersTable
           curve={curve}
@@ -129,8 +135,42 @@ export function PaneSpecCurve({
         />
       </PaneCard>
 
-      <CellDetailSheet ctx={detailCtx} onClose={() => setDetailCtx(null)} />
+      <CellDetailSheet
+        ctx={detailCtx}
+        onClose={() => setDetailCtx(null)}
+        onOpenInLineage={onOpenInLineage}
+      />
     </PaneDeck>
+  );
+}
+
+function ExplainerCard({
+  rowCount,
+  cellCount,
+}: {
+  rowCount: number;
+  cellCount: number;
+}) {
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white/95 px-4 py-3 shadow-sm shadow-slate-950/[0.04]">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h3 className="text-sm font-semibold tracking-tight text-slate-900">
+          What you&apos;re looking at
+        </h3>
+        <p className="max-w-3xl text-[12px] leading-snug text-slate-600">
+          The spec curve is a <strong>robustness check</strong>: each row is
+          a candidate recommendation, each column is one of the {cellCount}{' '}
+          cells. A high-robustness row means the recommendation survives
+          most defensible framings. Mixed-colour rows mean the framing
+          changes the answer — that&apos;s where to look next.
+          {rowCount === 0 ? null : (
+            <span className="ml-1 text-slate-500">
+              {rowCount} clusters extracted from the briefs.
+            </span>
+          )}
+        </p>
+      </div>
+    </section>
   );
 }
 

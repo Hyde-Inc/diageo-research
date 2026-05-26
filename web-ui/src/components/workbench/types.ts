@@ -140,6 +140,12 @@ export type MaterializationsResponse = {
   materializations: Materialization[];
 };
 
+export type RunFinal = {
+  run_id: string;
+  markdown?: string;
+  json?: Record<string, unknown>;
+};
+
 // ─── Study detail + pre-registration ───────────────────────────────
 //
 // These are the shapes returned by GET /studies/{id} and
@@ -212,4 +218,5 @@ export const wb = {
   assetGraph: () => wbFetch<AssetGraph>('/assets/graph'),
   materializations: (runId: string) =>
     wbFetch<MaterializationsResponse>(`/runs/${runId}/materializations`),
+  runFinal: (runId: string) => wbFetch<RunFinal>(`/runs/${runId}/final`),
 };
