@@ -146,6 +146,30 @@ export type RunFinal = {
   json?: Record<string, unknown>;
 };
 
+// ─── Ask ────────────────────────────────────────────────────────────
+//
+// POST /studies/{id}/ask. Plain-language Q&A over a study's own
+// artefacts. Optional ``scenario_id`` narrows context to one cell. The
+// backend uses the ``diageo_research.ask`` answerer; the FE just hands
+// over the user's question and renders the structured response.
+
+export type AskCitation = {
+  source: string;
+  snippet: string;
+  link?: string | null;
+};
+
+export type AskRequest = {
+  question: string;
+  scenario_id?: string | null;
+};
+
+export type AskResponse = {
+  answer: string;
+  citations: AskCitation[];
+  unknowns: string[];
+};
+
 // ─── Study detail + pre-registration ───────────────────────────────
 //
 // These are the shapes returned by GET /studies/{id} and
@@ -219,4 +243,10 @@ export const wb = {
   materializations: (runId: string) =>
     wbFetch<MaterializationsResponse>(`/runs/${runId}/materializations`),
   runFinal: (runId: string) => wbFetch<RunFinal>(`/runs/${runId}/final`),
+  ask: (studyId: string, body: AskRequest) =>
+    wbFetch<AskResponse>(`/studies/${studyId}/ask`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
 };
