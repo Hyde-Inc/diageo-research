@@ -33,6 +33,10 @@ import {
 } from '@/components/workbench/types';
 
 type PaneId = 'recipe' | 'dag' | 'universe' | 'curve';
+type StudyFetch<T> = {
+  key: string;
+  value: T | null;
+};
 
 const PANES: Array<{ id: PaneId; label: string; Icon: typeof GitGraph }> = [
   { id: 'recipe', label: 'Recipe', Icon: BookOpen },
@@ -44,17 +48,15 @@ const PANES: Array<{ id: PaneId; label: string; Icon: typeof GitGraph }> = [
 export default function WorkbenchPage() {
   const [studies, setStudies] = useState<StudySummary[]>([]);
   const [studyId, setStudyId] = useState<string | null>(null);
-  const [detail, setDetail] = useState<StudyDetail | null>(null);
-  const [curve, setCurve] = useState<SpecCurve | null>(null);
-  const [cost, setCost] = useState<StudyCost | null>(null);
+  const [detailFetch, setDetailFetch] = useState<StudyFetch<StudyDetail> | null>(null);
+  const [curveFetch, setCurveFetch] = useState<StudyFetch<SpecCurve> | null>(null);
+  const [costFetch, setCostFetch] = useState<StudyFetch<StudyCost> | null>(null);
   const [pane, setPane] = useState<PaneId>('recipe');
   const [studiesError, setStudiesError] = useState<string | null>(null);
-  const [loadingDetail, setLoadingDetail] = useState(false);
-  const [loadingCurve, setLoadingCurve] = useState(false);
-  const [loadingCost, setLoadingCost] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [activeCellId, setActiveCellId] = useState<string | null>(null);
   const mountedRef = useRef(true);
+  const studyFetchKey = studyId ? `${studyId}:${refreshKey}` : null;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -95,54 +97,53 @@ export default function WorkbenchPage() {
   // subject block can render the question, and panes don't each
   // re-fetch the same StudyDetail.
   useEffect(() => {
-    if (!studyId) {
-      setDetail(null);
-      setCurve(null);
-      setCost(null);
-      return;
-    }
+    if (!studyId || !studyFetchKey) return;
     let cancelled = false;
-    setLoadingDetail(true);
-    setLoadingCurve(true);
-    setLoadingCost(true);
     wb.study(studyId)
       .then((d) => {
-        if (!cancelled) setDetail(d);
+        if (!cancelled) setDetailFetch({ key: studyFetchKey, value: d });
       })
       .catch(() => {
-        if (!cancelled) setDetail(null);
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingDetail(false);
+        if (!cancelled) setDetailFetch({ key: studyFetchKey, value: null });
       });
     wb.specCurve(studyId)
       .then((c) => {
         if (cancelled) return;
-        setCurve(c);
+        setCurveFetch({ key: studyFetchKey, value: c });
         setActiveCellId((cur) =>
           cur && c.cells.some((x) => x.id === cur) ? cur : null,
         );
       })
       .catch(() => {
-        if (!cancelled) setCurve(null);
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingCurve(false);
+        if (!cancelled) setCurveFetch({ key: studyFetchKey, value: null });
       });
     wb.cost(studyId)
       .then((c) => {
-        if (!cancelled) setCost(c);
+        if (!cancelled) setCostFetch({ key: studyFetchKey, value: c });
       })
       .catch(() => {
-        if (!cancelled) setCost(null);
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingCost(false);
+        if (!cancelled) setCostFetch({ key: studyFetchKey, value: null });
       });
     return () => {
       cancelled = true;
     };
-  }, [studyId, refreshKey]);
+  }, [studyId, studyFetchKey]);
+
+  const detail =
+    studyFetchKey && detailFetch?.key === studyFetchKey ? detailFetch.value : null;
+  const curve =
+    studyFetchKey && curveFetch?.key === studyFetchKey ? curveFetch.value : null;
+  const cost =
+    studyFetchKey && costFetch?.key === studyFetchKey ? costFetch.value : null;
+  const loadingDetail = Boolean(
+    studyFetchKey && detailFetch?.key !== studyFetchKey,
+  );
+  const loadingCurve = Boolean(
+    studyFetchKey && curveFetch?.key !== studyFetchKey,
+  );
+  const loadingCost = Boolean(
+    studyFetchKey && costFetch?.key !== studyFetchKey,
+  );
 
   const studySummary = useMemo(
     () => studies.find((s) => s.id === studyId) ?? null,

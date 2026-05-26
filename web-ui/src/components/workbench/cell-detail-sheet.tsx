@@ -46,6 +46,12 @@ export type CellDetailContext = {
   rows: SpecCurveRow[];
 };
 
+type MaterializationFetch = {
+  runId: string;
+  materializations: Materialization[] | null;
+  error: string | null;
+};
+
 export function CellDetailSheet({
   ctx,
   onClose,
@@ -53,35 +59,36 @@ export function CellDetailSheet({
   ctx: CellDetailContext | null;
   onClose: () => void;
 }) {
-  const [mats, setMats] = useState<Materialization[] | null>(null);
-  const [matsError, setMatsError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [matsFetch, setMatsFetch] = useState<MaterializationFetch | null>(null);
+  const runId = ctx?.cell.run_id ?? null;
 
   useEffect(() => {
-    if (!ctx) {
-      setMats(null);
-      setMatsError(null);
-      return;
-    }
+    if (!runId) return;
     let cancelled = false;
-    setLoading(true);
-    setMatsError(null);
-    wb.materializations(ctx.cell.run_id)
+    wb.materializations(runId)
       .then((res) => {
         if (cancelled) return;
-        setMats(res.materializations);
+        setMatsFetch({
+          runId,
+          materializations: res.materializations,
+          error: null,
+        });
       })
       .catch((err) => {
         if (cancelled) return;
-        setMatsError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        setMatsFetch({
+          runId,
+          materializations: null,
+          error: err instanceof Error ? err.message : String(err),
+        });
       });
     return () => {
       cancelled = true;
     };
-  }, [ctx]);
+  }, [runId]);
+
+  const currentMats = runId && matsFetch?.runId === runId ? matsFetch : null;
+  const loading = Boolean(runId && matsFetch?.runId !== runId);
 
   return (
     <Sheet open={ctx !== null} onOpenChange={(o) => !o && onClose()}>
@@ -92,8 +99,8 @@ export function CellDetailSheet({
         {ctx ? (
           <CellDetailBody
             ctx={ctx}
-            mats={mats}
-            matsError={matsError}
+            mats={currentMats?.materializations ?? null}
+            matsError={currentMats?.error ?? null}
             loading={loading}
           />
         ) : null}

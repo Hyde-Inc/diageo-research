@@ -137,6 +137,15 @@ type AssetNodeData = {
 };
 
 type StageNodeT = Node<AssetNodeData, 'stage'>;
+type AssetGraphFetch = {
+  key: number;
+  graph: AssetGraph | null;
+  error: string | null;
+};
+type MaterializationFetch = {
+  runId: string;
+  materializations: Materialization[];
+};
 
 function StageNode({ data }: NodeProps<StageNodeT>) {
   const status = data.status ?? 'idle';
@@ -208,11 +217,9 @@ export function PaneDag({
   cellId: string | null;
   onSelectCell: (cellId: string) => void;
 }) {
-  const [graph, setGraph] = useState<AssetGraph | null>(null);
-  const [graphError, setGraphError] = useState<string | null>(null);
+  const [graphFetch, setGraphFetch] = useState<AssetGraphFetch | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [mats, setMats] = useState<Materialization[] | null>(null);
-  const [matsRunId, setMatsRunId] = useState<string | null>(null);
+  const [matsFetch, setMatsFetch] = useState<MaterializationFetch | null>(null);
   const [detailCtx, setDetailCtx] = useState<CellDetailContext | null>(null);
 
   const selectedCell: CellSummary | null = useMemo(() => {
@@ -232,42 +239,57 @@ export function PaneDag({
 
   useEffect(() => {
     let cancelled = false;
-    setGraphError(null);
     wb.assetGraph()
       .then((g) => {
-        if (!cancelled) setGraph(g);
+        if (!cancelled) {
+          setGraphFetch({ key: refreshKey, graph: g, error: null });
+        }
       })
       .catch((err) => {
         if (cancelled) return;
-        setGraphError(err instanceof Error ? err.message : String(err));
+        setGraphFetch({
+          key: refreshKey,
+          graph: null,
+          error: err instanceof Error ? err.message : String(err),
+        });
       });
     return () => {
       cancelled = true;
     };
   }, [refreshKey]);
 
+  const selectedRunId = selectedCell?.run_id ?? null;
+
   useEffect(() => {
-    if (!selectedCell) {
-      setMats(null);
-      setMatsRunId(null);
-      return;
-    }
-    if (matsRunId === selectedCell.run_id) return;
+    if (!selectedRunId) return;
     let cancelled = false;
-    setMatsRunId(selectedCell.run_id);
-    wb.materializations(selectedCell.run_id)
+    wb.materializations(selectedRunId)
       .then((res) => {
         if (cancelled) return;
-        setMats(res.materializations);
+        setMatsFetch({
+          runId: selectedRunId,
+          materializations: res.materializations,
+        });
       })
       .catch(() => {
         if (cancelled) return;
-        setMats([]);
+        setMatsFetch({ runId: selectedRunId, materializations: [] });
       });
     return () => {
       cancelled = true;
     };
-  }, [selectedCell, matsRunId]);
+  }, [selectedRunId]);
+
+  const currentGraph =
+    graphFetch?.key === refreshKey
+      ? { graph: graphFetch.graph, error: graphFetch.error }
+      : { graph: null, error: null };
+  const graph = currentGraph.graph;
+  const graphError = currentGraph.error;
+  const mats =
+    selectedRunId && matsFetch?.runId === selectedRunId
+      ? matsFetch.materializations
+      : null;
 
   const { nodes, edges } = useMemo(() => {
     if (!graph) return { nodes: [] as StageNodeT[], edges: [] as Edge[] };

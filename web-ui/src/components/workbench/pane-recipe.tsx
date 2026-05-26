@@ -25,6 +25,11 @@ import {
 } from './types';
 
 type AxesIndex = Record<string, string[]>;
+type PreregFetch = {
+  studyId: string;
+  prereg: Prereg | null;
+  error: string | null;
+};
 
 function indexAxes(cells: CellDetail[]): AxesIndex {
   const out: AxesIndex = {};
@@ -104,36 +109,36 @@ export function PaneRecipe({
   curve: SpecCurve | null;
   loading: boolean;
 }) {
-  const [prereg, setPrereg] = useState<Prereg | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loadingPrereg, setLoadingPrereg] = useState(false);
+  const [preregFetch, setPreregFetch] = useState<PreregFetch | null>(null);
 
   useEffect(() => {
-    if (!studyId) {
-      setPrereg(null);
-      setError(null);
-      return;
-    }
+    if (!studyId) return;
     let cancelled = false;
-    setLoadingPrereg(true);
-    setError(null);
     wb.prereg(studyId)
       .then((p) => {
-        if (!cancelled) setPrereg(p);
+        if (!cancelled) {
+          setPreregFetch({ studyId, prereg: p, error: null });
+        }
       })
       .catch((err) => {
         if (!cancelled) {
-          setPrereg(null);
-          setError(err instanceof Error ? err.message : String(err));
+          setPreregFetch({
+            studyId,
+            prereg: null,
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingPrereg(false);
       });
     return () => {
       cancelled = true;
     };
   }, [studyId]);
+
+  const currentPrereg =
+    studyId && preregFetch?.studyId === studyId ? preregFetch : null;
+  const prereg = currentPrereg?.prereg ?? null;
+  const error = currentPrereg?.error ?? null;
+  const loadingPrereg = Boolean(studyId && preregFetch?.studyId !== studyId);
 
   const axes = useMemo(
     () => (detail ? indexAxes(detail.cells) : {}),
