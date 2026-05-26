@@ -20,6 +20,7 @@ runs/
 # `diageo dagster-dev`. Pure local state; the schema-level config lives in
 # the committed `dagster.yaml` at the repo root.
 .dagster_home/
+.local_context/
 
 # Editor
 .vscode/
