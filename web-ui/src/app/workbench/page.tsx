@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  BookOpen,
   ExternalLink,
   FlaskConical,
   GitGraph,
@@ -30,6 +31,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { PaneDag } from '@/components/workbench/pane-dag';
+import { PaneRecipe } from '@/components/workbench/pane-recipe';
 import { PaneSpecCurve } from '@/components/workbench/pane-spec-curve';
 import { PaneUniverse } from '@/components/workbench/pane-universe';
 import { StudyPicker } from '@/components/workbench/study-picker';
@@ -40,7 +42,7 @@ import {
   type StudySummary,
 } from '@/components/workbench/types';
 
-type PaneId = 'dag' | 'universe' | 'curve';
+type PaneId = 'recipe' | 'dag' | 'universe' | 'curve';
 
 const PANES: Array<{
   id: PaneId;
@@ -48,6 +50,12 @@ const PANES: Array<{
   blurb: string;
   Icon: typeof GitGraph;
 }> = [
+  {
+    id: 'recipe',
+    label: 'Recipe',
+    blurb: 'Axes · defaults · prereg · falsifiers',
+    Icon: BookOpen,
+  },
   {
     id: 'dag',
     label: 'DAG',
@@ -73,7 +81,7 @@ export default function WorkbenchPage() {
   const [studyId, setStudyId] = useState<string | null>(null);
   const [curve, setCurve] = useState<SpecCurve | null>(null);
   const [cost, setCost] = useState<StudyCost | null>(null);
-  const [pane, setPane] = useState<PaneId>('dag');
+  const [pane, setPane] = useState<PaneId>('recipe');
   const [studiesError, setStudiesError] = useState<string | null>(null);
   const [loadingCurve, setLoadingCurve] = useState(false);
   const [loadingCost, setLoadingCost] = useState(false);
@@ -223,7 +231,13 @@ export default function WorkbenchPage() {
 
           <PaneIntro pane={pane} />
 
-          {pane === 'dag' ? (
+          {pane === 'recipe' ? (
+            <PaneRecipe
+              studyId={studyId}
+              curve={curve}
+              loading={loadingCurve}
+            />
+          ) : pane === 'dag' ? (
             <PaneDag
               curve={curve}
               loading={loadingCurve}
@@ -398,6 +412,8 @@ function PaneBar({
 
 function PaneIntro({ pane }: { pane: PaneId }) {
   const intros: Record<PaneId, string> = {
+    recipe:
+      'Recipe & pre-registration — what the study was committed to before any data was generated. Axes, effective defaults, signed pre-registration, and the falsifier conditions the spec curve is currently evaluated against.',
     dag: 'The six declared assets in the research pipeline. Pick a cell from the rail below the diagram, then click any stage to inspect the per-stage AssetMaterialization receipt (partition key, model id, spend, sha-256 of inputs + outputs + prompt).',
     universe:
       'Each column is one cell of the multiverse (a defensible specification of the question). Each row is a clustered recommendation. Green = the cell agrees; orange = it flips; yellow = hedged; muted = the cell did not address it.',

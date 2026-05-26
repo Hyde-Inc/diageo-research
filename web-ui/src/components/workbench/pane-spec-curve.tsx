@@ -369,8 +369,11 @@ function CostHistogram({
           No cost rollup yet for this study.
         </div>
       ) : (
-        <div className="h-[220px] w-full">
-          <ResponsiveContainer width="100%" height="100%">
+        <div
+          className="h-[260px] w-full"
+          style={{ minHeight: 260, minWidth: 320 }}
+        >
+          <ResponsiveContainer width="100%" height="100%" minWidth={320} minHeight={240}>
             <BarChart
               data={bars}
               margin={{ top: 8, right: 8, bottom: 24, left: 8 }}

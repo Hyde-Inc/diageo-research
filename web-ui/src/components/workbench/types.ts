@@ -140,6 +140,50 @@ export type MaterializationsResponse = {
   materializations: Materialization[];
 };
 
+// ─── Study detail + pre-registration ───────────────────────────────
+//
+// These are the shapes returned by GET /studies/{id} and
+// GET /studies/{id}/prereg. They feed the Recipe pane.
+
+export type CellDetail = {
+  id: string;
+  axes: Record<string, string>;
+  addenda?: string[];
+  overrides?: Record<string, unknown>;
+  run_id: string;
+  status: StudyStatus;
+  started_at?: string | null;
+  finished_at?: string | null;
+  elapsed_s?: number | null;
+  error?: string | null;
+};
+
+export type StudyDetail = {
+  id: string;
+  name: string;
+  question: string;
+  cell_question_template?: string;
+  prereg_path?: string;
+  spec_path?: string;
+  cells: CellDetail[];
+  status: StudyStatus;
+  created_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  concurrency?: number | null;
+};
+
+export type Prereg = {
+  question: string;
+  decision_rule: string;
+  evidence_thresholds?: Record<string, number | string | null>;
+  falsifier_conditions?: string[];
+  holdout_reservation?: string;
+  signed_at?: string;
+  signed_by?: string;
+  notes?: string;
+};
+
 // ─── Fetch helpers ─────────────────────────────────────────────────
 
 const BASE = '/api/workbench';
@@ -160,6 +204,8 @@ export async function wbFetch<T>(
 
 export const wb = {
   studies: () => wbFetch<StudiesIndexResponse>('/studies'),
+  study: (studyId: string) => wbFetch<StudyDetail>(`/studies/${studyId}`),
+  prereg: (studyId: string) => wbFetch<Prereg>(`/studies/${studyId}/prereg`),
   specCurve: (studyId: string) =>
     wbFetch<SpecCurve>(`/studies/${studyId}/spec_curve`),
   cost: (studyId: string) => wbFetch<StudyCost>(`/studies/${studyId}/cost`),
