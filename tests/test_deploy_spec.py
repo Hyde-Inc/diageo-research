@@ -209,7 +209,12 @@ def test_build_command_api(tmp_path):
     assert "--host" in cmd and "0.0.0.0" in cmd
     assert "--port" in cmd and "9999" in cmd
     assert cwd == tmp_path
-    assert env == {}
+    # The API process is pointed at the same persistent Dagster instance
+    # as Dagit so studies launched via POST /studies show up in the
+    # Dagit Runs tab. Other env keys default to empty.
+    expected_dagster_home = str((tmp_path / ".dagster_home").resolve())
+    assert env.get("DAGSTER_HOME") == expected_dagster_home
+    assert (tmp_path / ".dagster_home").exists()
 
 
 def test_build_command_dagit_creates_dagster_home_and_sets_env(tmp_path):

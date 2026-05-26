@@ -236,6 +236,20 @@ def _build_command(
         if c.env_file:
             env_path = (repo_root / c.env_file).resolve()
             env.update(_read_env_file(env_path))
+        # Point the API at the same persistent Dagster instance Dagit
+        # uses so runs launched via POST /studies show up in the Dagit
+        # Runs tab. We mirror what we do for Dagit: ensure dagster.yaml
+        # lives at DAGSTER_HOME so the configured SQLite stores take
+        # effect rather than the in-memory fallback.
+        dh = (repo_root / spec.services.dagit.dagster_home).resolve()
+        dh.mkdir(parents=True, exist_ok=True)
+        repo_yaml = repo_root / "dagster.yaml"
+        if repo_yaml.exists() and not (dh / "dagster.yaml").exists():
+            try:
+                shutil.copyfile(repo_yaml, dh / "dagster.yaml")
+            except OSError:
+                pass
+        env["DAGSTER_HOME"] = str(dh)
         cmd = [
             sys.executable,
             "-m",

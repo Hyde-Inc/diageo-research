@@ -36,6 +36,7 @@ import asyncio
 import logging
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 from .config import get_settings
@@ -249,6 +250,7 @@ async def materialize_research_cell(
     enable_web_browse: bool | None = None,
     max_browses_per_cell: int | None = None,
     max_cost_usd: float | None = None,
+    axes: dict[str, str] | None = None,
 ) -> FinalReport:
     """Execute one research cell through Dagster's asset graph.
 
@@ -270,10 +272,18 @@ async def materialize_research_cell(
     Returns the :class:`FinalReport` produced by ``stage_synthesis``,
     or raises :class:`BudgetExceeded` (with the partial brief already
     written) on budget exhaustion.
+
+    ``axes`` is the multiverse axis-selection mapping for this cell (e.g.
+    ``{"lens": "demand_space", "cohort": "sub60k"}``). It feeds into the
+    content-addressed cell key emitted at end-of-cell so the Dagster
+    instance recognises subsequent calls with the same axes as a re-run
+    of the same intent. Single-shot research calls pass ``None`` and the
+    key falls back to a hash of just the question.
     """
     from .dagster_assets import (
         ALL_ASSETS,
         cell_partitions,
+        emit_cell_materialization,
         register_stage_context,
         unregister_stage_context,
     )
@@ -281,6 +291,7 @@ async def materialize_research_cell(
     run_id = run_id or new_run_id()
     settings = get_settings()
     parent_loop = asyncio.get_running_loop()
+    t_cell_start = time.monotonic()
     ctx = build_stage_context(
         question=question,
         run_id=run_id,
@@ -302,26 +313,75 @@ async def materialize_research_cell(
     # asset bodies, the asset adapters re-enter run_ctx(run_id) on the
     # parent loop when they schedule the stage coroutine.
 
+    cell_status = "pending"
+    cell_error: str | None = None
     try:
-        result = await asyncio.to_thread(
+        result, dagster_instance = await asyncio.to_thread(
             _run_dagster_materialize,
             run_id=run_id,
             partition_set_name=cell_partitions.name,
             assets=ALL_ASSETS,
             run_verifier=settings.enable_verifier,
         )
-        if not result.success:
-            # Surface the underlying failure cause if Dagster captured one.
-            failure_msgs = [
-                str(ev.message) for ev in (result.all_events or [])
-                if "step_failure" in str(ev.event_type_value).lower()
-            ]
-            raise RuntimeError(
-                "Dagster materialization failed for cell "
-                f"{run_id!r}: {failure_msgs or 'no step_failure events captured'}"
-            )
-        return await _finalize_run(ctx)
+        try:
+            if not result.success:
+                # Surface the underlying failure cause if Dagster captured one.
+                failure_msgs = [
+                    str(ev.message) for ev in (result.all_events or [])
+                    if "step_failure" in str(ev.event_type_value).lower()
+                ]
+                cell_status = "error"
+                raise RuntimeError(
+                    "Dagster materialization failed for cell "
+                    f"{run_id!r}: {failure_msgs or 'no step_failure events captured'}"
+                )
+            final = await _finalize_run(ctx)
+            cell_status = "complete"
+            return final
+        finally:
+            # Emit the content-addressed cell materialization regardless
+            # of stage outcome so even error cells get indexed in Dagit.
+            # ``dagster_instance`` may be ephemeral when ``DAGSTER_HOME``
+            # was not configurable; that's still useful for tests and
+            # one-shot CLI runs even if Dagit can't see the event.
+            if dagster_instance is not None:
+                produced_paths: list[str] = []
+                for fname in (
+                    "final.md",
+                    "final.json",
+                    "manifest.json",
+                    "cost.json",
+                    "dagster_materializations.jsonl",
+                ):
+                    p = ctx.run_dir / fname
+                    if p.exists():
+                        produced_paths.append(str(p.relative_to(settings.runs_dir)))
+                try:
+                    emit_cell_materialization(
+                        dagster_instance,
+                        question=question,
+                        axes=axes,
+                        run_dir=ctx.run_dir,
+                        status=cell_status,
+                        wall_time_s=time.monotonic() - t_cell_start,
+                        cost_tracker=ctx.cost_tracker,
+                        produced_paths=produced_paths,
+                        extras={
+                            "run_id": run_id,
+                            "error": cell_error,
+                        },
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "cell materialization emission failed for %s", run_id
+                    )
+                try:
+                    dagster_instance.dispose()
+                except Exception:  # noqa: BLE001
+                    pass
     except BudgetExceeded as be:
+        cell_status = "error"
+        cell_error = str(be)
         await _handle_budget_exceeded(ctx, be)
         raise
     except Exception as e:
@@ -329,8 +389,12 @@ async def materialize_research_cell(
         # unwrap and re-handle so the partial brief is written.
         budget_err = _find_budget_exceeded(e)
         if budget_err is not None:
+            cell_status = "error"
+            cell_error = str(budget_err)
             await _handle_budget_exceeded(ctx, budget_err)
             raise budget_err from e
+        cell_status = "error"
+        cell_error = str(e)
         logger.exception("Run %s failed", run_id)
         await ctx.bus.emit(
             SSEEvent(type="error", run_id=run_id, data={"message": str(e)})
@@ -341,13 +405,71 @@ async def materialize_research_cell(
         await _cleanup_run(ctx, run_token)
 
 
+def _resolve_dagster_instance() -> Any:
+    """Resolve a Dagster instance, preferring the persistent disk-backed one.
+
+    Order of preference:
+
+    1. If ``DAGSTER_HOME`` is already set, load the configured instance
+       via :meth:`DagsterInstance.from_config` so we read the SQLite stores
+       declared in ``dagster.yaml`` instead of falling back to defaults.
+    2. If a ``.dagster_home`` directory exists at the repo root, point
+       ``DAGSTER_HOME`` at it for this process and load that instance.
+       This is the FastAPI path: ``diageo dev`` only sets the env var
+       for the Dagit child, so the API has to opt in itself for runs
+       launched from ``/studies`` POSTs to show up in Dagit.
+    3. Otherwise fall back to ``DagsterInstance.ephemeral()`` so unit
+       tests stay hermetic.
+
+    Returns the live :class:`DagsterInstance`.
+    """
+    import os
+    import shutil
+
+    from dagster import DagsterInstance
+
+    repo_root = Path(__file__).resolve().parents[2]
+    dagster_home = os.environ.get("DAGSTER_HOME")
+    candidate = Path(dagster_home).resolve() if dagster_home else (repo_root / ".dagster_home").resolve()
+    repo_yaml = repo_root / "dagster.yaml"
+
+    if not dagster_home and not candidate.exists():
+        logger.debug(
+            "no DAGSTER_HOME and no .dagster_home; using ephemeral Dagster instance"
+        )
+        return DagsterInstance.ephemeral()
+
+    candidate.mkdir(parents=True, exist_ok=True)
+    # Mirror what `diageo dev` does for Dagit: drop dagster.yaml into the
+    # home dir so SqliteRunStorage / EventLogStorage actually take
+    # effect. Without this, dagster falls back to in-memory defaults
+    # despite DAGSTER_HOME being set, and the API's runs never appear
+    # in Dagit.
+    target_yaml = candidate / "dagster.yaml"
+    if not target_yaml.exists() and repo_yaml.exists():
+        try:
+            shutil.copyfile(repo_yaml, target_yaml)
+        except OSError:
+            logger.debug("dagster.yaml copy failed", exc_info=True)
+    os.environ["DAGSTER_HOME"] = str(candidate)
+
+    try:
+        return DagsterInstance.from_config(str(candidate))
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "DagsterInstance.from_config(%s) failed; falling back to ephemeral",
+            candidate,
+        )
+        return DagsterInstance.ephemeral()
+
+
 def _run_dagster_materialize(
     *,
     run_id: str,
     partition_set_name: str,
     assets: list[Any],
     run_verifier: bool,
-) -> Any:
+) -> tuple[Any, Any]:
     """Synchronously execute one cell's assets through Dagster.
 
     Runs in a worker thread so Dagster gets a fresh event loop and the
@@ -355,42 +477,35 @@ def _run_dagster_materialize(
     added to the resolved instance immediately before ``materialize``
     so the partition set is non-empty when Dagster looks it up.
 
-    Instance selection:
-
-    * If the ``DAGSTER_HOME`` env var is set, use
-      :meth:`DagsterInstance.get` so run history, asset materializations,
-      and compute logs land in the persistent store and are visible in
-      Dagit (``diageo dagster-dev``). This is the path the FastAPI server
-      and the ``diageo study`` CLI take when launched alongside the
-      webserver.
-    * Otherwise fall back to :meth:`DagsterInstance.ephemeral` so unit
-      tests and one-off CLI invocations don't require touching disk or
-      polluting a shared SQLite. The 150-test suite relies on this
-      fallback to stay hermetic.
-
     The ``assets`` argument is the full list. If verification is
     disabled in settings we skip the ``verifier`` asset by selecting
     everything else explicitly.
+
+    Returns ``(result, instance)`` so the caller can:
+
+    * Inspect ``result.success`` / events for the per-stage step status.
+    * Use ``instance`` to emit the content-addressed cell materialization
+      with :func:`dagster_assets.emit_cell_materialization` once the
+      stage events have all landed.
     """
-    import os
+    from dagster import AssetSelection, materialize
 
-    from dagster import AssetSelection, DagsterInstance, materialize
-
-    if os.environ.get("DAGSTER_HOME"):
-        instance = DagsterInstance.get()
-    else:
-        instance = DagsterInstance.ephemeral()
-    instance.add_dynamic_partitions(partition_set_name, [run_id])
+    instance = _resolve_dagster_instance()
+    try:
+        instance.add_dynamic_partitions(partition_set_name, [run_id])
+    except Exception:  # noqa: BLE001
+        logger.debug("add_dynamic_partitions(%s, [%s]) failed", partition_set_name, run_id, exc_info=True)
     selection: AssetSelection | None = None
     if not run_verifier:
         selection = AssetSelection.all() - AssetSelection.keys("verifier")
-    return materialize(
+    result = materialize(
         assets,
         partition_key=run_id,
         instance=instance,
         selection=selection,
         raise_on_error=False,
     )
+    return result, instance
 
 
 def _find_budget_exceeded(exc: BaseException) -> BudgetExceeded | None:
@@ -428,4 +543,5 @@ __all__ = [
     "materialize_research_cell",
     "new_run_id",
     "run_research",
+    "_resolve_dagster_instance",
 ]

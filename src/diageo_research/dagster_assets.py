@@ -47,7 +47,9 @@ from typing import TYPE_CHECKING, Any
 
 from dagster import (
     AssetKey,
+    AssetMaterialization,
     AssetsDefinition,
+    DagsterInstance,
     Definitions,
     DynamicPartitionsDefinition,
     MetadataValue,
@@ -55,6 +57,7 @@ from dagster import (
     asset,
 )
 
+from . import keys as _keys
 from .pricing import run_ctx, stage_ctx
 from .stages import (
     StageContext,
@@ -487,15 +490,391 @@ def asset_graph_json() -> dict[str, Any]:
     }
 
 
+# ----------------------------------------------------------- Cell-level asset
+#
+# The six stage assets above are intentionally scoped to one cell run.
+# Their partition keys are study-scoped (``study_<sid>_<cell_id>``) so a
+# rerun of the same axes in a different study creates a different
+# partition and a fresh materialization. That keeps each study's data
+# lineage isolated, but it also means stages cannot be cached across
+# studies.
+#
+# To unlock cross-study reuse we additionally emit a content-addressed
+# ``research_cell`` ``AssetMaterialization`` after the cell finishes:
+#
+#     AssetKey(["research_cell", question_hash, axes_signature])
+#
+# The key is deterministic in the (question, axes, code_version,
+# prompt_version) tuple — see :mod:`diageo_research.keys`. Same inputs
+# always land on the same Dagster asset, so Dagit can show "this cell
+# already ran on 2026-05-26; spend was $0.47" the next time a study
+# requests it. We emit it as a runless event (via
+# :meth:`DagsterInstance.report_runless_asset_event`) so it gets indexed
+# in the persistent event log alongside the per-stage materializations
+# that ``materialize()`` writes.
+#
+# The dynamic partition set ``research_cells`` carries the per-cell
+# signature so Dagit's asset detail view can group historical
+# materializations by intent.
+
+RESEARCH_CELL_PARTITIONS = DynamicPartitionsDefinition(name="research_cells")
+"""Partition set used by the content-addressed ``research_cell`` event.
+
+Partition keys are the readable cell signature returned by
+:func:`diageo_research.keys.cell_signature` (``q-…__a-…__c-…__p-…__h-…``).
+The partition set name is intentionally distinct from ``study_cells`` so
+the existing per-stage materializations (which Dagit indexes by run_id)
+remain unambiguously scoped to one study.
+"""
+
+
+CELL_MATERIALIZATION_FILE = "cell_materialization.json"
+
+
+def build_cell_metadata(
+    *,
+    question: str,
+    axes: dict[str, str] | None,
+    status: str,
+    wall_time_s: float,
+    cost_tracker: Any | None = None,
+    produced_paths: list[str] | None = None,
+    extras: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Pure-Python (JSON-safe) metadata bundle for one cell materialization.
+
+    Used both as the seed for the Dagster :class:`MaterializeResult` (so
+    Dagit renders the receipt on the asset detail page) and as the body
+    of the ``cell_materialization.json`` we persist under ``runs/<run_id>/``
+    for back-compat with the file-based workbench reader.
+    """
+    summary = _keys.metadata_summary(question=question, axes=axes)
+    summary["status"] = str(status)
+    summary["wall_time_s"] = round(float(wall_time_s), 3)
+    summary["produced_paths"] = list(produced_paths or [])
+    if cost_tracker is not None:
+        try:
+            summary["cost_usd"] = round(float(cost_tracker.cost_usd), 6)
+            breakdown = cost_tracker.breakdown
+            summary["cost_tokens"] = {
+                "input": int(getattr(breakdown, "input_tokens", 0) or 0),
+                "cached_input": int(
+                    getattr(breakdown, "cached_input_tokens", 0) or 0
+                ),
+                "output": int(getattr(breakdown, "output_tokens", 0) or 0),
+                "n_calls": int(getattr(breakdown, "n_calls", 0) or 0),
+            }
+        except Exception:  # noqa: BLE001
+            logger.debug("cost tracker introspection failed", exc_info=True)
+    if extras:
+        summary.update(extras)
+    return summary
+
+
+def _wrap_metadata_for_dagster(payload: dict[str, Any]) -> dict[str, Any]:
+    """Translate a JSON-safe metadata dict to Dagster :class:`MetadataValue`s.
+
+    Mappings and lists land as JSON metadata so they keep their shape
+    in the Dagit asset detail view. Strings are intentionally truncated
+    so long questions don't break the UI's metadata table.
+    """
+    md: dict[str, Any] = {}
+    for k, v in payload.items():
+        if isinstance(v, bool):
+            md[k] = MetadataValue.bool(v)
+        elif isinstance(v, int):
+            md[k] = MetadataValue.int(v)
+        elif isinstance(v, float):
+            md[k] = MetadataValue.float(v)
+        elif isinstance(v, (list, dict)):
+            md[k] = MetadataValue.json(v)
+        else:
+            md[k] = MetadataValue.text(str(v))
+    return md
+
+
+def emit_cell_materialization(
+    instance: DagsterInstance,
+    *,
+    question: str,
+    axes: dict[str, str] | None,
+    run_dir: Any,
+    status: str,
+    wall_time_s: float,
+    cost_tracker: Any | None = None,
+    produced_paths: list[str] | None = None,
+    extras: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Emit + persist one cell-level materialization receipt.
+
+    Does three things:
+
+    1. Builds a deterministic asset key
+       ``["research_cell", question_hash, axes_signature]`` and a readable
+       partition key ``cell_signature(question, axes)``.
+    2. Reports a runless :class:`AssetMaterialization` so it shows up in
+       the persistent Dagster instance under both the dynamic asset key
+       and the ``research_cells`` partition set.
+    3. Persists the same JSON body to ``runs/<run_id>/cell_materialization.json``
+       so the file-based workbench reader keeps working without Dagit
+       running.
+    """
+    payload = build_cell_metadata(
+        question=question,
+        axes=axes,
+        status=status,
+        wall_time_s=wall_time_s,
+        cost_tracker=cost_tracker,
+        produced_paths=produced_paths,
+        extras=extras,
+    )
+    asset_key_path = payload["asset_key_path"]
+    partition_key = payload["cell_signature"]
+
+    # Persist to disk first — that side never fails, so the file-based
+    # workbench always has a record even if Dagster's event log is
+    # momentarily unavailable.
+    try:
+        from pathlib import Path as _Path
+
+        run_dir_path = _Path(run_dir)
+        run_dir_path.mkdir(parents=True, exist_ok=True)
+        out_path = run_dir_path / CELL_MATERIALIZATION_FILE
+        out_path.write_text(
+            json.dumps(payload, indent=2, default=str), encoding="utf-8"
+        )
+        payload["materialization_path"] = str(out_path)
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "cell materialization receipt write failed for run_dir %s", run_dir
+        )
+
+    try:
+        instance.add_dynamic_partitions(
+            RESEARCH_CELL_PARTITIONS.name, [partition_key]
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("add_dynamic_partitions failed", exc_info=True)
+
+    try:
+        instance.report_runless_asset_event(
+            AssetMaterialization(
+                asset_key=asset_key_path,
+                partition=partition_key,
+                description=(
+                    f"Cell brief for question_hash={payload['question_hash']} "
+                    f"axes={payload['axes_signature']!r} "
+                    f"({status}, {wall_time_s:.1f}s)"
+                ),
+                metadata=_wrap_metadata_for_dagster(payload),
+            )
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("emit_cell_materialization: runless event failed")
+
+    return payload
+
+
+def list_cell_materializations(
+    instance: DagsterInstance, *, limit: int = 50
+) -> list[dict[str, Any]]:
+    """List the latest content-addressed cell materializations.
+
+    Walks every partition key registered against ``research_cells`` and
+    queries the latest materialization per key, newest first. Used by
+    the ``GET /assets`` listing endpoint.
+    """
+    try:
+        partition_keys = list(
+            instance.get_dynamic_partitions(RESEARCH_CELL_PARTITIONS.name)
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("get_dynamic_partitions(research_cells) failed", exc_info=True)
+        partition_keys = []
+    out: list[dict[str, Any]] = []
+    for pk in partition_keys:
+        records = _fetch_records_for_partition(instance, pk, limit=1)
+        if not records:
+            continue
+        out.append(_summarize_record(records[0]))
+    out.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
+    return out[:limit]
+
+
+def _fetch_records_for_partition(
+    instance: DagsterInstance, partition_key: str, *, limit: int = 25
+) -> list[Any]:
+    """Fetch materialization records for a given ``research_cells`` partition.
+
+    Dagster doesn't expose a "fetch by partition only" call without an
+    asset key, so we enumerate over the small set of asset keys we know
+    can land on ``research_cells`` partitions. In practice this is a
+    one-element set per partition (the content-addressed key path), but
+    we support multiple to keep the API tolerant.
+    """
+    # The content-addressed asset key for a given partition is
+    # derivable from the partition's own signature — but we don't have
+    # the question/axes here. Instead we rely on the partition key
+    # itself being unique across asset keys (it is — ``cell_signature``
+    # already encodes question_hash + axes), and ask Dagster for any
+    # asset key materialized against that partition by scanning the
+    # event log directly.
+    try:
+        # ``fetch_materializations`` requires an asset_key; we don't
+        # have one outside the materialization metadata. So we go via
+        # ``all_asset_keys`` and filter by prefix.
+        all_keys = [
+            k
+            for k in instance.all_asset_keys()
+            if k.path and k.path[0] == _keys.CELL_ASSET_KEY_PREFIX
+        ]
+    except Exception:  # noqa: BLE001
+        return []
+    matches: list[Any] = []
+    for key in all_keys:
+        try:
+            res = instance.fetch_materializations(
+                records_filter=key, limit=limit
+            )
+            for rec in res.records:
+                if (
+                    getattr(rec, "partition_key", None) == partition_key
+                    or _record_partition(rec) == partition_key
+                ):
+                    matches.append(rec)
+        except Exception:  # noqa: BLE001
+            continue
+    matches.sort(key=lambda r: _record_timestamp(r), reverse=True)
+    return matches[:limit]
+
+
+def _record_partition(record: Any) -> str | None:
+    """Try a few well-known accessors to pull the partition key off a record."""
+    pk = getattr(record, "partition_key", None)
+    if pk:
+        return pk
+    entry = getattr(record, "event_log_entry", None)
+    if entry is None:
+        return None
+    dagster_event = getattr(entry, "dagster_event", None)
+    if dagster_event is None:
+        return None
+    esd = getattr(dagster_event, "event_specific_data", None)
+    if esd is None:
+        return None
+    mat = getattr(esd, "materialization", None)
+    if mat is None:
+        return None
+    return getattr(mat, "partition", None)
+
+
+def _record_timestamp(record: Any) -> float:
+    """Pull a sortable timestamp off a materialization record."""
+    ts = getattr(record, "timestamp", None)
+    if isinstance(ts, (int, float)):
+        return float(ts)
+    entry = getattr(record, "event_log_entry", None)
+    if entry is not None:
+        ts2 = getattr(entry, "timestamp", None)
+        if isinstance(ts2, (int, float)):
+            return float(ts2)
+    return 0.0
+
+
+def _summarize_record(record: Any) -> dict[str, Any]:
+    """Pluck the user-facing fields off one materialization record."""
+    out: dict[str, Any] = {}
+    entry = getattr(record, "event_log_entry", None)
+    if entry is None:
+        return out
+    dagster_event = getattr(entry, "dagster_event", None)
+    if dagster_event is None:
+        return out
+    esd = getattr(dagster_event, "event_specific_data", None)
+    mat = getattr(esd, "materialization", None) if esd is not None else None
+    if mat is None:
+        return out
+
+    asset_key = mat.asset_key
+    out["asset_key"] = list(asset_key.path)
+    out["asset_key_encoded"] = _keys.encode_asset_key(asset_key.path)
+    out["partition_key"] = mat.partition
+    out["description"] = mat.description or ""
+    out["timestamp"] = _record_timestamp(record)
+    out["run_id"] = getattr(entry, "run_id", None) or ""
+
+    md: dict[str, Any] = {}
+    for k, v in (mat.metadata or {}).items():
+        try:
+            md[str(k)] = getattr(v, "value", v)
+        except Exception:  # noqa: BLE001
+            md[str(k)] = str(v)
+    out["metadata"] = md
+    return out
+
+
+def fetch_asset_history(
+    instance: DagsterInstance,
+    *,
+    asset_key_path: list[str],
+    limit: int = 25,
+) -> list[dict[str, Any]]:
+    """Last N materializations for a given asset key, newest first."""
+    try:
+        res = instance.fetch_materializations(
+            records_filter=AssetKey(asset_key_path), limit=limit
+        )
+        records = list(res.records)
+    except Exception:  # noqa: BLE001
+        return []
+    records.sort(key=_record_timestamp, reverse=True)
+    return [_summarize_record(r) for r in records]
+
+
+def asset_lineage(asset_key_path: list[str]) -> dict[str, list[list[str]]]:
+    """Return declared upstream + downstream asset key paths for ``asset_key``.
+
+    Reads the declared graph from :data:`defs`. For ad-hoc asset keys
+    that aren't declared (the content-addressed ``research_cell``
+    family), lineage is best-effort: upstream is the synthesis stage
+    (the brief's immediate producer), downstream is empty.
+    """
+    target = AssetKey(asset_key_path)
+    asset_graph = defs.resolve_asset_graph()
+    node = None
+    try:
+        node = asset_graph.get(target)
+    except (KeyError, Exception):  # noqa: BLE001
+        node = None
+    if node is not None:
+        upstream = [list(parent.path) for parent in node.parent_keys]
+        downstream = [list(child.path) for child in node.child_keys]
+        return {"upstream": upstream, "downstream": downstream}
+
+    if asset_key_path and asset_key_path[0] == _keys.CELL_ASSET_KEY_PREFIX:
+        return {
+            "upstream": [["synthesis"]],
+            "downstream": [],
+        }
+    return {"upstream": [], "downstream": []}
+
+
 __all__ = [
     "ALL_ASSETS",
+    "CELL_MATERIALIZATION_FILE",
+    "RESEARCH_CELL_PARTITIONS",
     "STAGE_SPEC",
     "STAGE_LABEL",
     "STAGE_DESCRIPTION",
     "asset_graph_json",
+    "asset_lineage",
+    "build_cell_metadata",
     "cell_partitions",
     "defs",
+    "emit_cell_materialization",
+    "fetch_asset_history",
     "interviews",
+    "list_cell_materializations",
     "outline",
     "personas",
     "question_analysis",

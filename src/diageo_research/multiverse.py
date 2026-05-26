@@ -412,6 +412,7 @@ async def _execute_cell(
                 enable_web_browse=enable_web_browse,
                 max_browses_per_cell=max_browses_per_cell,
                 max_cost_usd=max_cost_usd,
+                axes=dict(cell.axes),
             )
             cell.status = "complete"
             cell.elapsed_s = round(time.monotonic() - t0, 1)
@@ -441,6 +442,29 @@ async def _execute_cell(
 
 
 # ------------------------------------------------------- Validation helpers
+
+
+async def rerun_study_cell(study_id: str, cell_id: str) -> str:
+    """Re-materialize a single cell after a plan revision (proof-of-rerun)."""
+    study = read_study(study_id)
+    if study is None:
+        raise FileNotFoundError(f"No such study: {study_id}")
+    spec = load_spec(Path(study.spec_path))
+    cell = next((c for c in study.cells if c.id == cell_id), None)
+    if cell is None:
+        grid = expand_grid(spec)
+        match = next((c for c in grid if c.id == cell_id), None)
+        if match is None:
+            raise ValueError(f"Unknown cell {cell_id!r} for study {study_id}")
+        match.run_id = f"{study_id}_{cell_id}"
+        study.cells.append(match)
+        cell = match
+    cell.status = "pending"
+    cell.error = None
+    write_study(study)
+    sem = asyncio.Semaphore(1)
+    await _execute_cell(study, cell, spec, sem)
+    return cell.run_id
 
 
 def validate_spec_for_run(spec_path: Path) -> tuple[StudySpec, PreReg]:

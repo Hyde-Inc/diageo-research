@@ -38,6 +38,16 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 from sse_starlette.sse import EventSourceResponse
 
+from ..ask import AskAnswer, ask_study
+from ..evidence_trace import build_evidence_trace
+from ..research_view import build_research_summary
+from ..study_plan import (
+    load_study_spec,
+    persist_revision,
+    pick_proof_cell,
+    revision_from_instruction,
+    rerun_single_cell,
+)
 from ..config import get_settings
 from ..dagster_assets import asset_graph_json
 from ..events import EventBus, create_bus, get_bus
@@ -83,6 +93,65 @@ class StudyRequest(BaseModel):
 
     spec: dict[str, Any] | None = None
     sample: str | None = None
+
+
+class AskRequest(BaseModel):
+    """Body for POST /studies/{study_id}/ask.
+
+    ``scenario_id`` is optional. When set, the answerer narrows context to
+    that cell and treats the other cells as background colour.
+    """
+
+    question: str = Field(..., min_length=1)
+    scenario_id: str | None = None
+
+
+class AskCitation(BaseModel):
+    source: str
+    snippet: str
+    link: str | None = None
+
+
+class AskResponse(BaseModel):
+    answer: str
+    citations: list[AskCitation] = Field(default_factory=list)
+    unknowns: list[str] = Field(default_factory=list)
+
+
+class PlanReviseRequest(BaseModel):
+    instruction: str = Field(..., min_length=1)
+    apply: bool = False
+    rerun: bool = False
+
+
+class PlanReviseResponse(BaseModel):
+    instruction: str
+    diff_lines: list[str] = Field(default_factory=list)
+    spec_before: dict[str, Any] = Field(default_factory=dict)
+    spec_after: dict[str, Any] = Field(default_factory=dict)
+    applied: bool = False
+    queued_cell_id: str | None = None
+    queued_run_id: str | None = None
+
+
+class TraceStepModel(BaseModel):
+    kind: str
+    title: str
+    detail: str
+    asset_ref: str | None = None
+    timestamp: str | None = None
+    code_version: str | None = None
+    prompt_version: str | None = None
+
+
+class TraceResponse(BaseModel):
+    trace_id: str
+    label: str
+    value_display: str
+    steps: list[TraceStepModel] = Field(default_factory=list)
+    run_id: str | None = None
+    cluster_id: int | None = None
+    illustrative: bool = False
 
 
 # ------------------------------------------------------------- Static / index
@@ -536,6 +605,167 @@ def get_study_cost(study_id: str) -> dict[str, Any]:
         except Exception:  # noqa: BLE001
             continue
     return rollup
+
+
+@app.get("/studies/{study_id}/research")
+def get_study_research(study_id: str) -> dict[str, Any]:
+    """Stakeholder research view: top occasions at risk + brief excerpt."""
+    study = read_study(study_id)
+    if study is None:
+        raise HTTPException(status_code=404, detail="No such study")
+    try:
+        summary = build_research_summary(study_id)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"research summary failed: {e}")
+    return {
+        "study_id": summary.study_id,
+        "question": summary.question,
+        "top_risks": [
+            {
+                "occasion": c.occasion,
+                "line": c.line,
+                "robustness": c.robustness,
+                "robustness_label": c.robustness_label,
+                "illustrative": c.illustrative,
+                "source_assets": c.source_assets,
+            }
+            for c in summary.top_risks
+        ],
+        "brief_markdown": summary.brief_markdown,
+        "brief_illustrative": summary.brief_illustrative,
+        "lead_cluster_id": summary.lead_cluster_id,
+    }
+
+
+@app.post("/studies/{study_id}/plan/revise", response_model=PlanReviseResponse)
+async def post_study_plan_revise(
+    study_id: str, req: PlanReviseRequest
+) -> PlanReviseResponse:
+    """Preview or apply a natural-language revision to the study spec."""
+    study = read_study(study_id)
+    if study is None:
+        raise HTTPException(status_code=404, detail="No such study")
+    try:
+        revision = revision_from_instruction(study_id, req.instruction)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    queued_cell_id: str | None = None
+    queued_run_id: str | None = None
+    applied = False
+    if req.apply:
+        persist_revision(study_id, revision)
+        applied = True
+        if req.rerun:
+            spec = load_study_spec(study_id)
+            queued_cell_id, queued_run_id = pick_proof_cell(study_id, spec)
+
+            async def _proof() -> None:
+                try:
+                    await rerun_single_cell(study_id, queued_cell_id)
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "plan rerun failed for study %s cell %s",
+                        study_id,
+                        queued_cell_id,
+                    )
+
+            asyncio.create_task(_proof())
+
+    return PlanReviseResponse(
+        instruction=revision.instruction,
+        diff_lines=revision.diff_lines,
+        spec_before=revision.spec_before,
+        spec_after=revision.spec_after,
+        applied=applied,
+        queued_cell_id=queued_cell_id,
+        queued_run_id=queued_run_id,
+    )
+
+
+@app.get("/studies/{study_id}/trace", response_model=TraceResponse)
+def get_study_trace(
+    study_id: str,
+    trace_id: str,
+    cluster_id: int | None = None,
+    run_id: str | None = None,
+    metric: str | None = None,
+) -> TraceResponse:
+    """Evidence chain for a clickable number in the brief or panes."""
+    study = read_study(study_id)
+    if study is None:
+        raise HTTPException(status_code=404, detail="No such study")
+    try:
+        trace = build_evidence_trace(
+            study_id,
+            trace_id=trace_id,
+            cluster_id=cluster_id,
+            run_id=run_id,
+            metric=metric,
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return TraceResponse(
+        trace_id=trace.trace_id,
+        label=trace.label,
+        value_display=trace.value_display,
+        steps=[
+            TraceStepModel(
+                kind=s.kind,
+                title=s.title,
+                detail=s.detail,
+                asset_ref=s.asset_ref,
+                timestamp=s.timestamp,
+                code_version=s.code_version,
+                prompt_version=s.prompt_version,
+            )
+            for s in trace.steps
+        ],
+        run_id=trace.run_id,
+        cluster_id=trace.cluster_id,
+        illustrative=trace.illustrative,
+    )
+
+
+@app.post("/studies/{study_id}/ask", response_model=AskResponse)
+async def post_study_ask(study_id: str, req: AskRequest) -> AskResponse:
+    """Plain-language Q&A over a study's own artefacts.
+
+    Loads the final briefs (or executive-answer excerpts of them), the
+    cross-scenario spec curve, the evaluated falsifier states, and the
+    decision rule; builds a tight curated prompt; calls Sonnet; returns
+    a structured ``{answer, citations, unknowns}`` payload.
+
+    The answerer is instructed to translate internal jargon and to never
+    quote the decision rule verbatim. See ``diageo_research.ask`` for the
+    prompt contract and citation key scheme.
+    """
+    study = read_study(study_id)
+    if study is None:
+        raise HTTPException(status_code=404, detail="No such study")
+    try:
+        result: AskAnswer = await ask_study(
+            study_id,
+            req.question,
+            scenario_id=req.scenario_id,
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        logger.exception("ask: study %s failed", study_id)
+        raise HTTPException(status_code=500, detail=f"ask failed: {e}")
+    return AskResponse(
+        answer=result.answer,
+        citations=[
+            AskCitation(source=c.source, snippet=c.snippet, link=c.link)
+            for c in result.citations
+        ],
+        unknowns=list(result.unknowns),
+    )
 
 
 @app.get("/studies/{study_id}/prereg")
