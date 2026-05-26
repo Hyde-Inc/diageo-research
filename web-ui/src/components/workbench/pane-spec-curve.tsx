@@ -24,11 +24,8 @@ import {
   AlertTriangle,
   CheckCircle2,
   CircleDashed,
-  Coins,
-  Receipt,
   XCircle,
 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import {
   Bar,
   BarChart,
@@ -69,85 +66,119 @@ export function PaneSpecCurve({
 
   if (loading || !curve) {
     return (
-      <div className="border bg-muted/10 p-6 text-[11px] text-muted-foreground">
+      <div className="py-6 text-sm text-muted-foreground">
         {loading ? 'Loading spec curve…' : 'Pick a study to see its spec curve.'}
       </div>
     );
   }
 
   return (
-    <div className="grid gap-4">
-      <CurveHeader curve={curve} />
+    <div className="grid gap-6" data-testid="pane-spec-curve">
+      <LeadSummary curve={curve} />
 
-      <ClustersTable
-        curve={curve}
-        activeCellId={cellId}
-        onSelectCell={(cell) => {
-          onSelectCell(cell.id);
-          setDetailCtx({ cell, rows: curve.rows });
-        }}
-      />
+      <SubSection
+        title="Clustered recommendations"
+        meta={`${curve.rows.length} clusters · ${curve.n_complete}/${curve.n_cells} cells complete`}
+      >
+        <ClustersTable
+          curve={curve}
+          activeCellId={cellId}
+          onSelectCell={(cell) => {
+            onSelectCell(cell.id);
+            setDetailCtx({ cell, rows: curve.rows });
+          }}
+        />
+      </SubSection>
 
-      <CostHistogram
-        curve={curve}
-        cost={cost}
-        loading={costLoading}
-        onSelectCell={(cell) => {
-          onSelectCell(cell.id);
-          setDetailCtx({ cell, rows: curve.rows });
-        }}
-      />
+      <SubSection
+        title="Per-cell cost · cap-aware"
+        meta={
+          cost
+            ? `total $${cost.total_cost_usd.toFixed(4)} · ${cost.total_calls} calls`
+            : costLoading
+              ? 'loading…'
+              : 'no cost data'
+        }
+      >
+        <CostHistogram
+          curve={curve}
+          cost={cost}
+          loading={costLoading}
+          onSelectCell={(cell) => {
+            onSelectCell(cell.id);
+            setDetailCtx({ cell, rows: curve.rows });
+          }}
+        />
+      </SubSection>
 
       <CellDetailSheet ctx={detailCtx} onClose={() => setDetailCtx(null)} />
     </div>
   );
 }
 
-function CurveHeader({ curve }: { curve: SpecCurve }) {
+function LeadSummary({ curve }: { curve: SpecCurve }) {
   const leadRow = curve.rows[0];
+  if (!leadRow) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        No clustered recommendations yet. The curve is rebuilt on every
+        request — wait for cells to write their final.md.
+      </p>
+    );
+  }
+  const total =
+    leadRow.n_agree + leadRow.n_weaker + leadRow.n_flips + leadRow.n_missing;
+  const pct = Math.round(leadRow.robustness * 100);
   return (
-    <div className="grid gap-2 border bg-background p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Receipt className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="text-[11px] font-semibold tracking-tight">
-          Spec curve · clustered recommendations
+    <div className="grid gap-2">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <span className="font-mono uppercase tracking-wide">Lead recommendation</span>
+        <span className="font-semibold tabular-nums text-foreground">
+          {pct}% robust
         </span>
-        <Badge variant="outline" className="font-mono text-[9px]">
-          {curve.n_complete}/{curve.n_cells} cells complete
-        </Badge>
-        <Badge variant="outline" className="font-mono text-[9px]">
-          {curve.rows.length} clusters
-        </Badge>
+        <span>
+          {leadRow.n_agree}/{total} cells agree
+        </span>
       </div>
-      {leadRow ? (
-        <p className="text-[11px] leading-snug">
-          <span className="font-semibold">Lead recommendation</span>{' '}
-          ({Math.round(leadRow.robustness * 100)}% robust, {leadRow.n_agree}/
-          {leadRow.n_agree + leadRow.n_weaker + leadRow.n_flips + leadRow.n_missing}
-          {' cells agree'}):{' '}
-          <span className="text-foreground/80">
-            {leadRow.representative}
-          </span>
-        </p>
-      ) : (
-        <p className="text-[11px] text-muted-foreground">
-          No clustered recommendations yet. The curve is rebuilt on every
-          request — wait for cells to write their final.md.
-        </p>
-      )}
+      <p className="max-w-4xl text-base leading-relaxed text-foreground">
+        {leadRow.representative}
+      </p>
       {curve.falsifier_notes.length > 0 ? (
-        <div className="grid gap-1 border-t pt-2">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Falsifier notes ({curve.falsifier_status.replace(/_/g, ' ')})
-          </div>
-          <ul className="list-disc pl-4 text-[10.5px] text-muted-foreground">
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer select-none">
+            Falsifier notes ({curve.falsifier_status.replace(/_/g, ' ')}) —{' '}
+            {curve.falsifier_notes.length}
+          </summary>
+          <ul className="mt-1 list-disc pl-5 leading-snug">
             {curve.falsifier_notes.map((note, i) => (
               <li key={i}>{note}</li>
             ))}
           </ul>
-        </div>
+        </details>
       ) : null}
     </div>
+  );
+}
+
+function SubSection({
+  title,
+  meta,
+  children,
+}: {
+  title: string;
+  meta?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="grid gap-2">
+      <header className="flex flex-wrap items-baseline justify-between gap-2 border-b pb-2">
+        <h3 className="text-base font-semibold tracking-tight">{title}</h3>
+        {meta ? (
+          <span className="text-xs text-muted-foreground">{meta}</span>
+        ) : null}
+      </header>
+      {children}
+    </section>
   );
 }
 
@@ -347,25 +378,9 @@ function CostHistogram({
     bars.length > 0 && bars.every((b) => b.cost_usd === 0);
 
   return (
-    <div className="grid gap-2 border bg-background p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Coins className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="text-[11px] font-semibold tracking-tight">
-          Per-cell cost · cap-aware
-        </span>
-        {cost ? (
-          <Badge variant="outline" className="font-mono text-[9px]">
-            total ${cost.total_cost_usd.toFixed(4)} · {cost.total_calls} calls
-          </Badge>
-        ) : null}
-        {loading ? (
-          <Badge variant="outline" className="font-mono text-[9px]">
-            refreshing…
-          </Badge>
-        ) : null}
-      </div>
+    <div className="grid gap-2">
       {bars.length === 0 ? (
-        <div className="border bg-muted/20 p-3 text-[11px] text-muted-foreground">
+        <div className="text-sm text-muted-foreground">
           No cost rollup yet for this study.
         </div>
       ) : (
@@ -443,8 +458,8 @@ function CostHistogram({
         </div>
       )}
       {totalsAllZero ? (
-        <div className="flex items-start gap-2 border bg-muted/10 p-2 text-[10.5px] text-muted-foreground">
-          <AlertTriangle className="mt-0.5 h-3 w-3 text-yellow-500" />
+        <div className="flex items-start gap-2 border-l-2 border-yellow-500/60 bg-yellow-500/5 px-3 py-2 text-xs text-muted-foreground">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 text-yellow-500" />
           <span>
             Every cell reports $0.00. Either no cell has finished a paid
             stage yet, or the runner is using a mocked client. The
@@ -460,10 +475,9 @@ function CostHistogram({
 
 function CapLegend() {
   return (
-    <div className="flex flex-wrap items-center gap-3 border-t pt-2 text-[10px] text-muted-foreground">
-      <span className="font-semibold uppercase tracking-wider">cap bands</span>
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
       <LegendSwatch colour="#22c55e" label="≤ 70% of cap" />
-      <LegendSwatch colour="#eab308" label="70% – 100%" />
+      <LegendSwatch colour="#eab308" label="70 – 100%" />
       <LegendSwatch colour="#f97316" label="cap hit" />
       <LegendSwatch colour="#94a3b8" label="no cap declared" />
     </div>
@@ -472,9 +486,9 @@ function CapLegend() {
 
 function LegendSwatch({ colour, label }: { colour: string; label: string }) {
   return (
-    <span className="flex items-center gap-1">
+    <span className="flex items-center gap-1.5">
       <span
-        className="inline-block h-3 w-3"
+        className="inline-block h-3 w-3 rounded-[2px]"
         style={{ background: colour }}
       />
       {label}

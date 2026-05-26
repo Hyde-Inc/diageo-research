@@ -16,15 +16,7 @@
  */
 
 import { useMemo, useState } from 'react';
-import {
-  ArrowRight,
-  CheckCircle2,
-  CircleDashed,
-  ShieldAlert,
-  Telescope,
-  XCircle,
-} from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   type CellRowStatus,
@@ -52,15 +44,26 @@ export function PaneUniverse({
 
   if (loading || !curve) {
     return (
-      <div className="border bg-muted/10 p-6 text-[11px] text-muted-foreground">
+      <div className="py-6 text-sm text-muted-foreground">
         {loading ? 'Loading multiverse…' : 'Pick a study to see its universe.'}
       </div>
     );
   }
 
+  const avgRobustness =
+    curve.rows.length === 0
+      ? 0
+      : curve.rows.reduce((acc, r) => acc + r.robustness, 0) /
+        curve.rows.length;
+
   return (
-    <div className="grid gap-3">
-      <UniverseHeader curve={curve} />
+    <div className="grid gap-4" data-testid="pane-universe">
+      <UniverseStats
+        cellCount={curve.cells.length}
+        clusterCount={curve.rows.length}
+        avgRobustness={avgRobustness}
+        falsifierStatus={curve.falsifier_status}
+      />
       <UniverseLegend />
       <HeatmapGrid
         curve={curve}
@@ -78,76 +81,78 @@ export function PaneUniverse({
   );
 }
 
-function UniverseHeader({ curve }: { curve: SpecCurve }) {
-  const robustOverall =
-    curve.rows.length === 0
-      ? 0
-      : curve.rows.reduce((acc, r) => acc + r.robustness, 0) /
-        curve.rows.length;
-  const falsifierTone: 'warn' | 'good' | 'neutral' =
-    curve.falsifier_status === 'fully_triggered'
-      ? 'warn'
-      : curve.falsifier_status === 'not_triggered'
-        ? 'good'
-        : 'neutral';
+function UniverseStats({
+  cellCount,
+  clusterCount,
+  avgRobustness,
+  falsifierStatus,
+}: {
+  cellCount: number;
+  clusterCount: number;
+  avgRobustness: number;
+  falsifierStatus: SpecCurve['falsifier_status'];
+}) {
+  const tone =
+    falsifierStatus === 'fully_triggered'
+      ? 'text-orange-500'
+      : falsifierStatus === 'not_triggered'
+        ? 'text-green-600 dark:text-green-400'
+        : 'text-muted-foreground';
   return (
-    <div className="grid gap-2 border bg-background p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Telescope className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="text-[11px] font-semibold tracking-tight">
-          Multiverse universe
-        </span>
-        <Badge variant="outline" className="font-mono text-[9px]">
-          {curve.cells.length} cells
-        </Badge>
-        <Badge variant="outline" className="font-mono text-[9px]">
-          {curve.rows.length} clusters
-        </Badge>
-        <Badge variant="outline" className="font-mono text-[9px]">
-          {(robustOverall * 100).toFixed(0)}% avg robustness
-        </Badge>
-        <Badge
-          variant="outline"
-          className={cn(
-            'font-mono text-[9px] uppercase',
-            falsifierTone === 'warn' && 'border-orange-500/40 text-orange-500',
-            falsifierTone === 'good' && 'border-green-500/40 text-green-500',
-          )}
-        >
-          falsifier · {curve.falsifier_status.replace(/_/g, ' ')}
-        </Badge>
-      </div>
-      <p className="text-[10.5px] leading-snug text-muted-foreground">
-        Each column is a defensible specification (one cell of the
-        multiverse). Each row is a candidate recommendation, clustered
-        across all cells. A green column means that spec keeps voting
-        with the lead recommendations; an orange-heavy column is a
-        framing that flips the answer.
-      </p>
+    <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2 text-sm">
+      <Stat label="cells" value={String(cellCount)} />
+      <Stat label="clusters" value={String(clusterCount)} />
+      <Stat
+        label="avg robustness"
+        value={`${Math.round(avgRobustness * 100)}%`}
+      />
+      <Stat
+        label="falsifier"
+        value={falsifierStatus.replace(/_/g, ' ')}
+        valueClassName={tone}
+      />
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  valueClassName,
+}: {
+  label: string;
+  value: string;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="flex items-baseline gap-1.5">
+      <span className="font-mono text-xs uppercase tracking-wide text-muted-foreground">
+        {label}
+      </span>
+      <span className={cn('font-semibold tabular-nums', valueClassName)}>
+        {value}
+      </span>
     </div>
   );
 }
 
 function UniverseLegend() {
-  const items: Array<{ status: CellRowStatus; label: string; cls: string; Icon: typeof CheckCircle2 }> = [
-    { status: 'agree', label: 'agree', cls: 'bg-green-500/80', Icon: CheckCircle2 },
-    { status: 'weaker', label: 'weaker / hedged', cls: 'bg-yellow-500/80', Icon: CircleDashed },
-    { status: 'flips', label: 'flips', cls: 'bg-orange-500/80', Icon: XCircle },
-    { status: 'missing', label: 'missing', cls: 'bg-muted-foreground/30', Icon: ShieldAlert },
+  const items: Array<{ status: CellRowStatus; label: string; cls: string }> = [
+    { status: 'agree', label: 'agree', cls: 'bg-green-500/80' },
+    { status: 'weaker', label: 'weaker', cls: 'bg-yellow-500/80' },
+    { status: 'flips', label: 'flips', cls: 'bg-orange-500/80' },
+    { status: 'missing', label: 'missing', cls: 'bg-muted-foreground/30' },
   ];
   return (
-    <div className="flex flex-wrap items-center gap-3 border bg-muted/10 px-3 py-2 text-[10px] text-muted-foreground">
-      <span className="font-semibold uppercase tracking-wider">
-        cell status
-      </span>
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
       {items.map((it) => (
         <div key={it.status} className="flex items-center gap-1.5">
-          <span className={cn('inline-block h-3 w-3', it.cls)} />
+          <span className={cn('inline-block h-3 w-3 rounded-[2px]', it.cls)} />
           <span>{it.label}</span>
         </div>
       ))}
-      <span className="ml-auto flex items-center gap-1 font-mono">
-        row order: robustness desc <ArrowRight className="h-3 w-3" />
+      <span className="ml-auto inline-flex items-center gap-1 font-mono">
+        rows sorted by robustness <ArrowRight className="h-3 w-3" />
       </span>
     </div>
   );

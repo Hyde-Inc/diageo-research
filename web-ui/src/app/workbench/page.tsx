@@ -3,31 +3,20 @@
 /**
  * Hypothesis Workbench page.
  *
- * Three panes on top of the Diageo research FastAPI:
- *   - DAG          → declared Dagster asset graph, click a node
- *                    to inspect the per-stage materialization record
- *                    for the selected cell.
- *   - Universe     → multiverse heatmap (cells × clustered
- *                    recommendations), coloured by spec-curve status.
- *   - Spec curve   → clustered recommendations table + per-cell cost
- *                    histogram with cap-aware colours.
- *
- * Pane-switching, study picker, refresh button, and the cell-detail
- * sheet live here so the panes themselves stay focused on rendering.
+ * One question across a multiverse of defensible specifications.
+ * Page-level header shows the study question, picker, and refresh.
+ * Four tabs (Recipe / Lineage / Universe / Spec curve) own the
+ * detail panes; each pane focuses on rendering, not narration.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen,
-  ExternalLink,
-  FlaskConical,
   GitGraph,
   RefreshCw,
   Telescope,
-  Activity,
   Receipt,
 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { PaneDag } from '@/components/workbench/pane-dag';
@@ -39,50 +28,28 @@ import {
   wb,
   type SpecCurve,
   type StudyCost,
+  type StudyDetail,
   type StudySummary,
 } from '@/components/workbench/types';
 
 type PaneId = 'recipe' | 'dag' | 'universe' | 'curve';
 
-const PANES: Array<{
-  id: PaneId;
-  label: string;
-  blurb: string;
-  Icon: typeof GitGraph;
-}> = [
-  {
-    id: 'recipe',
-    label: 'Recipe',
-    blurb: 'Axes · defaults · prereg · falsifiers',
-    Icon: BookOpen,
-  },
-  {
-    id: 'dag',
-    label: 'DAG',
-    blurb: 'Dagster lineage + materializations',
-    Icon: GitGraph,
-  },
-  {
-    id: 'universe',
-    label: 'Universe',
-    blurb: 'Cells × spec-curve heatmap',
-    Icon: Telescope,
-  },
-  {
-    id: 'curve',
-    label: 'Spec curve + Cost',
-    blurb: 'Clustered recs · cap-aware spend',
-    Icon: Receipt,
-  },
+const PANES: Array<{ id: PaneId; label: string; Icon: typeof GitGraph }> = [
+  { id: 'recipe', label: 'Recipe', Icon: BookOpen },
+  { id: 'dag', label: 'Lineage', Icon: GitGraph },
+  { id: 'universe', label: 'Universe', Icon: Telescope },
+  { id: 'curve', label: 'Spec curve', Icon: Receipt },
 ];
 
 export default function WorkbenchPage() {
   const [studies, setStudies] = useState<StudySummary[]>([]);
   const [studyId, setStudyId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<StudyDetail | null>(null);
   const [curve, setCurve] = useState<SpecCurve | null>(null);
   const [cost, setCost] = useState<StudyCost | null>(null);
   const [pane, setPane] = useState<PaneId>('recipe');
   const [studiesError, setStudiesError] = useState<string | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
   const [loadingCurve, setLoadingCurve] = useState(false);
   const [loadingCost, setLoadingCost] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -97,7 +64,7 @@ export default function WorkbenchPage() {
   }, []);
 
   // Studies index — poll every 7s so a freshly launched study lands in
-  // the picker without needing a reload. Cheap GET (no per-cell IO).
+  // the picker without a hard refresh.
   useEffect(() => {
     let cancelled = false;
     async function loadStudies() {
@@ -124,15 +91,30 @@ export default function WorkbenchPage() {
     };
   }, [studyId]);
 
+  // Study detail + spec curve + cost. Hoisted to the page so the
+  // subject block can render the question, and panes don't each
+  // re-fetch the same StudyDetail.
   useEffect(() => {
     if (!studyId) {
+      setDetail(null);
       setCurve(null);
       setCost(null);
       return;
     }
     let cancelled = false;
+    setLoadingDetail(true);
     setLoadingCurve(true);
     setLoadingCost(true);
+    wb.study(studyId)
+      .then((d) => {
+        if (!cancelled) setDetail(d);
+      })
+      .catch(() => {
+        if (!cancelled) setDetail(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingDetail(false);
+      });
     wb.specCurve(studyId)
       .then((c) => {
         if (cancelled) return;
@@ -142,20 +124,17 @@ export default function WorkbenchPage() {
         );
       })
       .catch(() => {
-        if (cancelled) return;
-        setCurve(null);
+        if (!cancelled) setCurve(null);
       })
       .finally(() => {
         if (!cancelled) setLoadingCurve(false);
       });
     wb.cost(studyId)
       .then((c) => {
-        if (cancelled) return;
-        setCost(c);
+        if (!cancelled) setCost(c);
       })
       .catch(() => {
-        if (cancelled) return;
-        setCost(null);
+        if (!cancelled) setCost(null);
       })
       .finally(() => {
         if (!cancelled) setLoadingCost(false);
@@ -180,14 +159,14 @@ export default function WorkbenchPage() {
 
   return (
     <div className="grid min-h-svh grid-rows-[auto_1fr] bg-background">
-      <header className="grid gap-2 border-b bg-background px-4 py-3 sm:px-6">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="grid gap-0.5">
-            <h1 className="text-sm font-semibold tracking-tight">
+      <header className="border-b bg-background px-4 py-3 sm:px-6">
+        <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center gap-3">
+          <div>
+            <h1 className="text-base font-semibold tracking-tight">
               Hypothesis Workbench
             </h1>
-            <p className="text-[11px] text-muted-foreground">
-              Diageo research · multiverse runs over the same question
+            <p className="text-xs text-muted-foreground">
+              Multiverse research runs over a single question.
             </p>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -202,13 +181,13 @@ export default function WorkbenchPage() {
             <Button
               variant="outline"
               size="sm"
-              className="h-7 gap-1 text-[10px]"
+              className="h-8 gap-1.5 text-xs"
               onClick={handleRefresh}
               disabled={!studyId || loadingCurve || loadingCost}
             >
               <RefreshCw
                 className={cn(
-                  'h-3 w-3',
+                  'h-3.5 w-3.5',
                   (loadingCurve || loadingCost) && 'animate-spin',
                 )}
               />
@@ -218,22 +197,22 @@ export default function WorkbenchPage() {
         </div>
       </header>
 
-      <main className="px-4 py-4 sm:px-6">
-        <div className="mx-auto grid w-full max-w-7xl gap-4">
-          <ValueStrip />
-
-          <PaneBar
-            pane={pane}
-            onPane={setPane}
-            studySummary={studySummary}
+      <main className="px-4 py-6 sm:px-6">
+        <div className="mx-auto grid w-full max-w-7xl gap-6">
+          <Subject
+            detail={detail}
+            summary={studySummary}
+            loading={loadingDetail}
             studiesError={studiesError}
           />
 
-          <PaneIntro pane={pane} />
+          <Tabs pane={pane} onPane={setPane} />
 
           {pane === 'recipe' ? (
             <PaneRecipe
               studyId={studyId}
+              detail={detail}
+              loadingDetail={loadingDetail}
               curve={curve}
               loading={loadingCurve}
             />
@@ -267,168 +246,134 @@ export default function WorkbenchPage() {
   );
 }
 
-function ValueStrip() {
-  const uses = [
-    {
-      icon: GitGraph,
-      label: 'Lineage',
-      body: 'Real Dagster asset graph, click a node to open the per-stage materialization receipt (partition, model, spend, hashes).',
-    },
-    {
-      icon: Telescope,
-      label: 'Robustness',
-      body: 'See which recommendations survive every defensible specification, and which only show up in one framing.',
-    },
-    {
-      icon: Receipt,
-      label: 'Cost discipline',
-      body: 'Per-cell spend rendered against its declared max_cost_usd — orange bars mean the cap caught us.',
-    },
-    {
-      icon: Activity,
-      label: 'Falsifiability',
-      body: 'Falsifier conditions from prereg.yaml are evaluated against the curve so the brief reports what would change our mind.',
-    },
-  ];
+function Subject({
+  detail,
+  summary,
+  loading,
+  studiesError,
+}: {
+  detail: StudyDetail | null;
+  summary: StudySummary | null;
+  loading: boolean;
+  studiesError: string | null;
+}) {
+  if (studiesError) {
+    return (
+      <div className="border-l-2 border-orange-500 bg-orange-500/5 px-4 py-3 text-sm text-orange-600 dark:text-orange-400">
+        Workbench API unreachable · {studiesError}
+      </div>
+    );
+  }
+
+  if (!detail) {
+    if (loading) {
+      return (
+        <div className="grid gap-2">
+          <div className="h-7 w-2/3 animate-pulse rounded bg-muted" />
+          <div className="h-4 w-1/3 animate-pulse rounded bg-muted" />
+        </div>
+      );
+    }
+    return (
+      <div className="text-sm text-muted-foreground">
+        Pick a study from the top right to begin.
+      </div>
+    );
+  }
+
+  const created = detail.created_at
+    ? new Date(detail.created_at)
+    : null;
+  const errorCount = summary?.n_error ?? 0;
+  const completeCount = summary?.n_complete ?? detail.cells.length;
+  const cellCount = summary?.n_cells ?? detail.cells.length;
+
   return (
-    <div className="grid gap-2 border bg-background p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <FlaskConical className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          What this is
+    <section className="grid gap-3">
+      <h2 className="max-w-4xl text-lg font-semibold leading-snug tracking-tight text-foreground md:text-xl">
+        {detail.question}
+      </h2>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
+        <StatusPill status={detail.status} />
+        <span>
+          <span className="text-foreground">{completeCount}</span>
+          <span className="text-muted-foreground"> / {cellCount} cells</span>
         </span>
-        <span className="text-[11px] leading-relaxed text-foreground">
-          The Hypothesis Workbench runs one question across a multiverse
-          of defensible specifications (taxonomy × cohort × window), then
-          shows where the answers converge and where they don&apos;t.
-        </span>
-        <a
-          href="http://127.0.0.1:8765/"
-          target="_blank"
-          rel="noreferrer"
-          className="ml-auto inline-flex items-center gap-1 border bg-background px-2 py-1 text-[10px] font-medium hover:bg-muted/50"
-        >
-          <ExternalLink className="h-3 w-3" />
-          legacy FE (deprecated)
-        </a>
+        {errorCount > 0 ? (
+          <span className="text-orange-500">
+            {errorCount} {errorCount === 1 ? 'error' : 'errors'}
+          </span>
+        ) : null}
+        <span className="font-mono text-muted-foreground/80">{detail.id}</span>
+        {created ? (
+          <span className="text-muted-foreground/80">
+            started {created.toLocaleString()}
+          </span>
+        ) : null}
       </div>
-      <div className="grid gap-2 border-t pt-2 sm:grid-cols-2 lg:grid-cols-4">
-        {uses.map((u) => (
-          <div
-            key={u.label}
-            className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-2"
-          >
-            <u.icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            <div className="grid gap-0.5">
-              <div className="text-[11px] font-semibold">{u.label}</div>
-              <p className="text-[10.5px] leading-snug text-muted-foreground">
-                {u.body}
-              </p>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
+    </section>
   );
 }
 
-function PaneBar({
+function StatusPill({ status }: { status: StudyDetail['status'] }) {
+  const tone =
+    status === 'complete'
+      ? 'bg-green-500/15 text-green-600 dark:text-green-400'
+      : status === 'running'
+        ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400'
+        : status === 'error'
+          ? 'bg-orange-500/15 text-orange-600 dark:text-orange-400'
+          : 'bg-muted text-muted-foreground';
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-sm px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide',
+        tone,
+      )}
+    >
+      <span
+        className={cn(
+          'h-1.5 w-1.5 rounded-full',
+          status === 'complete' && 'bg-green-500',
+          status === 'running' && 'animate-pulse bg-blue-500',
+          status === 'error' && 'bg-orange-500',
+          status === 'pending' && 'bg-muted-foreground',
+        )}
+      />
+      {status}
+    </span>
+  );
+}
+
+function Tabs({
   pane,
   onPane,
-  studySummary,
-  studiesError,
 }: {
   pane: PaneId;
   onPane: (p: PaneId) => void;
-  studySummary: StudySummary | null;
-  studiesError: string | null;
 }) {
   return (
-    <div className="grid gap-2 border bg-background p-2">
-      <div className="grid gap-2 md:grid-cols-[1fr_auto] md:items-center">
-        <div className="flex flex-wrap items-center gap-1">
-          {PANES.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => onPane(p.id)}
-              className={cn(
-                'grid grid-cols-[auto_minmax(0,1fr)] gap-2 px-2 py-1 text-left text-[11px] transition-colors',
-                pane === p.id
-                  ? 'bg-foreground text-background'
-                  : 'text-muted-foreground hover:bg-muted/40 hover:text-foreground',
-              )}
-              title={p.blurb}
-            >
-              <p.Icon className="mt-0.5 h-3.5 w-3.5 self-start" />
-              <span className="grid gap-0">
-                <span className="font-semibold">{p.label}</span>
-                <span
-                  className={cn(
-                    'text-[9px]',
-                    pane === p.id
-                      ? 'text-background/70'
-                      : 'text-muted-foreground/70',
-                  )}
-                >
-                  {p.blurb}
-                </span>
-              </span>
-            </button>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {studySummary ? (
-            <>
-              <Badge variant="outline" className="font-mono text-[9px]">
-                {studySummary.n_complete}/{studySummary.n_cells} cells
-              </Badge>
-              <Badge variant="outline" className="font-mono text-[9px]">
-                {studySummary.n_error} errors
-              </Badge>
-              <Badge variant="outline" className="font-mono text-[9px]">
-                {studySummary.status}
-              </Badge>
-            </>
-          ) : (
-            <Badge variant="outline" className="font-mono text-[9px]">
-              no study selected
-            </Badge>
-          )}
-          {studiesError ? (
-            <Badge
-              variant="outline"
-              className="border-orange-500/40 font-mono text-[9px] text-orange-500"
-              title={studiesError}
-            >
-              workbench offline
-            </Badge>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PaneIntro({ pane }: { pane: PaneId }) {
-  const intros: Record<PaneId, string> = {
-    recipe:
-      'Recipe & pre-registration — what the study was committed to before any data was generated. Axes, effective defaults, signed pre-registration, and the falsifier conditions the spec curve is currently evaluated against.',
-    dag: 'The six declared assets in the research pipeline. Pick a cell from the rail below the diagram, then click any stage to inspect the per-stage AssetMaterialization receipt (partition key, model id, spend, sha-256 of inputs + outputs + prompt).',
-    universe:
-      'Each column is one cell of the multiverse (a defensible specification of the question). Each row is a clustered recommendation. Green = the cell agrees; orange = it flips; yellow = hedged; muted = the cell did not address it.',
-    curve:
-      'Clustered recommendations sorted by robustness, with per-cell vote glyphs. Cost histogram below uses cell.max_cost_usd from prereg to colour cap-hit cells orange.',
-  };
-  const label = PANES.find((p) => p.id === pane)?.label ?? '';
-  return (
-    <div className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 border-l-2 border-foreground/40 bg-muted/20 px-3 py-2">
-      <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-        {label}
-      </div>
-      <p className="min-w-0 break-words text-[11.5px] leading-relaxed text-foreground">
-        {intros[pane]}
-      </p>
-    </div>
+    <nav className="-mb-px flex flex-wrap items-end gap-1 border-b">
+      {PANES.map((p) => {
+        const active = pane === p.id;
+        return (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => onPane(p.id)}
+            className={cn(
+              'inline-flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition-colors',
+              active
+                ? 'border-foreground text-foreground'
+                : 'border-transparent text-muted-foreground hover:text-foreground',
+            )}
+            aria-current={active ? 'page' : undefined}
+          >
+            <p.Icon className="h-4 w-4" />
+            {p.label}
+          </button>
+        );
+      })}
+    </nav>
   );
 }

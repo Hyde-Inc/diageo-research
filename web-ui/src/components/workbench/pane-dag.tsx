@@ -301,7 +301,7 @@ export function PaneDag({
   );
 
   return (
-    <div className="grid gap-3">
+    <div className="grid gap-3" data-testid="pane-dag">
       <DagLegend
         partitionSet={graph?.partition_set ?? 'study_cells'}
         onRefresh={() => setRefreshKey((k) => k + 1)}
@@ -402,46 +402,33 @@ function DagLegend({
   selectedCell: CellSummary | null;
 }) {
   return (
-    <div className="grid gap-2 border bg-background p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <GitGraph className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="text-[11px] font-semibold tracking-tight">
-          Dagster asset graph
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b pb-2">
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
+        <span className="font-semibold tracking-tight">Asset graph</span>
+        <span className="text-xs text-muted-foreground">
+          {nodeCount} assets · {edgeCount} deps · partitions: {partitionSet}
         </span>
-        <Badge variant="outline" className="font-mono text-[9px]">
-          {nodeCount} assets · {edgeCount} deps
-        </Badge>
-        <Badge variant="outline" className="font-mono text-[9px]">
-          partitions: {partitionSet}
-        </Badge>
-        <div className="ml-auto flex items-center gap-2">
-          {selectedCell ? (
-            <span className="font-mono text-[10px] text-muted-foreground">
-              cell {selectedCell.id} · {selectedCell.status}
-            </span>
-          ) : (
-            <span className="font-mono text-[10px] text-muted-foreground">
-              no cell selected
-            </span>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 gap-1 text-[10px]"
-            onClick={onRefresh}
-          >
-            <RefreshCw className="h-3 w-3" />
-            Refresh
-          </Button>
-        </div>
       </div>
-      <p className="text-[10.5px] leading-snug text-muted-foreground">
-        Source of truth: <code className="font-mono">diageo_research.dagster_assets</code>.
-        The graph is shipped to the browser via <code className="font-mono">GET /assets/graph</code>;
-        nodes light up once their per-stage <code className="font-mono">AssetMaterialization</code>{' '}
-        receipt lands on disk for the selected cell. Click any node to open
-        the cell&apos;s drawer with partition_key, model, spend and hashes.
-      </p>
+      <div className="flex items-center gap-3">
+        {selectedCell ? (
+          <span className="font-mono text-xs text-muted-foreground">
+            {selectedCell.id} · {selectedCell.status}
+          </span>
+        ) : (
+          <span className="font-mono text-xs text-muted-foreground">
+            no cell selected
+          </span>
+        )}
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 gap-1.5 text-xs"
+          onClick={onRefresh}
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+          Refresh
+        </Button>
+      </div>
     </div>
   );
 }
@@ -457,40 +444,40 @@ function CellRailSummary({
 }) {
   if (curve.cells.length === 0) {
     return (
-      <div className="border bg-muted/20 p-2 text-[10px] text-muted-foreground">
+      <p className="text-sm text-muted-foreground">
         This study has no cells materialized yet.
-      </div>
+      </p>
     );
   }
   return (
-    <div className="grid gap-2 border bg-background p-2">
-      <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        <Cpu className="h-3 w-3" />
-        Multiverse cells · click to load that cell&apos;s materializations
+    <div className="grid gap-2">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Cpu className="h-3.5 w-3.5" />
+        <span>Cells — click to load that cell&apos;s materializations</span>
       </div>
-      <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
         {curve.cells.map((cell) => (
           <button
             key={cell.id}
             type="button"
             onClick={() => onSelect(cell.id)}
             className={cn(
-              'grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border bg-background px-2 py-1 text-left',
+              'grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border bg-background px-2.5 py-1.5 text-left transition-colors',
               activeCellId === cell.id
                 ? 'border-foreground'
-                : 'border-transparent hover:border-foreground/40',
+                : 'border-border hover:border-foreground/40',
             )}
           >
             <CellStatusGlyph status={cell.status} />
             <div className="min-w-0">
-              <div className="truncate font-mono text-[10px]">{cell.id}</div>
-              <div className="truncate font-mono text-[9px] text-muted-foreground">
+              <div className="truncate font-mono text-xs">{cell.id}</div>
+              <div className="truncate font-mono text-[11px] text-muted-foreground">
                 {Object.entries(cell.axes)
                   .map(([k, v]) => `${k}=${v}`)
                   .join(' · ')}
               </div>
             </div>
-            <Badge variant="outline" className="font-mono text-[9px]">
+            <Badge variant="outline" className="font-mono text-[11px]">
               {cell.n_recommendations} recs
             </Badge>
           </button>

@@ -4,46 +4,17 @@
  * Workbench Recipe pane.
  *
  * The "configurability" surface — what the study committed to *before*
- * any data was generated. This is the pane stakeholders should hit
- * first, because it grounds the rest of the workbench in the rule the
- * answer is being scored against, not just the answer.
- *
- * Data sources:
- *   - GET /studies/{id}            → question, name, cells (we derive
- *                                    axes from union of cell.axes and
- *                                    effective per-cell overrides).
- *   - GET /studies/{id}/prereg     → decision_rule, signed_by/at,
- *                                    falsifier_conditions, holdout,
- *                                    notes, evidence_thresholds.
- *   - GET /studies/{id}/spec_curve → falsifier_status, falsifier_notes
- *                                    (the evaluation of the prereg
- *                                    conditions against the current
- *                                    curve).
+ * any data was generated. The page header already shows the study
+ * question and ID, so this pane focuses on:
+ *   - Axes (the cartesian product that defines the multiverse)
+ *   - Effective defaults (consistent overrides across every cell)
+ *   - Pre-registration (decision rule, signed-by, evidence thresholds)
+ *   - Falsifier conditions (with current curve evaluation)
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import {
-  BookOpen,
-  FileSignature,
-  GitBranch,
-  Loader2,
-  Settings2,
-  Shield,
-} from 'lucide-react';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Loader2, Shield } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableRow,
-} from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import {
   wb,
@@ -122,40 +93,42 @@ function formatTimestamp(ts?: string | null): string {
 
 export function PaneRecipe({
   studyId,
+  detail,
+  loadingDetail,
   curve,
   loading: curveLoading,
 }: {
   studyId: string | null;
+  detail: StudyDetail | null;
+  loadingDetail: boolean;
   curve: SpecCurve | null;
   loading: boolean;
 }) {
-  const [detail, setDetail] = useState<StudyDetail | null>(null);
   const [prereg, setPrereg] = useState<Prereg | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loadingPrereg, setLoadingPrereg] = useState(false);
 
   useEffect(() => {
     if (!studyId) {
-      setDetail(null);
       setPrereg(null);
       setError(null);
       return;
     }
     let cancelled = false;
-    setLoading(true);
+    setLoadingPrereg(true);
     setError(null);
-    Promise.all([wb.study(studyId), wb.prereg(studyId)])
-      .then(([d, p]) => {
-        if (cancelled) return;
-        setDetail(d);
-        setPrereg(p);
+    wb.prereg(studyId)
+      .then((p) => {
+        if (!cancelled) setPrereg(p);
       })
       .catch((err) => {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : String(err));
+        if (!cancelled) {
+          setPrereg(null);
+          setError(err instanceof Error ? err.message : String(err));
+        }
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setLoadingPrereg(false);
       });
     return () => {
       cancelled = true;
@@ -173,150 +146,185 @@ export function PaneRecipe({
 
   if (!studyId) {
     return (
-      <div className="border bg-muted/10 p-6 text-[11px] text-muted-foreground">
-        Pick a study to see its recipe.
-      </div>
+      <EmptyHint>Pick a study to see its recipe.</EmptyHint>
     );
   }
-  if (loading) {
+  if (loadingDetail || !detail) {
     return (
-      <div className="grid place-items-center border bg-muted/10 p-8 text-[11px] text-muted-foreground">
+      <div className="grid place-items-center py-12 text-sm text-muted-foreground">
         <Loader2 className="mb-2 h-4 w-4 animate-spin" />
         Loading recipe…
       </div>
     );
   }
-  if (error) {
-    return (
-      <div className="border bg-muted/20 p-4 text-[11px] text-orange-500">
-        Failed to load recipe: {error}
-      </div>
-    );
-  }
-  if (!detail) {
-    return (
-      <div className="border bg-muted/10 p-6 text-[11px] text-muted-foreground">
-        No study detail available.
-      </div>
-    );
-  }
 
   return (
-    <div className="grid gap-3" data-testid="pane-recipe">
-      <RecipeHeader detail={detail} />
+    <div className="grid gap-8" data-testid="pane-recipe">
+      <RecipeMeta detail={detail} />
 
-      <div className="grid gap-3 lg:grid-cols-[1.2fr_1fr]">
-        <AxesCard axes={axes} />
-        <DefaultsCard defaults={defaults} />
-      </div>
+      <Section
+        title="Axes"
+        meta={`${Object.keys(axes).length} ${
+          Object.keys(axes).length === 1 ? 'axis' : 'axes'
+        }`}
+        hint="The cartesian product that defines the multiverse. The Universe pane shows one column per axis-tuple."
+      >
+        <AxesList axes={axes} />
+      </Section>
 
-      <PreregCard prereg={prereg} />
+      <Section
+        title="Effective defaults"
+        meta={defaults ? `${Object.keys(defaults).length} keys` : 'none'}
+        hint="Per-cell config every cell agrees on. Surfaced from the consistent intersection of cell.overrides so we never claim a default that some cell actually changed."
+      >
+        <DefaultsList defaults={defaults} />
+      </Section>
 
-      <FalsifiersCard prereg={prereg} curve={curve} curveLoading={curveLoading} />
+      <Section
+        title="Pre-registration"
+        meta={prereg?.signed_by ? `signed by ${prereg.signed_by}` : undefined}
+        hint="Signed before the first cell ran. The synthesizer surfaces this rule in the final brief so the partner sees what the answer is being scored against."
+      >
+        {error ? (
+          <p className="text-sm text-orange-500">
+            Failed to load pre-registration: {error}
+          </p>
+        ) : loadingPrereg && !prereg ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : (
+          <PreregBody prereg={prereg} />
+        )}
+      </Section>
+
+      <Section
+        title="Falsifier conditions"
+        meta={
+          curve
+            ? `curve ${curve.falsifier_status.replace(/_/g, ' ')}`
+            : curveLoading
+              ? 're-evaluating…'
+              : undefined
+        }
+        metaTone={falsifierTone(curve?.falsifier_status)}
+        hint="Conditions that, if met, would invalidate the lead recommendation. The current spec curve's evaluation is shown alongside each condition."
+      >
+        <FalsifiersList prereg={prereg} curve={curve} />
+      </Section>
     </div>
   );
 }
 
-// ─── Cards ─────────────────────────────────────────────────────────
+// ─── Subject metadata ──────────────────────────────────────────────
 
-function RecipeHeader({ detail }: { detail: StudyDetail }) {
+function RecipeMeta({ detail }: { detail: StudyDetail }) {
+  const parts: Array<[string, string]> = [['name', detail.name]];
+  if (detail.spec_path) parts.push(['spec', detail.spec_path]);
+  if (detail.prereg_path) parts.push(['prereg', detail.prereg_path]);
   return (
-    <Card className="rounded-none border bg-background shadow-none">
-      <CardHeader className="space-y-2 p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <BookOpen className="h-3.5 w-3.5 text-muted-foreground" />
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Recipe &amp; pre-registration
-          </span>
-          <Badge variant="outline" className="font-mono text-[9px]">
-            {detail.id}
-          </Badge>
-          <Badge variant="outline" className="font-mono text-[9px]">
-            {detail.cells.length} cells
-          </Badge>
-          <Badge variant="outline" className="font-mono text-[9px] uppercase">
-            {detail.status}
-          </Badge>
+    <dl className="flex flex-wrap gap-x-6 gap-y-1 font-mono text-xs text-muted-foreground">
+      {parts.map(([k, v]) => (
+        <div key={k} className="flex gap-2">
+          <dt className="text-muted-foreground/70">{k}</dt>
+          <dd className="text-foreground/80">{v}</dd>
         </div>
-        <CardTitle className="text-[15px] font-semibold leading-snug tracking-tight">
-          {detail.question}
-        </CardTitle>
-        <CardDescription className="text-[11px]">
-          What the study was committed to before any data was generated.
-          The numbers in the other panes are scored against this recipe;
-          nothing here was changed mid-flight.
-        </CardDescription>
-        <div className="flex flex-wrap items-center gap-3 font-mono text-[10px] text-muted-foreground">
-          <span>name: {detail.name}</span>
-          {detail.created_at ? (
-            <span>created {formatTimestamp(detail.created_at)}</span>
-          ) : null}
-          {detail.spec_path ? <span>spec: {detail.spec_path}</span> : null}
-          {detail.prereg_path ? (
-            <span>prereg: {detail.prereg_path}</span>
-          ) : null}
-        </div>
-      </CardHeader>
-    </Card>
+      ))}
+    </dl>
   );
 }
 
-function AxesCard({ axes }: { axes: AxesIndex }) {
+// ─── Section primitive ─────────────────────────────────────────────
+
+function Section({
+  title,
+  meta,
+  metaTone,
+  hint,
+  children,
+}: {
+  title: string;
+  meta?: string;
+  metaTone?: 'good' | 'warn' | 'neutral';
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="grid gap-3">
+      <header className="grid gap-1 border-b pb-2">
+        <div className="flex flex-wrap items-baseline gap-3">
+          <h3 className="text-base font-semibold tracking-tight">{title}</h3>
+          {meta ? (
+            <span
+              className={cn(
+                'text-xs',
+                metaTone === 'warn' && 'text-orange-500',
+                metaTone === 'good' && 'text-green-600 dark:text-green-400',
+                !metaTone && 'text-muted-foreground',
+              )}
+            >
+              {meta}
+            </span>
+          ) : null}
+        </div>
+        {hint ? (
+          <p className="max-w-3xl text-xs text-muted-foreground">{hint}</p>
+        ) : null}
+      </header>
+      <div>{children}</div>
+    </section>
+  );
+}
+
+function falsifierTone(
+  status: SpecCurve['falsifier_status'] | undefined,
+): 'good' | 'warn' | 'neutral' | undefined {
+  if (!status) return undefined;
+  if (status === 'fully_triggered') return 'warn';
+  if (status === 'not_triggered') return 'good';
+  return 'neutral';
+}
+
+// ─── Axes ──────────────────────────────────────────────────────────
+
+function AxesList({ axes }: { axes: AxesIndex }) {
   const entries = Object.entries(axes);
+  if (entries.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        No axes declared for this study.
+      </p>
+    );
+  }
   return (
-    <Card className="rounded-none border bg-background shadow-none">
-      <CardHeader className="space-y-1 p-4">
-        <div className="flex items-center gap-2">
-          <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
-          <CardTitle className="text-[11px] font-semibold uppercase tracking-wider">
-            Axes
-          </CardTitle>
-          <Badge variant="outline" className="font-mono text-[9px]">
-            {entries.length} axes
-          </Badge>
-        </div>
-        <CardDescription className="text-[10.5px]">
-          The cartesian product across these axes defines the
-          multiverse. The Universe pane shows one column per axis-tuple.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-2 p-4 pt-0">
-        {entries.length === 0 ? (
-          <div className="text-[10.5px] text-muted-foreground">
-            No axes declared for this study.
+    <div className="grid gap-3 sm:grid-cols-2">
+      {entries.map(([name, values]) => (
+        <div key={name} className="grid gap-1.5">
+          <div className="font-mono text-xs uppercase tracking-wide text-muted-foreground">
+            {name}
           </div>
-        ) : (
-          entries.map(([name, values]) => (
-            <div key={name} className="grid gap-1 border-l-2 border-foreground/30 pl-3">
-              <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                {name}
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {values.map((v) => (
-                  <Badge
-                    key={v}
-                    variant="outline"
-                    className="font-mono text-[10px]"
-                  >
-                    {v}
-                  </Badge>
-                ))}
-              </div>
-            </div>
-          ))
-        )}
-      </CardContent>
-    </Card>
+          <div className="flex flex-wrap gap-1.5">
+            {values.map((v) => (
+              <span
+                key={v}
+                className="inline-flex items-center border border-border bg-background px-2 py-0.5 font-mono text-xs"
+              >
+                {v}
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
-function DefaultsCard({
+// ─── Defaults ──────────────────────────────────────────────────────
+
+function DefaultsList({
   defaults,
 }: {
   defaults: Record<string, unknown> | null;
 }) {
   const entries = defaults ? Object.entries(defaults) : [];
-  // Stable key order — put runner/budget-relevant keys first.
   const order = [
     'n_personas',
     'max_turns',
@@ -332,77 +340,43 @@ function DefaultsCard({
     if (bi === -1) return -1;
     return ai - bi;
   });
+
+  if (entries.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        No consistent overrides found — every cell sets at least one key
+        differently. Compare per-cell overrides in the Universe pane.
+      </p>
+    );
+  }
   return (
-    <Card className="rounded-none border bg-background shadow-none">
-      <CardHeader className="space-y-1 p-4">
-        <div className="flex items-center gap-2">
-          <Settings2 className="h-3.5 w-3.5 text-muted-foreground" />
-          <CardTitle className="text-[11px] font-semibold uppercase tracking-wider">
-            Effective defaults
-          </CardTitle>
-          <Badge variant="outline" className="font-mono text-[9px]">
-            {entries.length} keys
-          </Badge>
+    <div className="grid gap-x-6 gap-y-1 sm:grid-cols-[max-content_1fr]">
+      {entries.map(([k, v]) => (
+        <div key={k} className="contents">
+          <dt className="font-mono text-sm text-muted-foreground">{k}</dt>
+          <dd className="font-mono text-sm text-foreground">{formatValue(v)}</dd>
         </div>
-        <CardDescription className="text-[10.5px]">
-          The per-cell config that every cell agrees on. Surfaced from
-          the consistent intersection of <code className="font-mono">cell.overrides</code>
-          {' '}across the grid so we never claim a default that some
-          cell actually changed.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="p-0">
-        {entries.length === 0 ? (
-          <div className="px-4 pb-4 text-[10.5px] text-muted-foreground">
-            No consistent overrides found — every cell sets at least one
-            key differently. Compare per-cell overrides in the Universe
-            pane.
-          </div>
-        ) : (
-          <Table className="text-[11px]">
-            <TableBody>
-              {entries.map(([k, v]) => (
-                <TableRow key={k} className="border-b last:border-b-0">
-                  <TableCell className="w-[200px] px-4 py-1.5 font-mono text-[10.5px] text-muted-foreground">
-                    {k}
-                  </TableCell>
-                  <TableCell className="px-4 py-1.5 font-mono text-[11px]">
-                    {formatValue(v)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </CardContent>
-    </Card>
+      ))}
+    </div>
   );
 }
 
-function PreregCard({ prereg }: { prereg: Prereg | null }) {
+// ─── Pre-registration ──────────────────────────────────────────────
+
+function PreregBody({ prereg }: { prereg: Prereg | null }) {
   if (!prereg) {
     return (
-      <Card className="rounded-none border bg-background shadow-none">
-        <CardHeader className="space-y-1 p-4">
-          <div className="flex items-center gap-2">
-            <FileSignature className="h-3.5 w-3.5 text-muted-foreground" />
-            <CardTitle className="text-[11px] font-semibold uppercase tracking-wider">
-              Pre-registration
-            </CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent className="p-4 pt-0 text-[10.5px] text-muted-foreground">
-          No prereg.yaml on disk for this study.
-        </CardContent>
-      </Card>
+      <p className="text-sm text-muted-foreground">
+        No prereg.yaml on disk for this study.
+      </p>
     );
   }
 
   const rows: Array<[string, string]> = [
     ['decision_rule', prereg.decision_rule],
-    ['signed_by', prereg.signed_by ?? '—'],
-    ['signed_at', formatTimestamp(prereg.signed_at)],
   ];
+  if (prereg.signed_by) rows.push(['signed_by', prereg.signed_by]);
+  if (prereg.signed_at) rows.push(['signed_at', formatTimestamp(prereg.signed_at)]);
   if (prereg.holdout_reservation) {
     rows.push(['holdout_reservation', prereg.holdout_reservation]);
   }
@@ -412,76 +386,47 @@ function PreregCard({ prereg }: { prereg: Prereg | null }) {
   const thresholdEntries = Object.entries(thresholds);
 
   return (
-    <Card className="rounded-none border bg-background shadow-none">
-      <CardHeader className="space-y-1 p-4">
-        <div className="flex items-center gap-2">
-          <FileSignature className="h-3.5 w-3.5 text-muted-foreground" />
-          <CardTitle className="text-[11px] font-semibold uppercase tracking-wider">
-            Pre-registration
-          </CardTitle>
-          {prereg.signed_by ? (
-            <Badge variant="outline" className="font-mono text-[9px]">
-              signed by {prereg.signed_by}
-            </Badge>
-          ) : null}
-          {prereg.signed_at ? (
-            <Badge variant="outline" className="font-mono text-[9px]">
-              {formatTimestamp(prereg.signed_at)}
-            </Badge>
-          ) : null}
-        </div>
-        <CardDescription className="text-[10.5px]">
-          Signed before the first cell ran. The synthesizer surfaces
-          this rule in the final brief so the partner sees what the
-          answer is being scored against, not just the answer.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-3 p-4 pt-0">
-        <Table className="text-[11px]">
-          <TableBody>
-            {rows.map(([k, v]) => (
-              <TableRow key={k} className="border-b last:border-b-0 align-top">
-                <TableCell className="w-[200px] px-4 py-2 font-mono text-[10.5px] text-muted-foreground">
-                  {k}
-                </TableCell>
-                <TableCell className="px-4 py-2 leading-snug">
-                  {v}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-        {thresholdEntries.length > 0 ? (
-          <div className="grid gap-1 border-t pt-3">
-            <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-              evidence_thresholds
-            </div>
-            <div className="flex flex-wrap gap-1">
-              {thresholdEntries.map(([k, v]) => (
-                <Badge
-                  key={k}
-                  variant="outline"
-                  className="font-mono text-[10px]"
-                >
-                  {k} = {formatValue(v)}
-                </Badge>
-              ))}
-            </div>
+    <div className="grid gap-4">
+      <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-[max-content_1fr]">
+        {rows.map(([k, v]) => (
+          <div key={k} className="contents">
+            <dt className="font-mono text-xs uppercase tracking-wide text-muted-foreground">
+              {k}
+            </dt>
+            <dd className="text-sm leading-snug text-foreground">{v}</dd>
           </div>
-        ) : null}
-      </CardContent>
-    </Card>
+        ))}
+      </dl>
+      {thresholdEntries.length > 0 ? (
+        <div className="grid gap-1.5">
+          <div className="font-mono text-xs uppercase tracking-wide text-muted-foreground">
+            evidence_thresholds
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {thresholdEntries.map(([k, v]) => (
+              <Badge
+                key={k}
+                variant="outline"
+                className="font-mono text-xs"
+              >
+                {k} = {formatValue(v)}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
-function FalsifiersCard({
+// ─── Falsifiers ────────────────────────────────────────────────────
+
+function FalsifiersList({
   prereg,
   curve,
-  curveLoading,
 }: {
   prereg: Prereg | null;
   curve: SpecCurve | null;
-  curveLoading: boolean;
 }) {
   const conditions = prereg?.falsifier_conditions ?? [];
   const overallStatus = curve?.falsifier_status ?? 'unknown';
@@ -489,22 +434,15 @@ function FalsifiersCard({
 
   // The curve gives us aggregated notes, not per-condition triggers.
   // The backend's per-condition notes quote the first ~50 chars of the
-  // condition itself (e.g. `Falsifier 'Public-data elasticity ...'
-  // requires bespoke evaluation`). We only consider a match if a long
-  // enough distinctive prefix of the condition appears in the note —
-  // otherwise we'd accidentally cross-match conditions that share
-  // common words like "the recommended".
+  // condition itself. We only consider a match if a long enough
+  // distinctive prefix of the condition appears in the note — otherwise
+  // we'd accidentally cross-match conditions that share common words.
   const conditionToNote = (cond: string): string | null => {
     const key = cond.slice(0, 40).toLowerCase().replace(/\s+/g, ' ').trim();
     if (key.length < 20) return null;
     return notes.find((n) => n.toLowerCase().includes(key)) ?? null;
   };
 
-  // Per-condition trichotomy derived from the curve's aggregate notes:
-  // triggered  — the curve says this condition fired
-  // unevaluated — backend explicitly says the condition isn't checked
-  //   (e.g. external elasticity sign requires bespoke evaluation)
-  // not_triggered — the default once we've matched a note that says so
   type CondStatus = 'triggered' | 'not_triggered' | 'unevaluated';
   const conditionStatus = (
     cond: string,
@@ -533,108 +471,79 @@ function FalsifiersCard({
     return { status: 'triggered', note };
   };
 
+  if (conditions.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        No falsifier conditions declared.
+      </p>
+    );
+  }
+
   return (
-    <Card className="rounded-none border bg-background shadow-none">
-      <CardHeader className="space-y-1 p-4">
-        <div className="flex items-center gap-2">
-          <Shield className="h-3.5 w-3.5 text-muted-foreground" />
-          <CardTitle className="text-[11px] font-semibold uppercase tracking-wider">
-            Falsifier conditions
-          </CardTitle>
-          <Badge
-            variant="outline"
+    <div className="grid gap-2">
+      {conditions.map((cond, i) => {
+        const { status, note } = conditionStatus(cond);
+        const borderTone =
+          status === 'triggered'
+            ? 'border-orange-500/60'
+            : status === 'unevaluated'
+              ? 'border-yellow-500/40'
+              : 'border-green-500/40';
+        const iconTone =
+          status === 'triggered'
+            ? 'text-orange-500'
+            : status === 'unevaluated'
+              ? 'text-yellow-500'
+              : 'text-green-500';
+        const badgeTone =
+          status === 'triggered'
+            ? 'border-orange-500/60 text-orange-500'
+            : status === 'unevaluated'
+              ? 'border-yellow-500/60 text-yellow-500'
+              : 'border-green-500/60 text-green-500';
+        const badgeLabel =
+          status === 'triggered'
+            ? 'triggered'
+            : status === 'unevaluated'
+              ? 'requires bespoke check'
+              : 'not triggered';
+        return (
+          <div
+            key={i}
             className={cn(
-              'font-mono text-[9px] uppercase',
-              overallStatus === 'fully_triggered' &&
-                'border-orange-500/60 text-orange-500',
-              overallStatus === 'partially_triggered' &&
-                'border-yellow-500/60 text-yellow-500',
-              overallStatus === 'not_triggered' &&
-                'border-green-500/60 text-green-500',
+              'grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 border-l-2 bg-background px-3 py-2.5',
+              borderTone,
             )}
           >
-            curve {overallStatus.replace(/_/g, ' ')}
-          </Badge>
-          {curveLoading ? (
-            <span className="font-mono text-[9px] text-muted-foreground">
-              re-evaluating…
-            </span>
-          ) : null}
-        </div>
-        <CardDescription className="text-[10.5px]">
-          Conditions that, if met, would invalidate the lead
-          recommendation. The current spec curve&apos;s evaluation is
-          shown alongside each condition.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-2 p-4 pt-0">
-        {conditions.length === 0 ? (
-          <div className="text-[10.5px] text-muted-foreground">
-            No falsifier conditions declared.
+            <Shield className={cn('mt-0.5 h-4 w-4 shrink-0', iconTone)} />
+            <div className="grid min-w-0 gap-1">
+              <p className="text-sm leading-snug text-foreground">{cond}</p>
+              {note ? (
+                <p className="font-mono text-xs text-muted-foreground">{note}</p>
+              ) : null}
+            </div>
+            <Badge
+              variant="outline"
+              className={cn('font-mono text-[10px] uppercase tracking-wide', badgeTone)}
+            >
+              {badgeLabel}
+            </Badge>
           </div>
-        ) : (
-          conditions.map((cond, i) => {
-            const { status, note } = conditionStatus(cond);
-            const borderTone =
-              status === 'triggered'
-                ? 'border-orange-500/60'
-                : status === 'unevaluated'
-                  ? 'border-yellow-500/40'
-                  : 'border-green-500/40';
-            const iconTone =
-              status === 'triggered'
-                ? 'text-orange-500'
-                : status === 'unevaluated'
-                  ? 'text-yellow-500'
-                  : 'text-green-500';
-            const badgeTone =
-              status === 'triggered'
-                ? 'border-orange-500/60 text-orange-500'
-                : status === 'unevaluated'
-                  ? 'border-yellow-500/60 text-yellow-500'
-                  : 'border-green-500/60 text-green-500';
-            const badgeLabel =
-              status === 'triggered'
-                ? 'triggered'
-                : status === 'unevaluated'
-                  ? 'requires bespoke check'
-                  : 'not triggered';
-            return (
-              <div
-                key={i}
-                className={cn(
-                  'grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 border-l-2 bg-background px-3 py-2',
-                  borderTone,
-                )}
-              >
-                <Shield className={cn('mt-0.5 h-3.5 w-3.5 shrink-0', iconTone)} />
-                <div className="min-w-0 grid gap-1">
-                  <div className="text-[11px] leading-snug">{cond}</div>
-                  {note ? (
-                    <div className="font-mono text-[10px] text-muted-foreground">
-                      {note}
-                    </div>
-                  ) : null}
-                </div>
-                <Badge
-                  variant="outline"
-                  className={cn('font-mono text-[9px] uppercase', badgeTone)}
-                >
-                  {badgeLabel}
-                </Badge>
-              </div>
-            );
-          })
-        )}
-        {prereg?.holdout_reservation ? (
-          <div className="mt-1 border-t pt-2 text-[10.5px] text-muted-foreground">
-            <span className="font-mono uppercase tracking-wider">
-              holdout
-            </span>{' '}
-            — {prereg.holdout_reservation}
-          </div>
-        ) : null}
-      </CardContent>
-    </Card>
+        );
+      })}
+      {prereg?.holdout_reservation ? (
+        <p className="mt-1 text-xs text-muted-foreground">
+          <span className="font-mono uppercase tracking-wide">holdout</span> — {prereg.holdout_reservation}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+// ─── Misc ──────────────────────────────────────────────────────────
+
+function EmptyHint({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="text-sm text-muted-foreground">{children}</div>
   );
 }

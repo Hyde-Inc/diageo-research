@@ -41,19 +41,18 @@ const panes = [
   },
   {
     id: 'dag',
-    label: 'DAG',
-    selector: '.react-flow',
+    label: 'Lineage',
+    selector: '[data-testid="pane-dag"]',
   },
   {
     id: 'universe',
     label: 'Universe',
-    // The heatmap grid uses `gridTemplateColumns` inline.
-    selector: 'text=Multiverse universe',
+    selector: '[data-testid="pane-universe"]',
   },
   {
     id: 'curve',
-    label: 'Spec curve + Cost',
-    selector: 'text=Spec curve · clustered recommendations',
+    label: 'Spec curve',
+    selector: '[data-testid="pane-spec-curve"]',
   },
 ];
 
@@ -129,14 +128,14 @@ try {
   currentPane = 'dag-interaction';
   console.log('→ DAG: click a node');
   await page
-    .locator('button', { hasText: 'DAG' })
+    .locator('button', { hasText: 'Lineage' })
     .first()
     .click({ timeout: 10_000 });
   await page.waitForSelector('.react-flow', { timeout: 15_000 });
   await page.waitForTimeout(2_000);
   // Make sure a cell is selected (the DAG pane auto-picks the first
   // complete cell on mount, so we just confirm the rail rendered).
-  await page.waitForSelector('text=Multiverse cells', { timeout: 10_000 });
+  await page.waitForSelector('[data-testid="pane-dag"]', { timeout: 10_000 });
   // The .react-flow__node nodes are React Flow's internal wrappers.
   const nodeCount = await page.locator('.react-flow__node').count();
   console.log(`  ${nodeCount} react-flow nodes present`);
@@ -238,7 +237,7 @@ try {
       .first()
       .click({ timeout: 10_000 });
     // Wait for the curve to repopulate the heatmap.
-    await page.waitForSelector('text=Multiverse universe', { timeout: 10_000 });
+    await page.waitForSelector('[data-testid="pane-universe"]', { timeout: 10_000 });
     await page.waitForTimeout(3_000);
     // Heatmap status cells carry title="<cellId> — <status>". The
     // separator is a literal em-dash in the source. We look for any

@@ -31,12 +31,12 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col">
-        <nav className="flex items-center gap-4 border-b bg-background/80 px-4 py-2 text-[11px] backdrop-blur">
+        <nav className="flex items-center gap-5 border-b bg-background/80 px-4 py-2.5 text-sm backdrop-blur sm:px-6">
           <Link
             href="/"
             className="flex items-center gap-2 font-semibold tracking-tight"
           >
-            <FlaskConical className="h-3.5 w-3.5 text-muted-foreground" />
+            <FlaskConical className="h-4 w-4 text-muted-foreground" />
             <span>diageo-research</span>
           </Link>
           <Link

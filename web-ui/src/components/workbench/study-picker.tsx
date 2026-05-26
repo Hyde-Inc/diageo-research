@@ -39,8 +39,8 @@ export function StudyPicker({
 
   if (!ordered.length) {
     return (
-      <Badge variant="outline" className="font-mono text-[10px]">
-        no studies yet · run `dr study run`
+      <Badge variant="outline" className="font-mono text-xs">
+        no studies yet · run `diageo study`
       </Badge>
     );
   }
@@ -48,22 +48,20 @@ export function StudyPicker({
   return (
     <Select value={studyId ?? undefined} onValueChange={onChange}>
       <SelectTrigger
-        className="h-7 min-w-[260px] gap-2 font-mono text-[11px]"
+        className="h-8 min-w-[280px] gap-2 text-sm"
         aria-label="Select study"
       >
-        <FlaskConical className="h-3 w-3 text-muted-foreground" />
+        <FlaskConical className="h-3.5 w-3.5 text-muted-foreground" />
         <SelectValue placeholder="Pick a study" />
       </SelectTrigger>
       <SelectContent>
         {ordered.map((s) => (
           <SelectItem key={s.id} value={s.id}>
-            <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
+            <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2">
               <StatusGlyph status={s.status} />
               <div className="min-w-0">
-                <div className="truncate text-[11px] font-semibold">
-                  {s.name}
-                </div>
-                <div className="truncate font-mono text-[9px] text-muted-foreground">
+                <div className="truncate text-sm font-medium">{s.name}</div>
+                <div className="truncate font-mono text-xs text-muted-foreground">
                   {s.id} · {s.n_complete}/{s.n_cells} cells
                 </div>
               </div>
@@ -76,7 +74,7 @@ export function StudyPicker({
 }
 
 function StatusGlyph({ status }: { status: StudySummary['status'] }) {
-  const cls = 'h-3 w-3 shrink-0';
+  const cls = 'h-3.5 w-3.5 shrink-0';
   switch (status) {
     case 'complete':
       return <CheckCircle2 className={cn(cls, 'text-green-500')} />;
