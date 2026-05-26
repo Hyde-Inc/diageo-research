@@ -18,6 +18,11 @@ end. The deliverable is decision-grade rigor (multiverse + spec curve +
 pre-registration + falsifiers + cost guardrails + Dagster lineage + MCP),
 not "another research bot."
 
+## Product Testing Guide
+
+For a scan-friendly product tour, quick start, demo sequence, sample studies,
+and troubleshooting, see [`docs/product/README.md`](docs/product/README.md).
+
 ## Quickstart
 
 This project uses [`uv`](https://docs.astral.sh/uv/) for environment and lock
