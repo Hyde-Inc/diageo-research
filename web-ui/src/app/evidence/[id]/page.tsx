@@ -254,7 +254,13 @@ export default function EvidencePage({
     [finalLoad.value],
   );
   const summary = useMemo(() => summarizeCitations(citations), [citations]);
-  const claimTitle = row ? extractClaimTitle(row.representative) : '';
+  // The representative often carries the prereg block, decision rule,
+  // and verdict markdown stitched after the lead sentence. Run it
+  // through cleanRepresentative first so the page H1 reads as a
+  // single, prose-shaped claim rather than markdown noise.
+  const claimTitle = row
+    ? extractClaimTitle(cleanRepresentative(row.representative) || row.representative)
+    : '';
   const paragraphMatch = useMemo(() => {
     if (!row || !finalLoad.value?.markdown) return null;
     return findClaimParagraph(finalLoad.value.markdown, row.representative);
@@ -587,17 +593,22 @@ function ClaimBody({
   error: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
-  // Reuse extractClaimTitle's cleaner for the quote so the blockquote
-  // doesn't render the raw "- **Lead recommendation:** …" prefix that
-  // some persona sub-reports use before their key sentence.
-  const cleanedRep = useMemo(
-    () => extractClaimTitle(row.representative, 9999),
-    [row],
-  );
+  // Strip the pre-registration block, verdict markdown, and signed-by
+  // line out of the cluster representative before showing it in the
+  // blockquote. The first sentence usually carries the claim itself.
   const claimSentence = useMemo(
     () => cleanRepresentative(row.representative),
     [row],
   );
+  const cleanedRep = useMemo(() => {
+    if (!claimSentence) return '';
+    const firstSentence = claimSentence.split(/(?<=[.!?])\s+/)[0] ?? claimSentence;
+    // Allow a short follow-up phrase but cap at ~300 chars so the
+    // blockquote stays scannable even when the lead sentence is long.
+    return firstSentence.length > 320
+      ? `${firstSentence.slice(0, 317)}…`
+      : firstSentence;
+  }, [claimSentence]);
   const hasParagraph =
     paragraph != null && paragraph.length > cleanedRep.length + 30;
   return (
