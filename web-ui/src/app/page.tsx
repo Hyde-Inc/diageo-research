@@ -27,70 +27,70 @@ const TILES: Tile[] = [
     href: '/research',
     Icon: FlaskConical,
     title: 'Research',
-    body: 'Top occasions at risk, full brief with clickable evidence traces, and simulation chips.',
+    body: "What you'll see here: the three subjects most at risk in this study, the full brief, and a clickable trace for every number.",
     tone: 'primary',
   },
   {
     href: '/answer',
     Icon: Lightbulb,
     title: 'Answer',
-    body: 'The plain-language recommendation for the active study, plus a robustness pill.',
+    body: "What you'll see here: one-line recommendation, one evidence chip, and one honest confidence pill.",
     tone: 'primary',
   },
   {
     href: '/robustness',
     Icon: Compass,
-    title: 'Robustness',
-    body: 'Stoplight grid — each scenario is a green/amber/red square.',
+    title: 'Robustness grid',
+    body: "What you'll see here: a stoplight square for every defensible framing — green holds, amber mixed, orange flips.",
     tone: 'primary',
   },
   {
     href: '/why-it-could-be-wrong',
     Icon: ShieldAlert,
     title: 'Why it could be wrong',
-    body: 'Falsifier conditions in plain English with a current-state pill on each.',
+    body: "What you'll see here: the conditions that would prove this wrong, each with a current state pill and the data needed to test it.",
     tone: 'primary',
   },
   {
     href: '/scenario',
     Icon: ListChecks,
-    title: 'Scenario',
-    body: 'One scenario at a time — its title, recommendation, and key numbers.',
+    title: 'Scenarios',
+    body: "What you'll see here: every defensible framing of the question, ordered by how strongly it agrees with the lead answer.",
     tone: 'primary',
   },
   {
     href: '/evidence',
     Icon: HelpCircle,
     title: 'Evidence',
-    body: 'Claim → source → transformation → output number, one claim per page.',
+    body: "What you'll see here: one claim per page, with the source, transformation, and output number behind it.",
     tone: 'primary',
   },
   {
     href: '/assets',
     Icon: DatabaseZap,
-    title: 'Assets / Evidence',
-    body: 'Validate receipts, review metadata, trigger eligible cells, and inspect lineage.',
+    title: 'Evidence assets',
+    body: "What you'll see here: every reusable piece of evidence — validate provenance, review the receipt, re-run, or trace lineage.",
     tone: 'primary',
   },
   {
     href: '/setup',
     Icon: Settings2,
     title: 'Setup',
-    body: 'What was actually run — authors, time, status, and raw config behind a fold.',
+    body: "What you'll see here: what was actually run — authors, time, status, and raw config behind a small disclosure.",
     tone: 'primary',
   },
   {
     href: '/ask',
     Icon: MessageCircle,
     title: 'Ask',
-    body: 'Chat-style entry over the active study, with prompt chips wired to other views.',
+    body: "What you'll see here: ask in plain language over this study and get an answer paraphrased from its own brief.",
     tone: 'primary',
   },
   {
     href: '/workbench',
     Icon: Grid2X2,
     title: 'Workbench',
-    body: 'Power-user surface — recipe, universe, spec curve, lineage, and ask in one view.',
+    body: 'Power-user surface — recipe, scenarios, robustness grid, lineage, and Ask in a single dense view.',
     tone: 'secondary',
   },
 ];
@@ -105,13 +105,13 @@ export default function HomePage() {
             Diageo Research
           </div>
           <h1 className="max-w-3xl text-balance text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">
-            One question, run across many defensible specifications.
+            One question, answered honestly across every defensible framing.
           </h1>
           <p className="max-w-2xl text-sm leading-relaxed text-slate-600">
             Pick the page that matches what you need next. Each view does
-            one job — read the answer, kick the tyres on robustness, see
+            one job: read the answer, check whether it holds, see the
             evidence, or jump into the analyst workbench when you want
-            everything at once.
+            everything in one place.
           </p>
         </section>
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -140,10 +140,15 @@ export default function HomePage() {
             </Link>
           ))}
         </section>
-        <p className="text-[11px] leading-relaxed text-slate-500">
-          API proxy: <code className="font-mono">/api/workbench/*</code> →{' '}
-          <code className="font-mono">${'{WORKBENCH_API_BASE:-http://127.0.0.1:8765}'}</code>
-        </p>
+        <details className="text-[11px] leading-relaxed text-slate-500">
+          <summary className="cursor-pointer select-none text-slate-500 hover:text-slate-700">
+            Analyst notes
+          </summary>
+          <p className="mt-1.5">
+            API proxy: <code className="font-mono">/api/workbench/*</code> →{' '}
+            <code className="font-mono">${'{WORKBENCH_API_BASE:-http://127.0.0.1:8765}'}</code>
+          </p>
+        </details>
       </div>
     </main>
   );

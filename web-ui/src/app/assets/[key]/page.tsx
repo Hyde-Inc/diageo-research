@@ -75,7 +75,8 @@ export default function AssetDetailPage({
 
   const assetKey = state.detail?.asset_key ?? state.lineage?.asset_key ?? [];
   const latest = state.detail?.latest ?? null;
-  const title = assetKey.at(-1) ?? 'Evidence asset';
+  const rawTitle = assetKey.at(-1) ?? 'Evidence asset';
+  const title = humaniseAssetName(rawTitle);
   const isResearchCell = assetKey[0] === 'research_cell';
   const loading = state.loading || state.key !== key;
 
@@ -96,12 +97,15 @@ export default function AssetDetailPage({
                 variant="outline"
                 className="mb-2 border-blue-200 bg-blue-50 text-[10px] font-semibold uppercase tracking-[0.2em] text-blue-700"
               >
-                {isResearchCell ? 'Research cell' : 'Declared stage'} asset
+                {isResearchCell ? 'Per-scenario evidence' : 'Declared pipeline stage'}
               </Badge>
               <h1 className="truncate text-3xl font-semibold tracking-tight text-slate-950">
                 {title}
               </h1>
-              <p className="mt-1 max-w-3xl break-all font-mono text-[12px] text-slate-500">
+              <p
+                className="mt-1 max-w-3xl break-all font-mono text-[12px] text-slate-500"
+                title={assetKey.join(' / ')}
+              >
                 {assetKey.length > 0 ? assetKey.join(' / ') : key}
               </p>
             </div>
@@ -179,7 +183,7 @@ function ValidatePanel({
       <SectionHeader
         icon={<ShieldCheck className="h-4 w-4" />}
         title="Validate"
-        body="Confirm when this evidence was last produced and whether the receipt has enough provenance to reproduce it."
+        body="Was this evidence produced recently, and do we have enough provenance to reproduce it exactly?"
       />
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
         <Metric label="Status" value={statusLabel(latest)} />
@@ -216,7 +220,7 @@ function ReviewPanel({
       <SectionHeader
         icon={<FileJson className="h-4 w-4" />}
         title="Review"
-        body="Readable receipt first. Raw JSON stays folded away for debugging."
+        body="Read the human receipt for this evidence: what it is, what it produced, and where the files live. Raw JSON sits behind a small disclosure for debugging."
       />
 
       {latest?.description ? (
@@ -333,16 +337,16 @@ function TriggerPanel({
       <SectionHeader
         icon={<Play className="h-4 w-4" />}
         title="Trigger"
-        body="Re-run eligible research-cell evidence. Declared stage assets stay disabled because they need orchestrator context."
+        body="Re-run this evidence so a fresh copy lands. Some assets are read-only because they only make sense in the context of a parent scenario."
       />
 
       {!isResearchCell ? (
         <DisabledTrigger
-          message="This is a declared stage asset. Re-materializing it alone could skip required parent-cell context, so use the parent research cell instead."
+          message="This evidence belongs to a declared pipeline stage. Re-running it on its own would skip the parent-scenario context, so trigger the parent scenario instead."
         />
       ) : !question.trim() ? (
         <DisabledTrigger
-          message="This research cell can be triggered, but the backend requires the full original question. This materialization only has hashes, so paste the question before running."
+          message="This per-scenario evidence can be re-run, but the backend needs the full original question. The receipt only has hashes — paste the question below before triggering."
         />
       ) : null}
 
@@ -425,7 +429,7 @@ function LineagePanel({ lineage }: { lineage: AssetLineageResponse | null }) {
       <SectionHeader
         icon={<GitBranch className="h-4 w-4" />}
         title="Lineage"
-        body="See the inputs this evidence depends on and the downstream assets that could change after a re-run."
+        body="What feeds this evidence, and what downstream evidence and recommendations would change if it were re-run."
       />
       <div className="grid gap-4 lg:grid-cols-2">
         <LineageColumn title="Upstream inputs" empty="No upstream assets recorded." items={upstream} />
@@ -468,23 +472,29 @@ function LineageColumn({
         </div>
       ) : (
         <div className="grid gap-2">
-          {items.map((item) => (
-            <Link
-              key={item.asset_key_encoded}
-              href={`/assets/${item.asset_key_encoded}`}
-              className="group rounded-2xl border border-slate-200 bg-white p-3 shadow-sm transition-colors hover:border-slate-300"
-            >
-              <div className="flex items-center gap-2">
-                <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900">
-                  {item.asset_key.at(-1) ?? item.asset_key.join('/')}
-                </span>
-                <ArrowRight className="h-3.5 w-3.5 text-slate-300 group-hover:text-slate-700" />
-              </div>
-              <p className="mt-1 break-all font-mono text-[11px] text-slate-500">
-                {item.asset_key.join(' / ')}
-              </p>
-            </Link>
-          ))}
+          {items.map((item) => {
+            const last = item.asset_key.at(-1) ?? item.asset_key.join('/');
+            return (
+              <Link
+                key={item.asset_key_encoded}
+                href={`/assets/${item.asset_key_encoded}`}
+                className="group rounded-2xl border border-slate-200 bg-white p-3 shadow-sm transition-colors hover:border-slate-300"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900">
+                    {humaniseAssetName(last)}
+                  </span>
+                  <ArrowRight className="h-3.5 w-3.5 text-slate-300 group-hover:text-slate-700" />
+                </div>
+                <p
+                  className="mt-1 break-all font-mono text-[11px] text-slate-500"
+                  title={item.asset_key.join(' / ')}
+                >
+                  {item.asset_key.join(' / ')}
+                </p>
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>
@@ -709,4 +719,17 @@ function formatTimestamp(value: AssetSummary['timestamp'] | undefined) {
 
 function errorMessage(reason: unknown) {
   return reason instanceof Error ? reason.message : String(reason);
+}
+
+function humaniseAssetName(last: string) {
+  if (!last) return 'Evidence asset';
+  const stem = last
+    .replace(/\.[a-z0-9]+$/i, '')
+    .replace(/[-_]+/g, ' ')
+    .trim();
+  if (!stem) return last;
+  return stem
+    .split(' ')
+    .map((word) => (word ? word[0].toUpperCase() + word.slice(1) : word))
+    .join(' ');
 }

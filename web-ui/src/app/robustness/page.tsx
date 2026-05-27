@@ -28,9 +28,9 @@ export default function RobustnessPage() {
   return (
     <StudyShell
       data={data}
-      eyebrow="Robustness"
-      title="Each square is a defensible way to look at the question."
-      intro="Green: the answer holds. Amber: partial agreement. Red: this framing changes the answer."
+      eyebrow="Robustness grid"
+      title="Does the answer hold across every defensible framing?"
+      intro="Each square below is one defensible way to look at the question. Hover or click a square to read its plain-language summary."
     >
       {!studyId ? null : loadingCurve || !curve ? (
         <FocusCard tone="muted">
@@ -39,7 +39,7 @@ export default function RobustnessPage() {
       ) : curve.rows.length === 0 ? (
         <FocusCard>
           <p className="text-sm text-slate-600">
-            No clustered scenarios yet — the briefs haven&apos;t produced
+            No scenarios are ready yet — the briefs have not produced
             recommendation-shaped sentences. Check{' '}
             <Link
               href={withStudy('/setup', studyId)}
@@ -85,6 +85,7 @@ function ScenarioSquare({
 }) {
   const tone = toneFor(row.robustness);
   const pct = Math.round(row.robustness * 100);
+  const total = row.n_agree + row.n_weaker + row.n_flips + row.n_missing;
   const summary = describeRow(row);
   return (
     <Link
@@ -100,13 +101,13 @@ function ScenarioSquare({
           tone.cls,
         )}
       >
-        <span className="font-mono text-[10px] uppercase tracking-wider opacity-70">
-          #{row.cluster_id}
+        <span className="text-[10px] font-semibold uppercase tracking-wider opacity-70">
+          Scenario {row.cluster_id}
         </span>
         <span className="text-2xl font-bold leading-none tabular-nums">
           {pct}%
         </span>
-        <span className="font-mono text-[9px] uppercase tracking-wider opacity-70">
+        <span className="text-[9px] font-semibold uppercase tracking-wider opacity-70">
           {tone.label}
         </span>
       </div>
@@ -115,8 +116,8 @@ function ScenarioSquare({
         className="pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-64 max-w-[80vw] -translate-x-1/2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-[11px] leading-snug text-slate-700 opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus:opacity-100"
       >
         <p className="line-clamp-4">{summary}</p>
-        <p className="mt-1 inline-flex items-center gap-1 font-mono text-[9px] text-slate-500">
-          {row.n_agree} agree · {row.n_weaker} weaker · {row.n_flips} flip
+        <p className="mt-1 inline-flex items-center gap-1 text-[10px] text-slate-500">
+          Holds in {row.n_agree} of {total} framings
           <ArrowRight className="h-2.5 w-2.5" />
         </p>
       </div>
@@ -149,20 +150,15 @@ function toneFor(robustness: number): { cls: string; label: string } {
 
 function Legend() {
   return (
-    <ul className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-slate-500">
-      <li className="flex items-center gap-1.5">
-        <span className="inline-block h-3 w-3 rounded-[3px] bg-emerald-300" />
-        Holds in most cells (≥ 70%)
-      </li>
-      <li className="flex items-center gap-1.5">
-        <span className="inline-block h-3 w-3 rounded-[3px] bg-yellow-300" />
-        Mixed support (40–70%)
-      </li>
-      <li className="flex items-center gap-1.5">
-        <span className="inline-block h-3 w-3 rounded-[3px] bg-orange-300" />
-        Flips under most cells (&lt; 40%)
-      </li>
-    </ul>
+    <p className="mt-4 text-[11px] leading-snug text-slate-500">
+      <span className="font-semibold text-slate-700">Read the grid:</span>{' '}
+      <span className="inline-block h-2.5 w-2.5 rounded-[3px] bg-emerald-300 align-middle" />{' '}
+      green holds (the answer survives ≥ 70% of framings),{' '}
+      <span className="inline-block h-2.5 w-2.5 rounded-[3px] bg-yellow-300 align-middle" />{' '}
+      amber is mixed (40–70%), and{' '}
+      <span className="inline-block h-2.5 w-2.5 rounded-[3px] bg-orange-300 align-middle" />{' '}
+      orange flips (&lt; 40%).
+    </p>
   );
 }
 

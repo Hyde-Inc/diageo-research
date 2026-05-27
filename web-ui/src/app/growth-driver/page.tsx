@@ -7,6 +7,7 @@ import {
   ArrowRight,
   CalendarDays,
   CheckCircle2,
+  FileSearch,
   HelpCircle,
   MessageCircle,
   Play,
@@ -239,12 +240,16 @@ export default function GrowthDriverPage() {
     [selected.mustDoId],
   );
 
+  const handleStressTest = (driverId: string) => {
+    setSelectedId(driverId);
+  };
+
   return (
     <StudyShell
       data={data}
-      eyebrow="Growth Driver Workbench"
-      title="MBP activity calendar, made interactive"
-      intro="Demo view inspired by Buchanan’s planning slide. Content is illustrative until connected to the current study data."
+      eyebrow="Growth driver planner"
+      title="Plan growth drivers, with the evidence and confidence beside each card"
+      intro="Demo planner inspired by Buchanan’s MBP slide. Each Must-Do and Growth Driver carries a confidence pill, an evidence chip, and a stress-test action so the plan stays honest before any spend moves."
       contentClassName="max-w-[1420px]"
     >
       <FocusCard className="overflow-hidden p-0 sm:p-0">
@@ -289,36 +294,43 @@ export default function GrowthDriverPage() {
             <div className="mt-3 grid gap-3">
               {MUST_DOS.map((mustDo) => {
                 const active = mustDo.id === selected.mustDoId;
+                const firstDriver = GROWTH_DRIVERS.find(
+                  (driver) => driver.mustDoId === mustDo.id,
+                );
                 return (
-                  <button
+                  <div
                     key={mustDo.id}
-                    type="button"
-                    onClick={() => {
-                      const firstDriver = GROWTH_DRIVERS.find(
-                        (driver) => driver.mustDoId === mustDo.id,
-                      );
-                      if (firstDriver) setSelectedId(firstDriver.id);
-                    }}
                     className={cn(
-                      'rounded-2xl border bg-white p-3 text-left shadow-sm transition-colors',
+                      'rounded-2xl border bg-white p-3 shadow-sm transition-colors',
                       active
                         ? 'border-slate-900 ring-2 ring-slate-900/10'
                         : 'border-slate-200 hover:border-slate-300',
                     )}
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <h3 className="text-sm font-semibold leading-snug text-slate-950">
-                        {mustDo.title}
-                      </h3>
-                      <span className="rounded-full bg-slate-950 px-2 py-0.5 text-[11px] font-semibold text-white">
-                        {mustDo.apSplit}%
-                      </span>
-                    </div>
-                    <p className="mt-2 text-[12px] leading-snug text-slate-600">
-                      {mustDo.summary}
-                    </p>
-                    <ConfidenceMeter value={mustDo.confidence} className="mt-3" />
-                    <div className="mt-3 flex flex-wrap gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (firstDriver) setSelectedId(firstDriver.id);
+                      }}
+                      className="grid w-full gap-2 text-left"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <h3 className="text-sm font-semibold leading-snug text-slate-950">
+                          {mustDo.title}
+                        </h3>
+                        <span
+                          className="rounded-full bg-slate-950 px-2 py-0.5 text-[11px] font-semibold text-white"
+                          title="Share of growth-driver A&P this Must-Do receives"
+                        >
+                          {mustDo.apSplit}%
+                        </span>
+                      </div>
+                      <p className="text-[12px] leading-snug text-slate-600">
+                        {mustDo.summary}
+                      </p>
+                      <ConfidencePill value={mustDo.confidence} />
+                    </button>
+                    <div className="mt-2 flex flex-wrap gap-1">
                       {mustDo.focusMarkets.slice(0, 3).map((market) => (
                         <span
                           key={market}
@@ -328,7 +340,24 @@ export default function GrowthDriverPage() {
                         </span>
                       ))}
                     </div>
-                  </button>
+                    <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                      <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+                        <FileSearch className="h-3 w-3 text-slate-500" />
+                        Evidence: portfolio MBP brief
+                      </span>
+                      {firstDriver ? (
+                        <button
+                          type="button"
+                          onClick={() => handleStressTest(firstDriver.id)}
+                          className="inline-flex h-7 items-center gap-1.5 rounded-full bg-slate-950 px-2.5 text-[11px] font-semibold text-white shadow-sm transition-colors hover:bg-slate-800"
+                          title={`Open ${firstDriver.title} on the right to stress-test the Must-Do.`}
+                        >
+                          <Play className="h-3 w-3" />
+                          Stress-test
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
                 );
               })}
             </div>
@@ -384,6 +413,7 @@ export default function GrowthDriverPage() {
                       active={driver.id === selected.id}
                       mustDo={MUST_DOS.find((mustDo) => mustDo.id === driver.mustDoId)}
                       onSelect={() => setSelectedId(driver.id)}
+                      onStressTest={() => handleStressTest(driver.id)}
                     />
                   ))}
                 </div>
@@ -407,16 +437,16 @@ function DriverRow({
   mustDo,
   active,
   onSelect,
+  onStressTest,
 }: {
   driver: GrowthDriver;
   mustDo?: MustDo;
   active: boolean;
   onSelect: () => void;
+  onStressTest: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onSelect}
+    <div
       className={cn(
         'grid grid-cols-[210px_repeat(4,minmax(120px,1fr))] gap-2 rounded-2xl border p-2 text-left transition-colors',
         active
@@ -424,15 +454,44 @@ function DriverRow({
           : 'border-transparent bg-white hover:border-slate-200 hover:bg-slate-50',
       )}
     >
-      <div className="rounded-xl bg-white px-3 py-2 shadow-sm ring-1 ring-slate-200">
+      <button
+        type="button"
+        onClick={onSelect}
+        className="grid gap-1.5 rounded-xl bg-white px-3 py-2 text-left shadow-sm ring-1 ring-slate-200"
+      >
         <div className="text-sm font-semibold leading-snug text-slate-950">
           {driver.title}
         </div>
-        <div className="mt-1 text-[11px] leading-snug text-slate-500">
+        <div className="text-[11px] leading-snug text-slate-500">
           {mustDo?.title ?? 'Must-Do'}
         </div>
-        <ConfidenceMeter value={driver.confidence} className="mt-3" compact />
-      </div>
+        <ConfidencePill value={driver.confidence} />
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+            <FileSearch className="h-3 w-3 text-slate-500" />
+            Evidence
+          </span>
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(event) => {
+              event.stopPropagation();
+              onStressTest();
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                event.stopPropagation();
+                onStressTest();
+              }
+            }}
+            className="inline-flex h-6 cursor-pointer items-center gap-1 rounded-full bg-slate-950 px-2 text-[10px] font-semibold text-white shadow-sm transition-colors hover:bg-slate-800"
+          >
+            <Play className="h-3 w-3" />
+            Stress-test
+          </span>
+        </div>
+      </button>
       {QUARTERS.map((quarter) => {
         const activity = driver.activities.find((item) => item.quarter === quarter);
         if (!activity) {
@@ -455,7 +514,7 @@ function DriverRow({
           </div>
         );
       })}
-    </button>
+    </div>
   );
 }
 
@@ -554,7 +613,7 @@ function DriverDetail({
 
         <div className="rounded-2xl border border-slate-900 bg-slate-950 p-3 text-white shadow-sm">
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-300">
-            Virtualize this
+            Stress-test this driver
           </div>
           <p className="mt-1 text-sm leading-snug text-slate-200">
             {driver.simulationPrompt}
@@ -622,14 +681,46 @@ function ConfidenceMeter({
   return (
     <div className={cn('grid gap-1', className)}>
       <div className="flex items-center justify-between gap-2 text-[11px] font-medium text-slate-500">
-        <span>{compact ? 'Conf.' : 'Confidence'}</span>
-        <span>{value}%</span>
+        <span>{compact ? 'Confidence' : 'Confidence'}</span>
+        <span>{phraseConfidence(value)}</span>
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
         <div className={cn('h-full rounded-full', tone)} style={{ width: `${value}%` }} />
       </div>
     </div>
   );
+}
+
+function ConfidencePill({ value }: { value: number }) {
+  const tone =
+    value >= 70
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+      : value >= 60
+        ? 'border-amber-200 bg-amber-50 text-amber-700'
+        : 'border-orange-200 bg-orange-50 text-orange-700';
+  return (
+    <span
+      className={cn(
+        'inline-flex w-fit items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold',
+        tone,
+      )}
+      title="Internal confidence based on signal strength and number of supporting framings"
+    >
+      Confidence: {phraseConfidence(value)}
+    </span>
+  );
+}
+
+function phraseConfidence(value: number): string {
+  const word =
+    value >= 75
+      ? 'High'
+      : value >= 60
+        ? 'Medium'
+        : value >= 40
+          ? 'Low'
+          : 'Limited';
+  return `${word} (${value}%)`;
 }
 
 function DetailBlock({

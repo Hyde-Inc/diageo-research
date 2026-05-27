@@ -9,7 +9,7 @@
  */
 
 import Link from 'next/link';
-import { ArrowRight, ShieldAlert, Sparkles } from 'lucide-react';
+import { ArrowRight, HelpCircle, Sparkles } from 'lucide-react';
 import { ConfidencePanel } from '@/components/study/confidence-panel';
 import { FocusCard, StudyShell } from '@/components/study/study-shell';
 import { useStudyData, withStudy } from '@/components/study/use-study';
@@ -26,8 +26,8 @@ export default function AnswerPage() {
     <StudyShell
       data={data}
       eyebrow="Answer"
-      title="Plain-language recommendation"
-      intro="The single line we'd put in the executive briefing for this study."
+      title="The plain-language answer"
+      intro="The single recommendation we would put in the executive briefing for this study, with one piece of evidence and one explicit confidence pill."
     >
       {!studyId ? null : loadingDetail || loadingCurve ? (
         <FocusCard tone="muted">
@@ -80,6 +80,7 @@ export default function AnswerPage() {
                 {lead.representative}
               </h2>
               <RobustnessPill curve={curve} />
+              <EvidenceChip studyId={studyId} />
               <Caveat curve={curve} fragileSpecs={lead.fragile_specs} />
             </div>
           </FocusCard>
@@ -112,13 +113,6 @@ export default function AnswerPage() {
               Go deeper
               <ArrowRight className="h-3.5 w-3.5" />
             </Link>
-            <Link
-              href={withStudy('/why-it-could-be-wrong', studyId)}
-              className="inline-flex h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-[12px] font-medium text-slate-600 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
-            >
-              <ShieldAlert className="h-3.5 w-3.5" />
-              Why it could be wrong
-            </Link>
           </div>
         </>
       )}
@@ -127,42 +121,68 @@ export default function AnswerPage() {
 }
 
 function RobustnessPill({ curve }: { curve: SpecCurve }) {
-  const totalScenarios = curve.rows.reduce((acc, r) => {
-    return acc + (r.n_agree > 0 || r.n_weaker > 0 || r.n_flips > 0 ? 1 : 0);
-  }, 0);
   const lead = curve.rows[0];
   const inFavour = lead.n_agree;
   const total = lead.n_agree + lead.n_weaker + lead.n_flips + lead.n_missing;
   const tone =
     lead.robustness >= 0.7
-      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+      ? {
+          pill: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+          dot: 'bg-emerald-500',
+          bar: 'bg-emerald-500',
+        }
       : lead.robustness >= 0.4
-        ? 'border-yellow-200 bg-yellow-50 text-yellow-700'
-        : 'border-orange-200 bg-orange-50 text-orange-700';
-  const dotTone =
-    lead.robustness >= 0.7
-      ? 'bg-emerald-500'
-      : lead.robustness >= 0.4
-        ? 'bg-yellow-500'
-        : 'bg-orange-500';
+        ? {
+            pill: 'border-yellow-200 bg-yellow-50 text-yellow-700',
+            dot: 'bg-yellow-500',
+            bar: 'bg-yellow-500',
+          }
+        : {
+            pill: 'border-orange-200 bg-orange-50 text-orange-700',
+            dot: 'bg-orange-500',
+            bar: 'bg-orange-500',
+          };
+  const phrasing =
+    total === 0
+      ? 'Confidence not computed — no scenarios have finished yet'
+      : total === 1
+        ? inFavour >= 1
+          ? 'Holds in 1 of 1 scenario'
+          : 'Does not hold in this single scenario'
+        : lead.robustness < 0.5 && inFavour > 0
+          ? `Limited support — only ${inFavour} of ${total} framings agree`
+          : `Holds in ${inFavour} of ${total} scenarios`;
+  const pct = total > 0 ? Math.round(lead.robustness * 100) : 0;
   return (
     <div className="grid gap-1">
       <span
         className={cn(
           'inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1 text-[12px] font-semibold shadow-sm',
-          tone,
+          tone.pill,
         )}
       >
-        <span className={cn('h-1.5 w-1.5 rounded-full', dotTone)} />
-        Holds in {inFavour} of {total} scenarios
+        <span className={cn('h-1.5 w-1.5 rounded-full', tone.dot)} />
+        {phrasing}
       </span>
-      {totalScenarios > 0 ? (
-        <p className="text-[11px] text-slate-500">
-          {curve.rows.length} candidate recommendations clustered across{' '}
-          {curve.cells.length} cells.
-        </p>
+      {total > 0 ? (
+        <div className="h-1 w-40 max-w-full overflow-hidden rounded-full bg-slate-100">
+          <div className={cn('h-full', tone.bar)} style={{ width: `${pct}%` }} />
+        </div>
       ) : null}
     </div>
+  );
+}
+
+function EvidenceChip({ studyId }: { studyId: string | null }) {
+  if (!studyId) return null;
+  return (
+    <Link
+      href={withStudy('/evidence', studyId)}
+      className="inline-flex w-fit items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-700 shadow-sm transition-colors hover:border-slate-400 hover:bg-white"
+    >
+      <HelpCircle className="h-3 w-3 text-slate-500" />
+      Research brief evidence
+    </Link>
   );
 }
 

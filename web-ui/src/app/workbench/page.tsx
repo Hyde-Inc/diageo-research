@@ -56,9 +56,9 @@ type StudyFetch<T> = {
 };
 
 const PANES: Array<{ id: PaneId; label: string; Icon: typeof GitGraph }> = [
-  { id: 'recipe', label: 'Recipe', Icon: BookOpen },
-  { id: 'universe', label: 'Universe', Icon: Telescope },
-  { id: 'curve', label: 'Spec curve', Icon: Receipt },
+  { id: 'recipe', label: 'Plan', Icon: BookOpen },
+  { id: 'universe', label: 'Scenarios', Icon: Telescope },
+  { id: 'curve', label: 'Robustness grid', Icon: Receipt },
   { id: 'dag', label: 'Lineage', Icon: GitGraph },
   { id: 'ask', label: 'Ask', Icon: Sparkles },
 ];
@@ -202,15 +202,15 @@ export default function WorkbenchPage() {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-sm font-semibold tracking-tight text-slate-950 sm:text-base">
-                  Hypothesis Workbench
+                  Analyst workbench
                 </h1>
                 <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                  Multiverse
+                  Power-user view
                 </span>
               </div>
               <p className="truncate text-xs text-slate-500">
-                One question, run across many defensible specifications. Pick the
-                pane that matches your question.
+                One question, answered across every defensible framing. Pick
+                the pane that matches what you want to look at.
               </p>
             </div>
           </div>
@@ -355,9 +355,7 @@ function Subject({
   const errorCount = summary?.n_error ?? 0;
   const completeCount = summary?.n_complete ?? detail.cells.length;
   const cellCount = summary?.n_cells ?? detail.cells.length;
-  const decisionRulePreview = prereg?.decision_rule
-    ? truncate(prereg.decision_rule, 220)
-    : null;
+  const decisionRulePreview = prereg?.decision_rule ?? null;
 
   return (
     <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white/90 shadow-sm shadow-slate-950/[0.04] backdrop-blur">
@@ -369,7 +367,7 @@ function Subject({
           <StatusPill status={detail.status} />
           <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
             <Activity className="h-3.5 w-3.5 text-slate-400" />
-            {completeCount}/{cellCount} cells complete
+            {completeCount}/{cellCount} scenarios complete
           </span>
           {errorCount > 0 ? (
             <span className="rounded-full bg-orange-50 px-2.5 py-1 text-xs font-medium text-orange-700">
@@ -383,7 +381,7 @@ function Subject({
         {decisionRulePreview ? (
           <div className="grid gap-1 rounded-2xl border border-blue-100 bg-blue-50/60 px-4 py-3">
             <span className="text-[10px] font-semibold uppercase tracking-wider text-blue-700">
-              What we&apos;re checking
+              What we&apos;re checking (decision rule)
             </span>
             <p className="text-sm leading-snug text-slate-800">
               {decisionRulePreview}
@@ -521,7 +519,3 @@ function Tabs({
   );
 }
 
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return `${s.slice(0, max - 1)}…`;
-}

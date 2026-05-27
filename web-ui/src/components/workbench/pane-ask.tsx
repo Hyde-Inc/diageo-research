@@ -46,9 +46,9 @@ import {
 } from './types';
 
 const EXAMPLE_PROMPTS = [
-  'What is the lead recommendation and how confident should I be?',
-  'Which scenarios disagree most, and what does the disagreement tell us?',
-  'What would prove this study wrong?',
+  'What should I do, and how confident should I be?',
+  'Which framings disagree most, and what does that tell us?',
+  'What data would prove this answer wrong?',
 ];
 
 type Turn =
@@ -176,8 +176,8 @@ export function AskConversation({
             onChange={(e) => setDraft(e.target.value)}
             placeholder={
               detail
-                ? `Ask about "${truncate(detail.question, 70)}"…`
-                : 'Pick a study, then ask a question…'
+                ? `Ask in plain English — e.g. "what should I do about ${truncate(detail.question, 70)}"`
+                : 'Pick a study above, then ask a plain-English question.'
             }
             rows={1}
             disabled={!ready || pending}
@@ -240,7 +240,7 @@ export function PaneAsk(props: AskConversationProps) {
   const { detail, curve, activeCellId } = props;
   const scenarioLabel = useMemo(() => {
     if (!activeCellId) return null;
-    return activeCellId.replace(/__/g, ' / ');
+    return humaniseScenarioId(activeCellId);
   }, [activeCellId]);
   const completedCount = useMemo(
     () => curve?.cells?.filter((c) => c.status === 'complete').length ?? 0,
@@ -315,11 +315,11 @@ function TurnRow({ turn }: { turn: Turn }) {
   if (turn.role === 'user') {
     return (
       <div className="ml-auto grid max-w-[85%] gap-1 rounded-2xl bg-slate-950 px-3 py-2 text-sm text-slate-50 shadow-sm">
-        <span className="font-mono text-[9px] uppercase tracking-wider text-slate-300">
+        <span className="text-[9px] font-semibold uppercase tracking-wider text-slate-300">
           You
           {turn.scenarioId ? (
             <span className="ml-2 normal-case tracking-normal text-blue-200">
-              · scoped to {turn.scenarioId.replace(/__/g, ' / ')}
+              · scoped to {humaniseScenarioId(turn.scenarioId)}
             </span>
           ) : null}
         </span>
@@ -402,33 +402,66 @@ function UnknownsBlock({ unknowns }: { unknowns: string[] }) {
 function SourcesDisclosure({ citations }: { citations: AskCitation[] }) {
   return (
     <details className="group rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2 text-[12px] text-slate-700">
-      <summary className="flex cursor-pointer select-none items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-slate-500">
+      <summary className="flex cursor-pointer select-none items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
         <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
-        Sources &middot; {citations.length}
+        Sources · {citations.length}
       </summary>
       <ul className="mt-1.5 grid gap-1.5">
-        {citations.map((c, idx) => (
-          <li
-            key={idx}
-            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 leading-snug shadow-sm"
-          >
-            <div className="font-semibold text-slate-700">{c.source}</div>
-            <div className="text-slate-600">{c.snippet}</div>
-            {c.link ? (
-              <a
-                href={c.link}
-                target="_blank"
-                rel="noreferrer"
-                className="text-blue-600 hover:underline"
-              >
-                Open
-              </a>
-            ) : null}
-          </li>
-        ))}
+        {citations.map((c, idx) => {
+          const friendly = humaniseSourceLabel(c.source);
+          return (
+            <li
+              key={idx}
+              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 leading-snug shadow-sm"
+            >
+              <div className="font-semibold text-slate-700">{friendly}</div>
+              <div className="text-slate-600">{c.snippet}</div>
+              {c.link ? (
+                <a
+                  href={c.link}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-blue-600 hover:underline"
+                >
+                  Open
+                </a>
+              ) : null}
+            </li>
+          );
+        })}
       </ul>
     </details>
   );
+}
+
+function humaniseSourceLabel(source: string): string {
+  const trimmed = source.trim();
+  if (!trimmed) return 'Research source';
+  // Bare asset keys look like research_cell/foo__bar or runs/loyalty_panel.csv.
+  const isAssetKey =
+    /[/_]/.test(trimmed) &&
+    !/\s/.test(trimmed) &&
+    trimmed === trimmed.toLowerCase();
+  if (!isAssetKey) return trimmed;
+  const lastSegment = trimmed.split('/').filter(Boolean).pop() ?? trimmed;
+  const stem = lastSegment.replace(/\.[a-z0-9]+$/i, '').replace(/[-_]+/g, ' ').trim();
+  if (!stem) return 'Research source';
+  return stem
+    .split(' ')
+    .map((word) => (word ? word[0].toUpperCase() + word.slice(1) : word))
+    .join(' ');
+}
+
+function humaniseScenarioId(id: string): string {
+  const parts = id.split('__').filter(Boolean);
+  if (parts.length === 0) return id;
+  const pairs: string[] = [];
+  for (let i = 0; i < parts.length; i += 2) {
+    const dim = parts[i].replace(/[-_]+/g, ' ');
+    const val = (parts[i + 1] ?? '').replace(/[-_]+/g, ' ');
+    pairs.push(val ? `${dim}: ${val}` : dim);
+  }
+  return pairs.join(' · ');
 }
 
 function splitWithMarkers(

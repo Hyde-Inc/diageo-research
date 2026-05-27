@@ -104,12 +104,13 @@ export default function AssetsPage() {
               Evidence / asset explorer
             </Badge>
             <h1 className="max-w-3xl text-balance text-3xl font-semibold tracking-tight text-slate-950">
-              Validate, review, trigger, and trace evidence assets.
+              Every reusable piece of evidence behind a recommendation.
             </h1>
             <p className="max-w-3xl text-sm leading-relaxed text-slate-600">
-              Each card is one reusable piece of evidence or pipeline output.
-              Open it to check provenance, inspect produced paths, re-run eligible
-              research cells, and see what downstream work would be affected.
+              Each card is one reusable piece of evidence or pipeline
+              output. Open it to validate provenance, review the readable
+              receipt, re-run it when allowed, or trace what would change
+              downstream.
             </p>
           </div>
           <Button
@@ -136,7 +137,7 @@ export default function AssetsPage() {
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search by asset name, key, run, question hash, or axes"
+                placeholder="Search by name, dimensions, run, or question — plain words work too"
                 className="h-10 w-full rounded-full border border-slate-200 bg-white pl-9 pr-4 text-sm shadow-sm outline-none transition-colors placeholder:text-slate-400 focus:border-slate-400"
               />
             </label>
@@ -169,8 +170,8 @@ export default function AssetsPage() {
             <ErrorBox message={assetState.error} />
           ) : filteredAssets.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/80 p-5 text-sm text-slate-500">
-              No assets match this search. Try clearing the filter or materialize
-              a study first.
+              No evidence assets match this search. Try clearing the
+              filter or run a study first.
             </div>
           ) : (
             <section className="grid gap-3 md:grid-cols-2">
@@ -205,9 +206,12 @@ function AssetCard({
         </span>
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-sm font-semibold tracking-tight text-slate-950">
-            {assetName(asset)}
+            {humaniseAssetName(asset)}
           </h2>
-          <p className="mt-0.5 truncate font-mono text-[11px] text-slate-500">
+          <p
+            className="mt-0.5 truncate font-mono text-[11px] text-slate-500"
+            title={asset.asset_key.join(' / ')}
+          >
             {asset.asset_key.join(' / ')}
           </p>
         </div>
@@ -376,6 +380,20 @@ function ErrorBox({ message }: { message: string }) {
 
 function assetName(asset: AssetSummary) {
   return asset.asset_key.at(-1) ?? asset.asset_key.join('/');
+}
+
+function humaniseAssetName(asset: AssetSummary) {
+  const last = assetName(asset);
+  if (!last) return 'Evidence asset';
+  const stem = last
+    .replace(/\.[a-z0-9]+$/i, '')
+    .replace(/[-_]+/g, ' ')
+    .trim();
+  if (!stem) return last;
+  return stem
+    .split(' ')
+    .map((word) => (word ? word[0].toUpperCase() + word.slice(1) : word))
+    .join(' ');
 }
 
 function assetKindLabel(asset: AssetSummary) {

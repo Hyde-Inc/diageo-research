@@ -38,7 +38,7 @@ function AskPageBody() {
   }, [scenarioParam, detail]);
 
   const scenarioLabel = useMemo(
-    () => (scenarioId ? scenarioId.replace(/__/g, ' / ') : null),
+    () => (scenarioId ? humaniseScenarioId(scenarioId) : null),
     [scenarioId],
   );
 
@@ -134,4 +134,17 @@ function ScopeBanner({
       ) : null}
     </div>
   );
+}
+
+function humaniseScenarioId(id: string): string {
+  const parts = id.split('__').filter(Boolean);
+  if (parts.length === 0) return id;
+  // Ids look like dimension__value__dimension__value — pair them.
+  const pairs: string[] = [];
+  for (let i = 0; i < parts.length; i += 2) {
+    const dim = parts[i].replace(/[-_]+/g, ' ');
+    const val = (parts[i + 1] ?? '').replace(/[-_]+/g, ' ');
+    pairs.push(val ? `${dim}: ${val}` : dim);
+  }
+  return pairs.join(' · ');
 }

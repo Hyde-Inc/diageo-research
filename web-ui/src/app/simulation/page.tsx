@@ -57,8 +57,8 @@ function SimulationBody() {
     <StudyShell
       data={data}
       eyebrow="Simulation"
-      title="Closed question · Don Julio spend"
-      intro="Side-by-side discount vs bundling for the most exposed occasion. Every input links to its evidence trace."
+      title={`How best to protect Don Julio spend in ${prefs.occasion}`}
+      intro="Side-by-side discount vs bundling for the most exposed occasion. Every input shows the real source it would use, and every output carries an honest confidence pill."
     >
       {!studyId ? null : loadingCurve ? (
         <FocusCard tone="muted">

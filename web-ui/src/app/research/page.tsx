@@ -9,11 +9,15 @@ import { TopRiskHero } from '@/components/study/top-risk-hero';
 import { simulationPromptChips } from '@/components/study/simulation-pane';
 import { FocusCard, StudyShell } from '@/components/study/study-shell';
 import { useStudyData, withStudy } from '@/components/study/use-study';
-import { wb, type ResearchSummary } from '@/components/workbench/types';
+import {
+  wb,
+  type ResearchSummary,
+  type TopRiskCard,
+} from '@/components/workbench/types';
 
 export default function ResearchPage() {
   const data = useStudyData();
-  const { studyId, loadingDetail, curve, prereg } = data;
+  const { studyId, loadingDetail, curve, prereg, detail } = data;
   const [researchFetch, setResearchFetch] = useState<{
     key: string;
     value: ResearchSummary | null;
@@ -50,13 +54,15 @@ export default function ResearchPage() {
 
   const topOccasion = summary?.top_risks[0]?.occasion ?? 'Casual Unwind';
   const chips = simulationPromptChips(studyId, topOccasion);
+  const headline = headlineSubject(summary?.top_risks[0], detail?.question);
+  const scenarioTotal = curve?.n_cells ?? curve?.cells?.length ?? 0;
 
   return (
     <StudyShell
       data={data}
       eyebrow="Research"
-      title="Open question · US tequila price pressure"
-      intro="Which occasions are most exposed to price pressure? Hero risks first, then the full brief with clickable numbers."
+      title={headline}
+      intro="What is most at risk in this study, the three subjects most exposed, the full brief, and a clickable trace for every number."
     >
       {!studyId ? null : loadingDetail || loading ? (
         <FocusCard tone="muted">
@@ -68,7 +74,11 @@ export default function ResearchPage() {
         </FocusCard>
       ) : summary ? (
         <>
-          <TopRiskHero risks={summary.top_risks} studyId={studyId} />
+          <TopRiskHero
+            risks={summary.top_risks}
+            studyId={studyId}
+            scenarioTotal={scenarioTotal}
+          />
           <FocusCard>
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
@@ -144,4 +154,24 @@ export default function ResearchPage() {
       ) : null}
     </StudyShell>
   );
+}
+
+function headlineSubject(
+  topRisk: TopRiskCard | undefined,
+  question: string | undefined,
+): string {
+  const fallback = 'What is most at risk in this study';
+  if (topRisk?.occasion) {
+    const subject = topRisk.occasion.trim();
+    if (subject) {
+      return `What is most at risk: ${subject}`;
+    }
+  }
+  if (question) {
+    const trimmed = question.trim();
+    if (trimmed.length > 0 && trimmed.length <= 100) {
+      return trimmed;
+    }
+  }
+  return fallback;
 }

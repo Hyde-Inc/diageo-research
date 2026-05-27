@@ -23,9 +23,9 @@ export default function ScenarioIndexPage() {
   return (
     <StudyShell
       data={data}
-      eyebrow="Scenario"
-      title="Pick a scenario."
-      intro="Each scenario is one defensible framing of the same question. Open one to see its recommendation and key numbers."
+      eyebrow="Scenarios"
+      title="Pick a scenario to read its plain-language summary"
+      intro="Each scenario is one defensible framing of the same question. Open one to see its recommendation, key numbers, and how strongly it supports the lead answer."
     >
       {!studyId ? null : loadingCurve || !curve ? (
         <FocusCard tone="muted">
@@ -41,7 +41,7 @@ export default function ScenarioIndexPage() {
       ) : curve.rows.length === 0 ? (
         <FocusCard>
           <p className="text-sm text-slate-600">
-            No scenarios yet — the briefs haven&apos;t produced
+            No scenarios are ready yet — the briefs have not produced
             recommendation-shaped sentences for this study.
           </p>
         </FocusCard>
@@ -49,7 +49,12 @@ export default function ScenarioIndexPage() {
         <FocusCard>
           <ul className="grid gap-2">
             {curve.rows.map((row) => (
-              <ScenarioRow key={row.cluster_id} row={row} studyId={studyId} />
+              <ScenarioRow
+                key={row.cluster_id}
+                row={row}
+                studyId={studyId}
+                scenarioTotal={curve.n_cells ?? curve.cells.length}
+              />
             ))}
           </ul>
         </FocusCard>
@@ -61,9 +66,11 @@ export default function ScenarioIndexPage() {
 function ScenarioRow({
   row,
   studyId,
+  scenarioTotal,
 }: {
   row: SpecCurveRow;
   studyId: string | null;
+  scenarioTotal: number;
 }) {
   const pct = Math.round(row.robustness * 100);
   const tone =
@@ -72,6 +79,15 @@ function ScenarioRow({
       : pct >= 40
         ? 'border-yellow-200 bg-yellow-50/60 text-yellow-900'
         : 'border-orange-200 bg-orange-50/60 text-orange-900';
+  const denominator = scenarioTotal || row.n_agree + row.n_weaker + row.n_flips + row.n_missing;
+  const support =
+    denominator === 0
+      ? 'support pending'
+      : denominator === 1
+        ? row.n_agree >= 1
+          ? 'Holds in 1 of 1 framing'
+          : 'Does not hold in this framing'
+        : `Holds in ${row.n_agree} of ${denominator} framings`;
   return (
     <li>
       <Link
@@ -80,14 +96,20 @@ function ScenarioRow({
       >
         <span
           className={cn(
-            'inline-flex h-9 w-12 items-center justify-center rounded-xl border font-mono text-xs font-semibold tabular-nums shadow-sm',
+            'inline-flex h-9 w-12 items-center justify-center rounded-xl border text-xs font-semibold tabular-nums shadow-sm',
             tone,
           )}
+          aria-label={`Robustness ${pct} percent`}
         >
           {pct}%
         </span>
-        <span className="line-clamp-2 text-[13px] leading-snug text-slate-800">
-          {row.representative}
+        <span className="grid min-w-0 gap-0.5">
+          <span className="line-clamp-2 text-[13px] leading-snug text-slate-800">
+            {row.representative}
+          </span>
+          <span className="text-[11px] leading-snug text-slate-500">
+            Scenario {row.cluster_id} · {support}
+          </span>
         </span>
         <ArrowRight className="h-3.5 w-3.5 text-slate-300 transition-colors group-hover:text-slate-700" />
       </Link>

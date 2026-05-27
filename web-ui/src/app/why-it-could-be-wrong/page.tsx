@@ -217,8 +217,17 @@ function buildItems(prereg: Prereg | null, curve: SpecCurve | null): Item[] {
 
   const overall = curve?.falsifier_status ?? 'unknown';
   const notes = curve?.falsifier_notes ?? [];
+  const thresholds = prereg?.evidence_thresholds ?? {};
 
   return conditions.map((cond) => {
+    const matched = matchThreshold(cond, thresholds);
+    const whatDataTests = describeDataTest(cond);
+    const base = {
+      text: cond,
+      thresholdLabel: matched?.label ?? null,
+      thresholdValue: matched?.value ?? null,
+      whatDataTests,
+    };
     const note = matchNote(cond, notes);
     if (note == null) {
       const fallback: CondState =
@@ -229,7 +238,7 @@ function buildItems(prereg: Prereg | null, curve: SpecCurve | null): Item[] {
             : overall === 'not_triggered'
               ? 'not_triggered'
               : 'bespoke';
-      return { text: cond, state: fallback, note: null };
+      return { ...base, state: fallback, note: null };
     }
     const lc = note.toLowerCase();
     if (
@@ -237,16 +246,77 @@ function buildItems(prereg: Prereg | null, curve: SpecCurve | null): Item[] {
       lc.includes('requires bespoke') ||
       lc.includes('bespoke evaluation')
     ) {
-      return { text: cond, state: 'bespoke', note };
+      return { ...base, state: 'bespoke', note };
     }
     if (lc.includes('borderline')) {
-      return { text: cond, state: 'borderline', note };
+      return { ...base, state: 'borderline', note };
     }
     if (lc.includes('not triggered')) {
-      return { text: cond, state: 'not_triggered', note };
+      return { ...base, state: 'not_triggered', note };
     }
-    return { text: cond, state: 'triggered', note };
+    return { ...base, state: 'triggered', note };
   });
+}
+
+function matchThreshold(
+  cond: string,
+  thresholds: Record<string, number | string | null>,
+): { label: string; value: string } | null {
+  const lc = cond.toLowerCase();
+  for (const [key, raw] of Object.entries(thresholds)) {
+    if (raw == null) continue;
+    const tokens = key
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean);
+    if (tokens.length === 0) continue;
+    const hit = tokens.every((t) => lc.includes(t));
+    if (!hit) continue;
+    const value = typeof raw === 'number' ? formatNumber(raw, key) : String(raw);
+    return { label: humaniseKey(key), value };
+  }
+  return null;
+}
+
+function formatNumber(value: number, key: string): string {
+  const lc = key.toLowerCase();
+  if (lc.includes('pct') || lc.includes('percent') || lc.includes('share')) {
+    return `${value.toFixed(value < 1 ? 2 : 1)}%`;
+  }
+  if (lc.includes('usd') || lc.includes('cost') || lc.includes('spend')) {
+    return `$${value.toLocaleString()}`;
+  }
+  if (lc.includes('weeks') || lc.includes('days') || lc.includes('months')) {
+    return `${value}`;
+  }
+  return String(value);
+}
+
+function humaniseKey(key: string): string {
+  return key.replace(/_/g, ' ');
+}
+
+function describeDataTest(cond: string): string {
+  const lc = cond.toLowerCase();
+  if (lc.includes('holdout') || lc.includes('hold-out')) {
+    return 'A reserved holdout group with matched audiences and timing.';
+  }
+  if (lc.includes('promo') || lc.includes('discount')) {
+    return 'Connected promotion or discount outcome data for the exposed brand and occasion.';
+  }
+  if (lc.includes('loyalty') || lc.includes('panel')) {
+    return 'Loyalty panel cohort flows over the question window.';
+  }
+  if (lc.includes('elasticity') || lc.includes('price sensitivity')) {
+    return 'Observed price-volume movements with at least two price points in the window.';
+  }
+  if (lc.includes('occasion') || lc.includes('audience') || lc.includes('cohort')) {
+    return 'Occasion or audience mix observations for the same population segment.';
+  }
+  if (lc.includes('regulator') || lc.includes('compliance')) {
+    return 'A sign-off from a named legal or compliance reviewer.';
+  }
+  return 'Plain outcome data tied to the exposed segment and the agreed measurement window.';
 }
 
 function matchNote(cond: string, notes: string[]): string | null {

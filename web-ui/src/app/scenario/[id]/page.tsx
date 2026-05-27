@@ -45,14 +45,17 @@ export default function ScenarioPage({
   return (
     <StudyShell
       data={data}
-      eyebrow={`Scenario #${id}`}
-      title={row ? truncate(row.representative, 90) : 'Scenario'}
+      eyebrow={`Scenario ${id}`}
+      title={row ? humanScenarioTitle(row) : 'Scenario summary'}
       intro={
         row
-          ? 'One defensible framing of the question, and the evidence behind it.'
+          ? 'One defensible framing of the same question — its plain-language summary, its key numbers, and the evidence behind it.'
           : 'Pick a scenario from the robustness grid.'
       }
-      back={{ href: withStudy('/robustness', studyId), label: 'Back to all scenarios' }}
+      back={{
+        href: withStudy('/robustness', studyId),
+        label: 'Back to all scenarios',
+      }}
     >
       {!studyId ? null : loadingCurve || !curve ? (
         <FocusCard tone="muted">
@@ -64,16 +67,16 @@ export default function ScenarioPage({
       ) : !row ? (
         <FocusCard>
           <p className="text-sm text-slate-600">
-            No cluster <span className="font-mono">#{id}</span> on the
-            current spec curve. The curve gets rebuilt every time the page
-            loads — try{' '}
+            Scenario <span className="font-semibold">{id}</span> isn&apos;t in
+            the latest robustness grid for this study. The grid rebuilds on
+            every load —{' '}
             <Link
               href={withStudy('/robustness', studyId)}
               className="font-medium text-slate-900 underline-offset-4 hover:underline"
             >
-              the stoplight grid
+              open the robustness grid
             </Link>{' '}
-            for the up-to-date list.
+            to see the current list of scenarios.
           </p>
         </FocusCard>
       ) : (
@@ -89,35 +92,41 @@ export default function ScenarioPage({
 
           <FocusCard>
             <div className="grid gap-2">
-              <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Key numbers
-              </h3>
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Key numbers
+                </h3>
+                <span className="text-[11px] leading-snug text-slate-500">
+                  Across the {row.n_agree + row.n_weaker + row.n_flips + row.n_missing} framings tried so far
+                </span>
+              </div>
               <div className="grid grid-cols-3 gap-2">
                 <Metric
                   value={String(row.n_agree)}
-                  label="cells agree"
+                  label="scenarios agree"
                   tone="emerald"
                 />
                 <Metric
                   value={String(row.n_weaker)}
-                  label="cells weaker"
+                  label="scenarios weaker"
                   tone="amber"
                 />
                 <Metric
                   value={String(row.n_flips)}
-                  label="cells flip"
+                  label="scenarios flip"
                   tone="orange"
                 />
               </div>
               {row.fragile_specs.length > 0 ? (
-                <p className="text-[12px] text-slate-600">
-                  <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                    Fragile under
-                  </span>{' '}
-                  · {row.fragile_specs.slice(0, 3).join(', ')}
+                <p className="text-[12px] leading-snug text-slate-600">
+                  <span className="font-semibold text-slate-700">
+                    Falls apart when
+                  </span>
+                  : {row.fragile_specs.slice(0, 3).join(', ')}
                   {row.fragile_specs.length > 3
-                    ? ` (+${row.fragile_specs.length - 3} more)`
+                    ? ` (+${row.fragile_specs.length - 3} more framings)`
                     : ''}
+                  .
                 </p>
               ) : null}
             </div>
@@ -125,12 +134,12 @@ export default function ScenarioPage({
 
           <FocusCard>
             <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-              Cells in this scenario
+              Framings inside this scenario
             </h3>
             <p className="mt-1 text-[12px] leading-snug text-slate-500">
-              The {breakdown.agree.length} green, {breakdown.weaker.length}{' '}
-              amber, and {breakdown.flips.length} orange cells that
-              produced this scenario&apos;s vote.
+              {breakdown.agree.length} agree, {breakdown.weaker.length}{' '}
+              weaker, and {breakdown.flips.length} flip — these are the
+              dimension combinations that voted on this scenario.
             </p>
             <div className="mt-3 grid gap-3">
               <CellGroup
@@ -189,6 +198,16 @@ function RobustnessHeader({ row }: { row: SpecCurveRow }) {
       : pct >= 40
         ? 'border-yellow-200 bg-yellow-50 text-yellow-700'
         : 'border-orange-200 bg-orange-50 text-orange-700';
+  const phrasing =
+    total === 0
+      ? 'No framings have voted yet'
+      : total === 1
+        ? row.n_agree >= 1
+          ? 'Holds in 1 of 1 framing'
+          : 'Does not hold in this single framing'
+        : pct < 50 && row.n_agree > 0
+          ? `Limited support — only ${row.n_agree} of ${total} framings agree`
+          : `Holds in ${row.n_agree} of ${total} framings`;
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span
@@ -197,10 +216,10 @@ function RobustnessHeader({ row }: { row: SpecCurveRow }) {
           tone,
         )}
       >
-        {pct}% robust
+        {phrasing}
       </span>
-      <span className="font-mono text-[11px] text-slate-500">
-        {row.n_agree}/{total} cells agree
+      <span className="text-[11px] text-slate-500">
+        Robustness {pct}%
       </span>
     </div>
   );
@@ -225,7 +244,7 @@ function Metric({
       <span className="text-2xl font-bold leading-none tabular-nums">
         {value}
       </span>
-      <span className="font-mono text-[10px] uppercase tracking-wider opacity-80">
+      <span className="text-[10px] font-semibold uppercase tracking-wider opacity-80">
         {label}
       </span>
     </div>
@@ -251,7 +270,7 @@ function CellGroup({
     <div className={cn('rounded-2xl border p-3', cls)}>
       <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-700">
         {label}
-        <span className="font-mono text-[10px] text-slate-500">
+        <span className="text-[10px] font-semibold text-slate-500">
           {cells.length}
         </span>
       </div>
@@ -261,30 +280,39 @@ function CellGroup({
             key={cell.id}
             className="flex flex-wrap items-center gap-1.5 rounded-lg bg-white/70 px-2 py-1 text-[11px] shadow-sm"
           >
-            {Object.entries(cell.axes).map(([axis, value]) => (
+            {Object.entries(cell.axes).map(([dimension, value]) => (
               <Badge
-                key={axis}
+                key={dimension}
                 variant="outline"
-                className="border-slate-200 bg-white font-mono text-[10px] text-slate-700"
+                className="border-slate-200 bg-white text-[10px] text-slate-700"
               >
-                <span className="text-slate-500">{axis}</span>
+                <span className="text-slate-500">{humaniseDimension(dimension)}</span>
                 <span className="mx-0.5 text-slate-400">·</span>
                 {value}
               </Badge>
             ))}
-            <span className="ml-auto font-mono text-[10px] text-slate-400">
-              {cell.id}
-            </span>
           </li>
         ))}
         {cells.length > 12 ? (
           <li className="text-[10px] text-slate-500">
-            +{cells.length - 12} more
+            +{cells.length - 12} more framings
           </li>
         ) : null}
       </ul>
     </div>
   );
+}
+
+function humaniseDimension(dimension: string): string {
+  return dimension.replace(/_/g, ' ');
+}
+
+function humanScenarioTitle(row: SpecCurveRow): string {
+  const text = row.representative.trim();
+  if (!text) return `Scenario ${row.cluster_id} summary`;
+  const firstSentence = text.split(/(?<=[.!?])\s+/)[0] ?? text;
+  const cleaned = firstSentence.replace(/[.!?]+$/, '').trim();
+  return cleaned.length > 0 ? cleaned : `Scenario ${row.cluster_id} summary`;
 }
 
 function breakDownByStatus(
@@ -306,7 +334,3 @@ function breakDownByStatus(
   return { agree: groups.agree, weaker: groups.weaker, flips: groups.flips };
 }
 
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return `${s.slice(0, max - 1)}…`;
-}
