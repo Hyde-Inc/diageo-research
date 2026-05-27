@@ -16,13 +16,23 @@
  */
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
   FlaskConical,
+  Loader2,
   PencilLine,
   Search,
 } from 'lucide-react';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 import {
   wb,
@@ -174,13 +184,7 @@ export default function HomePage() {
             <h1 className="max-w-3xl text-balance text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">
               Pick what you want to work on.
             </h1>
-            <Link
-              href="/plan"
-              className="inline-flex h-10 shrink-0 items-center gap-2 rounded-full bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-slate-800"
-            >
-              <PencilLine className="h-3.5 w-3.5" />
-              Start a new study
-            </Link>
+            <NewStudyTrigger />
           </div>
         </section>
 
@@ -549,4 +553,210 @@ function formatTimestamp(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+// ─── Start-a-new-study modal ─────────────────────────────────────────
+//
+// Opens a side-panel (the existing Sheet primitive — built on Radix
+// Dialog) with a minimal form: question, short name, optional brand,
+// preset (smoke / robust). Posts to POST /studies/quick which builds
+// the StudySpec server-side. On success, navigates the user to the
+// freshly created study's research page so they land on a working
+// surface rather than a no-op.
+
+type Preset = 'smoke' | 'robust';
+
+function NewStudyTrigger() {
+  const [open, setOpen] = useState(false);
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger asChild>
+        <button
+          type="button"
+          data-testid="start-new-study"
+          className="inline-flex h-10 shrink-0 items-center gap-2 rounded-full bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2"
+        >
+          <PencilLine className="h-3.5 w-3.5" />
+          Start a new study
+        </button>
+      </SheetTrigger>
+      <SheetContent
+        side="right"
+        className="w-[420px] max-w-[92vw] overflow-y-auto bg-white p-6 sm:max-w-md"
+      >
+        <SheetHeader>
+          <SheetTitle className="text-lg font-semibold tracking-tight text-slate-950">
+            Start a new study
+          </SheetTitle>
+          <SheetDescription className="text-[12px] text-slate-600">
+            We materialise a minimal pre-registration block for you so you
+            can land on a working study within seconds. Pick robust if you
+            want a 2×2 framing-stability grid instead of a single cell.
+          </SheetDescription>
+        </SheetHeader>
+        <NewStudyForm onCreated={() => setOpen(false)} />
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function NewStudyForm({ onCreated }: { onCreated: () => void }) {
+  const router = useRouter();
+  const [question, setQuestion] = useState('');
+  const [name, setName] = useState('');
+  const [brand, setBrand] = useState('');
+  const [preset, setPreset] = useState<Preset>('smoke');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const valid = question.trim().length > 0 && name.trim().length > 0;
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!valid || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await wb.startQuickStudy({
+        question: question.trim(),
+        name: name.trim(),
+        brand: brand.trim() || null,
+        preset,
+      });
+      onCreated();
+      router.push(`/research?study=${res.study_id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="mt-4 grid gap-4 text-[13px] text-slate-700"
+      data-testid="new-study-form"
+    >
+      <label className="grid gap-1">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+          Study question
+        </span>
+        <textarea
+          required
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          rows={4}
+          placeholder="e.g. Where is consumer pricing pressure most likely to compress Diageo NA spirits demand?"
+          className="min-h-[96px] resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+        />
+      </label>
+      <label className="grid gap-1">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+          Short name
+        </span>
+        <input
+          required
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Pricing Pressure NA"
+          className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-[13px] text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+        />
+        <span className="text-[11px] text-slate-500">
+          Used as the study slug. Spaces become underscores.
+        </span>
+      </label>
+      <label className="grid gap-1">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+          Brand (optional)
+        </span>
+        <input
+          value={brand}
+          onChange={(e) => setBrand(e.target.value)}
+          placeholder="e.g. Crown Royal"
+          className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-[13px] text-slate-900 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+        />
+      </label>
+      <fieldset className="grid gap-1.5">
+        <legend className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+          Preset
+        </legend>
+        <PresetOption
+          value="smoke"
+          checked={preset === 'smoke'}
+          onChange={setPreset}
+          title="Smoke (1 cell · ≈$0.50)"
+          hint="Single defensible answer. Quick to validate the framing."
+        />
+        <PresetOption
+          value="robust"
+          checked={preset === 'robust'}
+          onChange={setPreset}
+          title="Robust (2×2 grid · ≈$5)"
+          hint="Tests the recommendation across two framings × two horizons."
+        />
+      </fieldset>
+      {error ? (
+        <div className="rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-[12px] text-orange-700">
+          Could not start study · {error}
+        </div>
+      ) : null}
+      <div className="flex items-center justify-end gap-2 pt-2">
+        <button
+          type="submit"
+          disabled={!valid || submitting}
+          className={cn(
+            'inline-flex h-9 items-center gap-2 rounded-full px-4 text-[13px] font-semibold shadow-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2',
+            valid && !submitting
+              ? 'bg-slate-950 text-white hover:bg-slate-800'
+              : 'cursor-not-allowed bg-slate-200 text-slate-500',
+          )}
+        >
+          {submitting ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <PencilLine className="h-3.5 w-3.5" />
+          )}
+          {submitting ? 'Starting…' : 'Start study'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function PresetOption({
+  value,
+  checked,
+  onChange,
+  title,
+  hint,
+}: {
+  value: Preset;
+  checked: boolean;
+  onChange: (v: Preset) => void;
+  title: string;
+  hint: string;
+}) {
+  return (
+    <label
+      className={cn(
+        'flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-2 transition-colors',
+        checked
+          ? 'border-slate-900 bg-slate-50'
+          : 'border-slate-200 bg-white hover:border-slate-300',
+      )}
+    >
+      <input
+        type="radio"
+        name="preset"
+        value={value}
+        checked={checked}
+        onChange={() => onChange(value)}
+        className="mt-1 h-3.5 w-3.5 accent-slate-900"
+      />
+      <span className="grid gap-0.5">
+        <span className="text-[13px] font-semibold text-slate-900">{title}</span>
+        <span className="text-[11px] leading-snug text-slate-600">{hint}</span>
+      </span>
+    </label>
+  );
 }

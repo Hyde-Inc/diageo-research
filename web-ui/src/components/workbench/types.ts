@@ -581,6 +581,26 @@ export type TaskResponse = {
   status: 'open' | 'in_progress' | 'done';
 };
 
+/**
+ * Body for POST /studies/quick. Mirrors the planner-facing payload the
+ * home-page "Start a new study" modal posts. Keep in sync with
+ * QuickStudyRequest in src/diageo_research/web/api.py.
+ */
+export type QuickStudyRequest = {
+  question: string;
+  name: string;
+  brand?: string | null;
+  preset: 'smoke' | 'robust';
+};
+
+export type QuickStudyResponse = {
+  study_id: string;
+  status: 'running' | 'pending' | 'complete' | 'error';
+  name: string;
+  preset: 'smoke' | 'robust';
+  n_cells_planned: number;
+};
+
 // ─── Fetch helpers ─────────────────────────────────────────────────
 
 const BASE = '/api/workbench';
@@ -681,6 +701,12 @@ export const wb = {
     wbFetch<DecisionInYearResponse>(`/decisions/${decisionId}/in-year`),
   postTask: (body: TaskRequest) =>
     wbFetch<TaskResponse>('/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  startQuickStudy: (body: QuickStudyRequest) =>
+    wbFetch<QuickStudyResponse>('/studies/quick', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

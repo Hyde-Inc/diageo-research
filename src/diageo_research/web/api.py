@@ -27,9 +27,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal
 
 import yaml
 from fastapi import FastAPI, HTTPException
@@ -134,6 +135,23 @@ class StudyRequest(BaseModel):
 
     spec: dict[str, Any] | None = None
     sample: str | None = None
+
+
+class QuickStudyRequest(BaseModel):
+    """Body for ``POST /studies/quick``.
+
+    A planner-facing minimal start: capture intent (``question`` + a
+    human ``name``) plus an optional brand chip and a preset that
+    picks sensible defaults. The full ``StudySpec`` — prereg block,
+    axes, defaults, concurrency — is materialised server-side so the
+    FE never needs to know the schema. Used by the home page's "Start
+    a new study" CTA.
+    """
+
+    question: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=1)
+    brand: str | None = None
+    preset: Literal["smoke", "robust"] = "smoke"
 
 
 class AskRequest(BaseModel):
@@ -1002,6 +1020,182 @@ def _planned_cell_count(spec: StudySpec) -> int:
     for ax in spec.axes:
         n *= len(ax.values)
     return n
+
+
+# ----------------------------------------------------- Quick start helper
+#
+# POST /studies/quick — the home page's "Start a new study" flow. The
+# planner UI only needs to know about (question, name, brand?, preset).
+# Everything else (the prereg block, the axes, the cost guardrails) is
+# materialised here so the FE never needs to mirror the StudySpec
+# schema. Use the existing run_study path so quick studies are
+# identical to YAML-sourced ones once committed.
+
+
+def _slugify_name(value: str) -> str:
+    """Lower-case, underscore-separated slug for the study spec ``name``
+    field. Falls back to a uuid suffix when the input strips to empty
+    so the spec validator never sees a zero-length name."""
+    out = "".join(c.lower() if c.isalnum() else "_" for c in value.strip())
+    out = "_".join(filter(None, out.split("_")))
+    return out or f"study_{uuid.uuid4().hex[:6]}"
+
+
+def _build_quick_study_spec(
+    *, question: str, name: str, brand: str | None, preset: str
+) -> StudySpec:
+    """Construct a minimal valid :class:`StudySpec` from planner intent.
+
+    ``smoke`` ≈ a single-cell study with the same cost defaults as
+    ``samples/study_smoke.yaml`` (cheap, unattended-safe). ``robust``
+    bumps to a 2×2 grid so the planner sees framing-stability without
+    having to author a multi-axis YAML.
+    """
+    is_robust = preset == "robust"
+    n_personas = 3 if is_robust else 2
+    max_turns = 3 if is_robust else 2
+    max_cost = 2.5 if is_robust else 1.5
+    brand_line = f" Brand focus: {brand}." if brand else ""
+    prereg = {
+        "question": question,
+        "decision_rule": (
+            "Surface a single, defensible recommendation that survives the "
+            "study's framing axes." + brand_line
+        ),
+        "evidence_thresholds": {
+            "multiverse_agreement_min": 0.6 if is_robust else 0.0,
+            "backcasting_pass_min": 0,
+        },
+        "falsifier_conditions": [
+            "The recommendation does not survive a different framing of the "
+            "same question."
+        ],
+        "holdout_reservation": "",
+        "signed_at": _now_utc_iso(),
+        "signed_by": "quick-start",
+        "notes": (
+            f"Quick-start study created from the home page (preset={preset})."
+        ),
+    }
+    if is_robust:
+        axes: list[dict[str, Any]] = [
+            {
+                "name": "framing",
+                "label": "Question framing",
+                "description": "Two framings of the same question.",
+                "values": [
+                    {
+                        "id": "narrow",
+                        "label": "Narrow framing",
+                        "addendum": (
+                            "Answer the question narrowly: pick the single most "
+                            "specific defensible recommendation."
+                        ),
+                    },
+                    {
+                        "id": "broad",
+                        "label": "Broad framing",
+                        "addendum": (
+                            "Answer the question broadly: consider adjacent "
+                            "segments before recommending."
+                        ),
+                    },
+                ],
+            },
+            {
+                "name": "horizon",
+                "label": "Time horizon",
+                "description": "Two horizons the recommendation must survive.",
+                "values": [
+                    {
+                        "id": "near_term",
+                        "label": "Near-term (next two quarters)",
+                        "addendum": "Constrain analysis to the next two quarters.",
+                    },
+                    {
+                        "id": "full_year",
+                        "label": "Full year",
+                        "addendum": "Project across the next four quarters.",
+                    },
+                ],
+            },
+        ]
+    else:
+        axes = [
+            {
+                "name": "lens",
+                "label": "Single-axis quick start",
+                "description": "One axis, one value — produces a single-cell study.",
+                "values": [
+                    {
+                        "id": "solo",
+                        "label": "Solo",
+                        "addendum": (
+                            "Pick one defensible answer. Quick start — no need "
+                            "for a multi-cell multiverse."
+                        ),
+                    }
+                ],
+            }
+        ]
+    raw = {
+        "name": _slugify_name(name),
+        "question": question,
+        "prereg": prereg,
+        "defaults": {
+            "n_personas": n_personas,
+            "max_turns": max_turns,
+            "enable_web_browse": False,
+            "max_browses_per_cell": 0,
+            "max_cost_usd": max_cost,
+        },
+        "concurrency": 2 if is_robust else 1,
+        "axes": axes,
+    }
+    return StudySpec.model_validate(raw)
+
+
+@app.post("/studies/quick")
+async def post_study_quick(req: QuickStudyRequest) -> dict[str, Any]:
+    """Start a new study from a minimal planner-facing payload.
+
+    Wraps :func:`_build_quick_study_spec` so the home page can offer a
+    one-click "Start a new study" affordance without needing to author
+    a YAML or know the prereg contract. Returns the same shape as the
+    full ``POST /studies`` endpoint so callers can share routing logic.
+    """
+    try:
+        spec_obj = _build_quick_study_spec(
+            question=req.question,
+            name=req.name,
+            brand=req.brand,
+            preset=req.preset,
+        )
+    except ValidationError as ve:
+        raise HTTPException(status_code=400, detail=f"invalid study spec: {ve}")
+    except PreregError as pe:
+        raise HTTPException(status_code=400, detail=f"invalid prereg: {pe}")
+
+    sid = new_study_id()
+
+    async def _run_study() -> None:
+        try:
+            await run_study(spec_obj, spec_path=None, study_id=sid)
+            try:
+                write_spec_curve(sid)
+            except Exception:  # noqa: BLE001
+                logger.exception("spec curve write failed for study %s", sid)
+        except Exception:  # noqa: BLE001
+            logger.exception("study %s failed", sid)
+
+    _studies[sid] = asyncio.create_task(_run_study())
+    return {
+        "study_id": sid,
+        "status": "running",
+        "name": spec_obj.name,
+        "preset": req.preset,
+        "n_cells_planned": _planned_cell_count(spec_obj),
+    }
 
 
 @app.get("/studies/{study_id}")
