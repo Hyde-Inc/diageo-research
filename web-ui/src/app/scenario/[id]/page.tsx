@@ -14,10 +14,14 @@
 
 import Link from 'next/link';
 import { use, useMemo } from 'react';
-import { ArrowLeft, ArrowRight, ShieldAlert } from 'lucide-react';
+import { ArrowRight, Beaker } from 'lucide-react';
+import {
+  cleanRepresentative,
+  describeCellAxes,
+  humanizeSpecKey,
+} from '@/components/evidence/claim-utils';
 import { FocusCard, StudyShell } from '@/components/study/study-shell';
 import { useStudyData, withStudy } from '@/components/study/use-study';
-import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type {
   CellRowStatus,
@@ -41,6 +45,18 @@ export default function ScenarioPage({
 
   const cells = useMemo(() => curve?.cells ?? [], [curve]);
   const breakdown = useMemo(() => breakDownByStatus(row, cells), [row, cells]);
+  // Resolve this scenario's spec-curve rank so the counter-scenario CTA
+  // can hand /simulation a finding= index (the page treats findings by
+  // spec-curve position, not raw cluster id).
+  const findingIndex = useMemo(() => {
+    if (!curve || !row) return null;
+    const idx = curve.rows.findIndex((r) => r.cluster_id === row.cluster_id);
+    return idx >= 0 ? idx : null;
+  }, [curve, row]);
+  const representative = useMemo(
+    () => (row ? cleanRepresentative(row.representative) : ''),
+    [row],
+  );
 
   return (
     <StudyShell
@@ -85,7 +101,7 @@ export default function ScenarioPage({
             <div className="grid gap-3">
               <RobustnessHeader row={row} />
               <p className="text-balance text-base leading-relaxed text-slate-800">
-                {row.representative}
+                {representative}
               </p>
             </div>
           </FocusCard>
@@ -122,7 +138,11 @@ export default function ScenarioPage({
                   <span className="font-semibold text-slate-700">
                     Falls apart when
                   </span>
-                  : {row.fragile_specs.slice(0, 3).join(', ')}
+                  :{' '}
+                  {row.fragile_specs
+                    .slice(0, 3)
+                    .map((spec) => humanizeSpecKey(spec, cells))
+                    .join('; ')}
                   {row.fragile_specs.length > 3
                     ? ` (+${row.fragile_specs.length - 3} more framings)`
                     : ''}
@@ -162,25 +182,26 @@ export default function ScenarioPage({
 
           <div className="flex flex-wrap items-center gap-2">
             <Link
-              href={withStudy('/robustness', studyId)}
-              className="inline-flex h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-[12px] font-medium text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Compare to another scenario
-            </Link>
-            <Link
-              href={withStudy(`/evidence/${row.cluster_id}`, studyId)}
+              href={withStudy('/evidence', studyId, {
+                cluster: String(row.cluster_id),
+              })}
               className="inline-flex h-10 items-center gap-2 rounded-full bg-slate-950 px-5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-slate-800"
             >
-              See evidence
+              See evidence for this scenario
               <ArrowRight className="h-3.5 w-3.5" />
             </Link>
             <Link
-              href={withStudy('/why-it-could-be-wrong', studyId)}
+              href={withStudy('/simulation', studyId, {
+                finding:
+                  findingIndex != null
+                    ? String(findingIndex)
+                    : String(row.cluster_id),
+                prompt: 'discount-vs-bundle',
+              })}
               className="inline-flex h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-[12px] font-medium text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50"
             >
-              <ShieldAlert className="h-3.5 w-3.5" />
-              Falsifiers
+              <Beaker className="h-3.5 w-3.5" />
+              Run a counter-scenario
             </Link>
           </div>
         </>
@@ -274,23 +295,26 @@ function CellGroup({
           {cells.length}
         </span>
       </div>
-      <ul className="mt-2 grid gap-1">
+      <ul className="mt-2 grid gap-2">
         {cells.slice(0, 12).map((cell) => (
           <li
             key={cell.id}
-            className="flex flex-wrap items-center gap-1.5 rounded-lg bg-white/70 px-2 py-1 text-[11px] shadow-sm"
+            className="rounded-lg bg-white/80 px-3 py-2 text-[11px] shadow-sm"
           >
-            {Object.entries(cell.axes).map(([dimension, value]) => (
-              <Badge
-                key={dimension}
-                variant="outline"
-                className="border-slate-200 bg-white text-[10px] text-slate-700"
-              >
-                <span className="text-slate-500">{humaniseDimension(dimension)}</span>
-                <span className="mx-0.5 text-slate-400">·</span>
-                {value}
-              </Badge>
-            ))}
+            <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-0.5">
+              {describeCellAxes(cell).map(
+                ({ dimension, valueDisplay }) => (
+                  <div key={dimension} className="contents">
+                    <dt className="text-[10px] uppercase tracking-wide text-slate-500">
+                      {dimension.replace(/_/g, ' ')}
+                    </dt>
+                    <dd className="font-medium text-slate-800">
+                      {valueDisplay}
+                    </dd>
+                  </div>
+                ),
+              )}
+            </dl>
           </li>
         ))}
         {cells.length > 12 ? (
@@ -303,12 +327,8 @@ function CellGroup({
   );
 }
 
-function humaniseDimension(dimension: string): string {
-  return dimension.replace(/_/g, ' ');
-}
-
 function humanScenarioTitle(row: SpecCurveRow): string {
-  const text = row.representative.trim();
+  const text = cleanRepresentative(row.representative);
   if (!text) return `Scenario ${row.cluster_id} summary`;
   const firstSentence = text.split(/(?<=[.!?])\s+/)[0] ?? text;
   const cleaned = firstSentence.replace(/[.!?]+$/, '').trim();

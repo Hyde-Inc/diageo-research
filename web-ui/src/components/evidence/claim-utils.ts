@@ -408,3 +408,103 @@ export function cellDimensionLabel(cell: CellSummary): string {
 export function unlabeledSourceFallback(runId: string): string {
   return `Unlabeled source (run ${runId})`;
 }
+
+// ─── Representative cleaner (promoted from /research) ───────────────
+
+/**
+ * Trim a spec-curve cluster's representative line down to the body
+ * sentence(s) — strip markdown bold/italic, drop the brief's
+ * pre-registration / decision-rule trailing sections, collapse
+ * whitespace. Used by /research finding cards and /scenario/[id] so
+ * the rendered text reads like prose, not the raw markdown the brief
+ * stores on disk.
+ */
+export function cleanRepresentative(raw: string): string {
+  if (!raw) return '';
+  const trimmed = raw.trim();
+  // Cut off where the brief slips into its pre-registration / decision
+  // rule section — that copy belongs on the Setup page, not in a
+  // finding or scenario card.
+  const cutMatch = trimmed.search(/##\s*Pre-?registration|##\s+/i);
+  const sliced = cutMatch >= 0 ? trimmed.slice(0, cutMatch) : trimmed;
+  return sliced
+    .replace(/\*\*/g, '')
+    .replace(/_+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// ─── Spec key humanisation ──────────────────────────────────────────
+
+// Per-value display strings for the well-known multiverse dimensions
+// in this codebase. Anything outside this map is humanised generically
+// (snake_case → "Snake-case").
+const SPEC_VALUE_OVERRIDES: Record<string, string> = {
+  sub60k: 'Sub-$60k',
+  over60k: 'Over-$60k',
+  mixed: 'Mixed',
+  full_cycle: 'Full-cycle',
+  post_inflation: 'Post-inflation',
+  demand_space: 'Demand-space',
+  colab: 'Co-lab',
+  solo: 'Solo',
+};
+
+function humaniseValue(value: string): string {
+  if (!value) return '';
+  const lower = value.toLowerCase();
+  if (SPEC_VALUE_OVERRIDES[lower]) return SPEC_VALUE_OVERRIDES[lower];
+  return value
+    .split('_')
+    .filter(Boolean)
+    .map((piece) => piece[0].toUpperCase() + piece.slice(1).toLowerCase())
+    .join('-');
+}
+
+/**
+ * Translate a spec-curve cell id (e.g.
+ * "demand_space__sub60k__post_inflation") into a plain-language phrase
+ * like "Demand-space taxonomy · Sub-$60k cohort · Post-inflation
+ * window" using the dimension catalogue on the spec curve cells.
+ *
+ * Returns the raw key humanised generically when no matching cell can
+ * be found — we never echo the raw snake_case tuple back to the user.
+ */
+export function humanizeSpecKey(
+  key: string,
+  cells: Array<{ id: string; axes: Record<string, string> }>,
+): string {
+  if (!key) return '';
+  const cell = cells.find((c) => c.id === key);
+  if (cell) {
+    return Object.entries(cell.axes)
+      .map(
+        ([dimension, value]) =>
+          `${humaniseValue(value)} ${dimension.replace(/_/g, ' ')}`,
+      )
+      .join(' · ');
+  }
+  // Fall back: split on '__' (dimension separator) then humanise each
+  // value with its underscore-joined pieces.
+  return key
+    .split('__')
+    .filter(Boolean)
+    .map((piece) => humaniseValue(piece))
+    .join(' · ');
+}
+
+/**
+ * Lookup helper: given a spec-curve cell, return [dimension, value]
+ * pairs in stable order with the dimension name lower-cased (already
+ * normalised in the data) and the value humanised. Used by the
+ * scenario page's 2-column "Framings inside this scenario" grid.
+ */
+export function describeCellAxes(
+  cell: { axes: Record<string, string> },
+): Array<{ dimension: string; value: string; valueDisplay: string }> {
+  return Object.entries(cell.axes).map(([dimension, value]) => ({
+    dimension,
+    value,
+    valueDisplay: humaniseValue(value),
+  }));
+}

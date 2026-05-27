@@ -34,6 +34,7 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { cleanRepresentative } from '@/components/evidence/claim-utils';
 import { ConfidencePanel } from '@/components/study/confidence-panel';
 import { FocusCard, StudyShell } from '@/components/study/study-shell';
 import { useStudyData, withStudy } from '@/components/study/use-study';
@@ -808,21 +809,6 @@ function deriveBrand(...sources: Array<string | null | undefined>): string | nul
     }
   }
   return null;
-}
-
-function cleanRepresentative(raw: string): string {
-  if (!raw) return '';
-  const trimmed = raw.trim();
-  // Cut off where the brief slips into its pre-registration / decision
-  // rule section — that copy belongs on the Setup page, not in a
-  // finding card.
-  const cutMatch = trimmed.search(/##\s*Pre-?registration|##\s+/i);
-  const sliced = cutMatch >= 0 ? trimmed.slice(0, cutMatch) : trimmed;
-  return sliced
-    .replace(/\*\*/g, '')
-    .replace(/_+/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
 function splitSentences(text: string): string[] {
