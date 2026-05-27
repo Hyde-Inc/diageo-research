@@ -39,7 +39,7 @@ import { PaneRecipe } from '@/components/workbench/pane-recipe';
 import { PaneSpecCurve } from '@/components/workbench/pane-spec-curve';
 import { PaneUniverse } from '@/components/workbench/pane-universe';
 import { RecipeCards } from '@/components/workbench/recipe-cards';
-import { StudyPicker } from '@/components/workbench/study-picker';
+import { useStudyData } from '@/components/study/use-study';
 import {
   wb,
   type Prereg,
@@ -64,14 +64,17 @@ const PANES: Array<{ id: PaneId; label: string; Icon: typeof GitGraph }> = [
 ];
 
 export default function WorkbenchPage() {
-  const [studies, setStudies] = useState<StudySummary[]>([]);
-  const [studyId, setStudyId] = useState<string | null>(null);
+  // The workbench used to own its own StudyPicker and studies index
+  // poll. The global navbar already runs a useStudyData() picker that
+  // controls every other tab via ?study=, so we read the active study
+  // from there to keep the workbench in sync with the rest of the app.
+  const studyData = useStudyData();
+  const { studies, studyId, studiesError } = studyData;
   const [detailFetch, setDetailFetch] = useState<StudyFetch<StudyDetail> | null>(null);
   const [curveFetch, setCurveFetch] = useState<StudyFetch<SpecCurve> | null>(null);
   const [costFetch, setCostFetch] = useState<StudyFetch<StudyCost> | null>(null);
   const [preregFetch, setPreregFetch] = useState<StudyFetch<Prereg> | null>(null);
   const [pane, setPane] = useState<PaneId>('recipe');
-  const [studiesError, setStudiesError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [activeCellId, setActiveCellId] = useState<string | null>(null);
   const mountedRef = useRef(true);
@@ -83,34 +86,6 @@ export default function WorkbenchPage() {
       mountedRef.current = false;
     };
   }, []);
-
-  // Studies index — poll every 7s so a freshly launched study lands in
-  // the picker without a hard refresh.
-  useEffect(() => {
-    let cancelled = false;
-    async function loadStudies() {
-      try {
-        const res = await wb.studies();
-        if (cancelled || !mountedRef.current) return;
-        setStudiesError(null);
-        setStudies(res.studies);
-        if (!studyId && res.studies.length > 0) {
-          const candidate =
-            res.studies.find((s) => s.n_complete > 0) ?? res.studies[0];
-          setStudyId(candidate.id);
-        }
-      } catch (err) {
-        if (cancelled || !mountedRef.current) return;
-        setStudiesError(err instanceof Error ? err.message : String(err));
-      }
-    }
-    void loadStudies();
-    const t = window.setInterval(loadStudies, 7000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(t);
-    };
-  }, [studyId]);
 
   // Study detail + spec curve + cost + prereg. Hoisted to the page so
   // every pane consumes the same payload and the subject hero can show
@@ -215,14 +190,6 @@ export default function WorkbenchPage() {
             </div>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <StudyPicker
-              studies={studies}
-              studyId={studyId}
-              onChange={(id) => {
-                setStudyId(id);
-                setActiveCellId(null);
-              }}
-            />
             <Button
               variant="outline"
               size="sm"

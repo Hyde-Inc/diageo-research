@@ -20,7 +20,8 @@
  */
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { Suspense, useMemo, useState } from 'react';
 import { ArrowRight, Filter, ListChecks, MessageCircle } from 'lucide-react';
 import { FocusCard, StudyShell } from '@/components/study/study-shell';
 import { useStudyData, withStudy } from '@/components/study/use-study';
@@ -43,8 +44,18 @@ const SORT_LABEL: Record<SortMode, string> = {
 };
 
 export default function RobustnessPage() {
+  return (
+    <Suspense fallback={null}>
+      <RobustnessBody />
+    </Suspense>
+  );
+}
+
+function RobustnessBody() {
   const data = useStudyData();
-  const { curve, loadingCurve, studyId } = data;
+  const { curve, loadingCurve, studyId, detail } = data;
+  const search = useSearchParams();
+  const recommendationSlug = search.get('recommendation');
   const [activeClusterId, setActiveClusterId] = useState<number | null>(null);
   const [sortMode, setSortMode] = useState<SortMode>('effect');
   const [hiddenValues, setHiddenValues] = useState<
@@ -52,15 +63,40 @@ export default function RobustnessPage() {
   >({});
   const [selectedCellId, setSelectedCellId] = useState<string | null>(null);
 
+  // FR-RB-2: when /growth-driver (or any other surface) jumps here
+  // with ?recommendation=<slug>, find the cluster whose representative
+  // text slugifies to the same handle and pre-select it. Falls back to
+  // the lead cluster when the slug doesn't resolve.
+  const slugCluster = useMemo<number | null>(() => {
+    if (!recommendationSlug || !curve) return null;
+    const target = recommendationSlug.toLowerCase();
+    const match = curve.rows.find(
+      (row) => slugifyRepresentative(row.representative) === target,
+    );
+    if (match) return match.cluster_id;
+    const fuzzy = curve.rows.find((row) =>
+      slugifyRepresentative(row.representative).includes(target),
+    );
+    return fuzzy?.cluster_id ?? null;
+  }, [recommendationSlug, curve]);
+
   const leadCluster = curve?.rows[0]?.cluster_id ?? null;
   const currentClusterId =
     activeClusterId != null && curve?.rows.some((r) => r.cluster_id === activeClusterId)
       ? activeClusterId
-      : leadCluster;
+      : (slugCluster ?? leadCluster);
   const currentRow = useMemo<SpecCurveRow | null>(() => {
     if (!curve || currentClusterId == null) return null;
     return curve.rows.find((r) => r.cluster_id === currentClusterId) ?? null;
   }, [curve, currentClusterId]);
+
+  // True when the active cluster came from ?recommendation= and the
+  // user hasn't picked something else from the rail — that's the
+  // signal to scope the chart to the cluster's own cells (FR-RB-2).
+  const scopedToRecommendation =
+    activeClusterId == null &&
+    slugCluster != null &&
+    currentRow?.cluster_id === slugCluster;
 
   const dimensions = useMemo(() => collectDimensions(curve), [curve]);
   const agreementByCell = useMemo(
@@ -70,10 +106,17 @@ export default function RobustnessPage() {
 
   const filteredCells = useMemo(() => {
     if (!curve) return [];
-    return curve.cells.filter((cell) =>
-      dimensions.every((dim) => !hiddenValues[dim]?.has(cell.axes[dim] ?? '')),
-    );
-  }, [curve, dimensions, hiddenValues]);
+    const memberSet =
+      scopedToRecommendation && currentRow
+        ? new Set(currentRow.members)
+        : null;
+    return curve.cells.filter((cell) => {
+      if (memberSet && !memberSet.has(cell.id)) return false;
+      return dimensions.every(
+        (dim) => !hiddenValues[dim]?.has(cell.axes[dim] ?? ''),
+      );
+    });
+  }, [curve, dimensions, hiddenValues, scopedToRecommendation, currentRow]);
 
   const scenarios = useMemo<ScenarioDatum[]>(() => {
     const all = buildScenarios(currentRow, filteredCells);
@@ -84,12 +127,17 @@ export default function RobustnessPage() {
     scenarios.find((s) => s.cellId === selectedCellId) ?? null;
 
   const ready = Boolean(studyId && !loadingCurve && curve && curve.rows.length > 0);
+  const question = detail?.question?.trim() || curve?.question?.trim() || '';
+  // FR-RB-1: surface the study question as the H1, not the static
+  // "Robustness curve" label that regressed in. The eyebrow keeps the
+  // page identity ("Sensitivity view") so the section is still findable.
+  const heading = question || 'Robustness — sensitivity view';
 
   return (
     <StudyShell
       data={data}
       eyebrow="Sensitivity view"
-      title="Robustness curve"
+      title={heading}
       intro="Each scenario tries the same question with a different defensible framing — the chart shows holds, weakens, and flips per scenario."
       contentClassName="max-w-[1500px]"
       mainLabel="Robustness chart"
@@ -118,6 +166,23 @@ export default function RobustnessPage() {
           </FocusCard>
         ) : (
           <div className="grid gap-4">
+            {scopedToRecommendation && currentRow ? (
+              <FocusCard tone="muted" className="border-dashed">
+                <p className="text-[12px] leading-snug text-slate-700">
+                  Scoped to recommendation{' '}
+                  <span className="font-semibold text-slate-900">
+                    {truncateSentence(
+                      cleanRepresentative(currentRow.representative),
+                      100,
+                    )}
+                  </span>
+                  . Showing only the {currentRow.members.length} scenario
+                  {currentRow.members.length === 1 ? '' : 's'} this
+                  recommendation appears in. Clear the filter from the rail
+                  to see every scenario.
+                </p>
+              </FocusCard>
+            ) : null}
             <ChartCard
               scenarios={scenarios}
               dimensions={dimensions}
@@ -609,6 +674,23 @@ function cleanRepresentative(raw: string): string {
     .replace(/_+/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * Slugify a cluster's representative sentence so /growth-driver-style
+ * recommendation slugs (e.g. "crown-peach-tailgate") can match. We
+ * intentionally clip to ~10 tokens so the slug stays stable across
+ * minor wording edits in the cluster representative.
+ */
+function slugifyRepresentative(raw: string): string {
+  if (!raw) return '';
+  return cleanRepresentative(raw)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    .split(/\s+/)
+    .slice(0, 10)
+    .join('-');
 }
 
 function truncateSentence(text: string, max: number): string {

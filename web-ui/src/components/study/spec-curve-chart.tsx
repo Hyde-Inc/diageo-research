@@ -253,22 +253,83 @@ export function SpecCurveChart({
           flips
         </text>
 
+        {/*
+          Fragile-bar fill patterns. The hatch/dot patterns ride on top
+          of the base STATUS_COLOR fill for flips / weakens so the bar
+          is visibly different from the holds bars even when a viewer
+          can't rely on hue alone (colour-blind safety, projector glare,
+          monochrome printouts). The patterns scope by status so screen
+          readers still get the verbal effect from the aria-label.
+        */}
+        <defs>
+          <pattern
+            id="fragile-flips-hatch"
+            patternUnits="userSpaceOnUse"
+            width="6"
+            height="6"
+            patternTransform="rotate(45)"
+          >
+            <rect width="6" height="6" fill={STATUS_COLOR.flips} />
+            <line x1="0" y1="0" x2="0" y2="6" stroke="#7c2d12" strokeWidth="1.6" />
+          </pattern>
+          <pattern
+            id="fragile-weaker-dot"
+            patternUnits="userSpaceOnUse"
+            width="5"
+            height="5"
+          >
+            <rect width="5" height="5" fill={STATUS_COLOR.weaker} />
+            <circle cx="2.5" cy="2.5" r="1.1" fill="#92400e" />
+          </pattern>
+        </defs>
+
         {/* Bars */}
         {scenarios.map((s, i) => {
           const cx = xZero + i * colWidth + colWidth / 2;
           const colorFill = STATUS_COLOR[s.status];
+          const fragileFill =
+            s.status === 'flips'
+              ? 'url(#fragile-flips-hatch)'
+              : s.status === 'weaker'
+                ? 'url(#fragile-weaker-dot)'
+                : colorFill;
+          const isFragile = s.status === 'flips' || s.status === 'weaker';
           const isSelected = selectedCellId === s.cellId;
           const isMissing = Number.isNaN(s.score);
+          // Weakens lands on the zero baseline so a pure score-driven
+          // bar would be invisible. Force a visible chip when fragile
+          // so the highlight reads in the top chart, not just in the
+          // dimension matrix below (FR-RB-3).
+          const fragileMinHeight = s.status === 'weaker' ? 18 : 6;
           const top = isMissing ? yBaseline - 1 : yScale(s.score);
           const bottom = yBaseline;
           const y = Math.min(top, bottom);
-          const height = Math.max(Math.abs(top - bottom), isMissing ? 2 : 4);
+          const rawHeight = Math.abs(top - bottom);
+          const height = Math.max(
+            rawHeight,
+            isMissing ? 2 : isFragile ? fragileMinHeight : 4,
+          );
+          // Push weaker chips slightly above the baseline so they
+          // visually sit alongside the holds bars instead of vanishing
+          // into the axis line.
+          const yAdjusted =
+            s.status === 'weaker' && rawHeight < fragileMinHeight
+              ? yBaseline - fragileMinHeight / 2
+              : y;
+          const ariaLabel = isMissing
+            ? `Scenario ${i + 1}: no read on the lead recommendation`
+            : s.status === 'flips'
+              ? `Scenario ${i + 1}: flips the lead recommendation (fragile)`
+              : s.status === 'weaker'
+                ? `Scenario ${i + 1}: weakens the lead recommendation (fragile)`
+                : `Scenario ${i + 1}: holds the lead recommendation`;
           return (
             <g
               key={s.cellId}
               role="button"
               tabIndex={0}
-              aria-label={`Scenario ${i + 1}: ${s.effectLabel}`}
+              aria-label={ariaLabel}
+              data-fragile={isFragile ? s.status : undefined}
               onClick={() => onSelectCell(isSelected ? null : s.cellId)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
@@ -289,13 +350,35 @@ export function SpecCurveChart({
               />
               <rect
                 x={cx - 8}
-                y={y}
+                y={yAdjusted}
                 width={16}
                 height={height}
-                fill={colorFill}
+                fill={fragileFill}
+                stroke={isFragile ? '#0f172a' : 'none'}
+                strokeWidth={isFragile ? 1.25 : 0}
                 opacity={isMissing ? 0.45 : 1}
                 rx={2}
               />
+              {/* Fragile glyph above the bar — small triangle for
+                  flips, small caret for weakens. Pure SVG so we keep
+                  the no-new-deps rule. */}
+              {s.status === 'flips' ? (
+                <polygon
+                  points={`${cx - 4},${yAdjusted - 4} ${cx + 4},${yAdjusted - 4} ${cx},${yAdjusted - 10}`}
+                  fill="#9a3412"
+                  aria-hidden="true"
+                />
+              ) : s.status === 'weaker' ? (
+                <polyline
+                  points={`${cx - 4},${yAdjusted - 4} ${cx},${yAdjusted - 9} ${cx + 4},${yAdjusted - 4}`}
+                  fill="none"
+                  stroke="#92400e"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                />
+              ) : null}
               {/* column index label */}
               <text
                 x={cx}
@@ -404,10 +487,22 @@ function abbrev(value: string): string {
 }
 
 export function ChartLegend({ className }: { className?: string }) {
-  const items: Array<{ status: ScenarioStatus; copy: string }> = [
+  const items: Array<{
+    status: ScenarioStatus;
+    copy: string;
+    pattern?: 'flips' | 'weaker';
+  }> = [
     { status: 'agree', copy: 'holds — the recommendation survives this framing' },
-    { status: 'weaker', copy: 'weakens — recommendation softens or hedges' },
-    { status: 'flips', copy: 'flips — the framing reverses the recommendation' },
+    {
+      status: 'weaker',
+      copy: 'weakens (fragile) — recommendation softens or hedges',
+      pattern: 'weaker',
+    },
+    {
+      status: 'flips',
+      copy: 'flips (fragile) — the framing reverses the recommendation',
+      pattern: 'flips',
+    },
     { status: 'missing', copy: 'no read — scenario has not produced a directive yet' },
   ];
   return (
@@ -419,13 +514,70 @@ export function ChartLegend({ className }: { className?: string }) {
     >
       {items.map((item) => (
         <li key={item.status} className="inline-flex items-center gap-1.5">
-          <span
-            className={cn('h-2.5 w-2.5 rounded-sm', STATUS_FILL[item.status])}
-          />
+          <LegendSwatch status={item.status} pattern={item.pattern} />
           <span>{item.copy}</span>
         </li>
       ))}
     </ul>
+  );
+}
+
+function LegendSwatch({
+  status,
+  pattern,
+}: {
+  status: ScenarioStatus;
+  pattern?: 'flips' | 'weaker';
+}) {
+  if (!pattern) {
+    return (
+      <span
+        className={cn('h-2.5 w-2.5 rounded-sm', STATUS_FILL[status])}
+        aria-hidden="true"
+      />
+    );
+  }
+  // Inline pattern preview so the legend matches the chart's hatched
+  // / dotted fragile bars without us reaching for an extra <defs>.
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 14 14"
+      aria-hidden="true"
+      className="shrink-0"
+    >
+      <defs>
+        <pattern
+          id={`legend-${pattern}`}
+          patternUnits="userSpaceOnUse"
+          width={pattern === 'flips' ? 6 : 5}
+          height={pattern === 'flips' ? 6 : 5}
+          patternTransform={pattern === 'flips' ? 'rotate(45)' : undefined}
+        >
+          <rect
+            width={pattern === 'flips' ? 6 : 5}
+            height={pattern === 'flips' ? 6 : 5}
+            fill={STATUS_COLOR[status]}
+          />
+          {pattern === 'flips' ? (
+            <line x1="0" y1="0" x2="0" y2="6" stroke="#7c2d12" strokeWidth="1.6" />
+          ) : (
+            <circle cx="2.5" cy="2.5" r="1.1" fill="#92400e" />
+          )}
+        </pattern>
+      </defs>
+      <rect
+        x="1"
+        y="1"
+        width="12"
+        height="12"
+        rx="2"
+        fill={`url(#legend-${pattern})`}
+        stroke="#0f172a"
+        strokeWidth="0.6"
+      />
+    </svg>
   );
 }
 

@@ -7,6 +7,7 @@ import {
   ArrowRight,
   CalendarDays,
   CheckCircle2,
+  Compass,
   FileSearch,
   HelpCircle,
   MessageCircle,
@@ -596,8 +597,6 @@ function DriverDetail({
   mustDo?: MustDo;
   studyId: string | null;
 }) {
-  const linkParams = { driver: driver.id };
-
   return (
     <aside className="bg-white p-4">
       <div className="sticky top-16 grid gap-4">
@@ -690,34 +689,30 @@ function DriverDetail({
           <div className="mt-3 grid gap-2">
             <ActionLink
               href={withStudy('/simulation', studyId, {
-                ...linkParams,
-                prompt: 'stress-test-growth-driver',
+                driver: driver.id,
+                must_do: driver.mustDoId,
               })}
               icon={<Play className="h-3.5 w-3.5" />}
             >
               Stress-test growth driver
             </ActionLink>
             <ActionLink
-              href={withStudy('/simulation', studyId, {
-                ...linkParams,
-                prompt: 'simulate-ap-shift',
+              href={withStudy('/robustness', studyId, {
+                recommendation: driver.id,
               })}
-              icon={<ArrowRight className="h-3.5 w-3.5" />}
+              icon={<Compass className="h-3.5 w-3.5" />}
             >
-              Simulate A&amp;P shift
+              See robustness
             </ActionLink>
             <ActionLink
-              href={withStudy('/ask', studyId, {
-                ...linkParams,
-                question: `What should we believe about ${driver.title}?`,
-              })}
+              href={withStudy('/ask', studyId, { driver: driver.id })}
               icon={<MessageCircle className="h-3.5 w-3.5" />}
             >
-              Ask about this driver
+              Ask
             </ActionLink>
             <ActionLink
               href={withStudy('/evidence', studyId, {
-                ...linkParams,
+                driver: driver.id,
                 source: 'growth-driver-demo',
               })}
               icon={<HelpCircle className="h-3.5 w-3.5" />}

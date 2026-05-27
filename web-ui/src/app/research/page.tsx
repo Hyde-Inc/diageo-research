@@ -24,6 +24,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
+  Beaker,
   Compass,
   HelpCircle,
   ListPlus,
@@ -61,6 +62,9 @@ type Finding = {
   nAgree: number;
   nTotal: number;
   fragileSpecs: string[];
+  /** Occasion this finding is scoped to, when one is on the matched
+   * top-risk card — drives downstream /simulation occasion= param. */
+  occasion?: string | null;
 };
 
 export default function ResearchPage() {
@@ -205,7 +209,17 @@ export default function ResearchPage() {
         )
       }
       right={
-        !studyId ? null : <ActionRail studyId={studyId} hasFindings={findings.length > 0} />
+        !studyId ? null : (
+          <ActionRail
+            studyId={studyId}
+            hasFindings={findings.length > 0}
+            counterScenarioParams={buildCounterScenarioParams(
+              selected,
+              selectedIndex,
+              question,
+            )}
+          />
+        )
       }
     />
   );
@@ -425,9 +439,11 @@ function FindingDetail({
 function ActionRail({
   studyId,
   hasFindings,
+  counterScenarioParams,
 }: {
   studyId: string | null;
   hasFindings: boolean;
+  counterScenarioParams: Record<string, string>;
 }) {
   if (!studyId) return null;
   return (
@@ -447,6 +463,12 @@ function ActionRail({
           icon={<Compass className="h-3.5 w-3.5" />}
           label="Stress-test"
           detail="See which framings hold, weaken, or flip the answer."
+        />
+        <ActionSecondary
+          href={withStudy('/simulation', studyId, counterScenarioParams)}
+          icon={<Beaker className="h-3.5 w-3.5" />}
+          label="Run counter-scenario"
+          detail="Open /simulation scoped to this finding to test a counterfactual."
         />
         <ActionSecondary
           href={withStudy('/plan', studyId)}
@@ -653,6 +675,34 @@ function detectFraming(question: string): 'risk' | 'findings' {
   return RISK_PATTERNS.test(question) ? 'risk' : 'findings';
 }
 
+// Build the param bag for the "Run counter-scenario" CTA. The plan
+// (FR-RS-1) calls for prompt=discount-vs-bundle on occasion-exposure
+// findings by default, plus a derived occasion and brand when they can
+// be read from the finding text or study question. Anything we can't
+// derive is left off so /simulation renders its honest empty state
+// instead of fabricating a default.
+function buildCounterScenarioParams(
+  finding: Finding | null,
+  selectedIndex: number,
+  question: string,
+): Record<string, string> {
+  const params: Record<string, string> = {
+    finding: String(selectedIndex >= 0 ? selectedIndex : 0),
+    prompt: 'discount-vs-bundle',
+  };
+  if (!finding) return params;
+  const occasion = finding.occasion?.trim();
+  if (occasion) params.occasion = occasion;
+  const brand = deriveBrand(
+    finding.title,
+    finding.whatsHappening,
+    finding.whyItMatters,
+    question,
+  );
+  if (brand) params.brand = brand;
+  return params;
+}
+
 function buildFindings(
   rows: SpecCurveRow[],
   topRisks: TopRiskCard[],
@@ -694,8 +744,43 @@ function buildFindings(
       nAgree: row.n_agree,
       nTotal: total,
       fragileSpecs: humaniseFragile(row.fragile_specs),
+      occasion: matchedRisk?.occasion ?? null,
     };
   });
+}
+
+// Known Diageo NA brands the demo studies discuss. Used to derive a
+// brand= param for /simulation when neither the finding nor the matched
+// risk card spell one out. If nothing matches we leave brand off so the
+// downstream page can render its honest empty state.
+const KNOWN_BRANDS = [
+  'Don Julio',
+  'Crown Royal',
+  'Tanqueray',
+  'Guinness',
+  'Smirnoff',
+  'Captain Morgan',
+  'Johnnie Walker',
+  'Bulleit',
+  'Casamigos',
+  'Ketel One',
+  'Buchanan’s',
+  'Buchanans',
+  'Baileys',
+  'Cîroc',
+  'Ciroc',
+];
+
+function deriveBrand(...sources: Array<string | null | undefined>): string | null {
+  const blob = sources.filter(Boolean).join(' ');
+  if (!blob) return null;
+  for (const brand of KNOWN_BRANDS) {
+    const pattern = new RegExp(`\\b${brand.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\b`, 'i');
+    if (pattern.test(blob)) {
+      return brand.replace('Buchanans', 'Buchanan’s').replace('Ciroc', 'Cîroc');
+    }
+  }
+  return null;
 }
 
 function cleanRepresentative(raw: string): string {
