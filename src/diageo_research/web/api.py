@@ -57,6 +57,13 @@ from ..dagster_assets import (
     list_cell_materializations,
 )
 from ..events import EventBus, create_bus, get_bus
+from ..granular_assets import (
+    GRANULAR_PREFIXES,
+    fetch_claims_for_cell,
+    granular_asset_lineage,
+    kind_for_asset_key,
+    list_granular_assets,
+)
 from ..manifest import read_manifest
 from ..models import RunState
 from ..multiverse import (
@@ -236,70 +243,151 @@ def _safe_decode_asset_key(key_b64: str) -> list[str]:
         raise HTTPException(status_code=400, detail=f"bad asset key: {e}")
 
 
+# Workbench-facing labels for the asset kinds the FE expects to filter by.
+# ``declared`` covers the six pipeline stage assets ("question_analysis",
+# "personas", ...). ``cell`` covers the content-addressed brief assets
+# under ``research_cells``. The remaining kinds correspond to the
+# granular runless materializations emitted from
+# :mod:`diageo_research.granular_assets` during the interview and
+# synthesis stages.
+ASSET_KIND_LABELS: dict[str, str] = {
+    "declared": "Pipeline stage (declared graph)",
+    "stage": "Pipeline stage (declared graph)",
+    "cell": "Content-addressed cell brief",
+    "persona": "Per-persona interview",
+    "turn": "Per-turn dialogue record",
+    "tool_call": "Per-tool-call dispatch",
+    "citation": "Per-citation evidence row",
+    "claim": "Per-claim sentence in brief",
+}
+ASSET_KINDS: tuple[str, ...] = (
+    "declared",
+    "stage",
+    "cell",
+    "persona",
+    "turn",
+    "tool_call",
+    "citation",
+    "claim",
+)
+
+
 @app.get("/assets")
-def list_assets(limit: int = 50) -> dict[str, Any]:
+def list_assets(
+    limit: int = 50,
+    kind: str | None = None,
+    question_hash: str | None = None,
+    axes_signature: str | None = None,
+) -> dict[str, Any]:
     """List materialized assets, newest first.
 
-    The listing covers two surfaces:
+    The listing covers multiple surfaces:
 
     * **Declared static assets** (the six pipeline stages) — one row
       per asset key with the latest materialization across all
-      partitions / runs.
+      partitions / runs. ``kind`` is ``"declared"`` (alias ``"stage"``).
     * **Content-addressed cell briefs** — one row per cell signature
-      under ``research_cells``.
+      under ``research_cells``. ``kind`` is ``"cell"``.
+    * **Granular evidence assets** — per-persona, per-turn,
+      per-tool_call, per-citation, per-claim materializations emitted
+      from the interview and synthesis stages. ``kind`` is one of
+      ``"persona"``, ``"turn"``, ``"tool_call"``, ``"citation"``,
+      ``"claim"``.
 
-    The shape is friendly for a workbench listing view: ``asset_key``
-    (list of strings), ``asset_key_encoded`` (URL-safe handle),
-    ``partition_key``, ``timestamp``, plus the metadata bundle Dagster
-    persisted.
+    Query parameters:
+
+    * ``kind`` — filter to a single kind (one of ``ASSET_KINDS``).
+      ``"stage"`` is treated as an alias for ``"declared"``.
+    * ``question_hash`` / ``axes_signature`` — when filtering a granular
+      kind, narrow to one cell signature. Ignored for declared/cell
+      rows.
+
+    The row shape is friendly for a workbench listing view:
+    ``asset_key`` (list of strings), ``asset_key_encoded`` (URL-safe
+    handle), ``partition_key``, ``timestamp``, ``kind``, plus the
+    metadata bundle Dagster persisted.
     """
+    if kind is not None and kind not in ASSET_KINDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown kind={kind!r}; expected one of {sorted(ASSET_KINDS)}",
+        )
+    kind_filter = "declared" if kind == "stage" else kind
     instance = _resolve_dagster_instance()
     try:
         rows: list[dict[str, Any]] = []
 
-        # Declared stage assets — one summary row each. Filter out the
-        # content-addressed ``research_cell`` family; those land in the
-        # ``cell`` block below so we don't double-list them.
-        try:
-            declared_keys = list(instance.all_asset_keys())
-        except Exception:  # noqa: BLE001
-            declared_keys = []
-        for key in declared_keys:
-            if key.path and key.path[0] == _keys.CELL_ASSET_KEY_PREFIX:
+        if kind_filter in (None, "declared"):
+            # Declared stage assets — one summary row each. Filter out
+            # the content-addressed ``research_cell`` family AND the
+            # granular asset prefixes; those land in their own blocks
+            # below so we don't double-list them.
+            try:
+                declared_keys = list(instance.all_asset_keys())
+            except Exception:  # noqa: BLE001
+                declared_keys = []
+            for key in declared_keys:
+                if key.path and key.path[0] == _keys.CELL_ASSET_KEY_PREFIX:
+                    continue
+                if key.path and key.path[0] in GRANULAR_PREFIXES:
+                    continue
+                try:
+                    hist = fetch_asset_history(
+                        instance, asset_key_path=list(key.path), limit=1
+                    )
+                except Exception:  # noqa: BLE001
+                    continue
+                if not hist:
+                    rows.append(
+                        {
+                            "asset_key": list(key.path),
+                            "asset_key_encoded": _keys.encode_asset_key(key.path),
+                            "partition_key": None,
+                            "timestamp": 0.0,
+                            "run_id": "",
+                            "metadata": {},
+                            "kind": "declared",
+                        }
+                    )
+                    continue
+                row = hist[0]
+                row["kind"] = "declared"
+                rows.append(row)
+
+        if kind_filter in (None, "cell"):
+            # Content-addressed research_cell rows (one per signature).
+            try:
+                cell_rows = list_cell_materializations(instance, limit=limit)
+            except Exception:  # noqa: BLE001
+                cell_rows = []
+            for row in cell_rows:
+                row["kind"] = "cell"
+                rows.append(row)
+
+        granular_kinds = ("persona", "turn", "tool_call", "citation", "claim")
+        for gk in granular_kinds:
+            if kind_filter not in (None, gk):
                 continue
             try:
-                hist = fetch_asset_history(instance, asset_key_path=list(key.path), limit=1)
-            except Exception:  # noqa: BLE001
-                continue
-            if not hist:
-                rows.append(
-                    {
-                        "asset_key": list(key.path),
-                        "asset_key_encoded": _keys.encode_asset_key(key.path),
-                        "partition_key": None,
-                        "timestamp": 0.0,
-                        "run_id": "",
-                        "metadata": {},
-                        "kind": "declared",
-                    }
+                gk_rows = list_granular_assets(
+                    instance,
+                    kind=gk,
+                    limit=limit,
+                    question_hash=question_hash,
+                    axes_signature=axes_signature,
                 )
-                continue
-            row = hist[0]
-            row["kind"] = "declared"
-            rows.append(row)
-
-        # Content-addressed research_cell rows (one per signature).
-        try:
-            cell_rows = list_cell_materializations(instance, limit=limit)
-        except Exception:  # noqa: BLE001
-            cell_rows = []
-        for row in cell_rows:
-            row["kind"] = "cell"
-            rows.append(row)
+            except Exception:  # noqa: BLE001
+                gk_rows = []
+            for row in gk_rows:
+                row.setdefault("kind", gk)
+                rows.append(row)
 
         rows.sort(key=lambda r: r.get("timestamp", 0.0), reverse=True)
         return {
             "assets": rows[:limit],
+            "kinds": list(ASSET_KINDS),
+            "kind_labels": ASSET_KIND_LABELS,
+            "kind_filter": kind,
             "partition_sets": {
                 "study_cells": "Per-cell stage assets (study-scoped run_id)",
                 "research_cells": "Content-addressed cell briefs (cross-study)",
@@ -314,7 +402,18 @@ def list_assets(limit: int = 50) -> dict[str, Any]:
 
 @app.get("/assets/{key_b64}")
 def get_asset(key_b64: str) -> dict[str, Any]:
-    """Detail view for one asset key: latest materialization + metadata."""
+    """Detail view for one asset key: latest materialization + metadata.
+
+    The returned shape is:
+
+    * ``asset_key`` / ``asset_key_encoded`` — addressing handles.
+    * ``kind`` — workbench-facing label (``stage``, ``cell``,
+      ``persona``, ``turn``, ``tool_call``, ``citation``, ``claim``).
+    * ``latest`` — most recent materialization record (or ``None``).
+    * ``recent`` — last ``limit`` materializations, newest-first.
+    * ``lineage`` — granular upstream/downstream chain when known,
+      otherwise the declared-graph fall-back.
+    """
     if key_b64 == "graph":
         raise HTTPException(status_code=404, detail="route reserved")
     path = _safe_decode_asset_key(key_b64)
@@ -322,12 +421,20 @@ def get_asset(key_b64: str) -> dict[str, Any]:
     try:
         history = fetch_asset_history(instance, asset_key_path=path, limit=5)
         latest = history[0] if history else None
+        kind = kind_for_asset_key(path)
+        granular = (
+            granular_asset_lineage(path, latest_record=latest)
+            if path and path[0] in GRANULAR_PREFIXES
+            else None
+        )
+        lineage = granular or asset_lineage(path)
         return {
             "asset_key": path,
             "asset_key_encoded": key_b64,
+            "kind": kind,
             "latest": latest,
             "recent": history,
-            "lineage": asset_lineage(path),
+            "lineage": lineage,
         }
     finally:
         try:
@@ -341,21 +448,52 @@ def get_asset_lineage(key_b64: str) -> dict[str, Any]:
     """Upstream + downstream asset keys for one asset.
 
     Reads from the declared :class:`Definitions` graph for declared
-    assets; for the content-addressed ``research_cell`` family, returns
-    the synthesis stage as upstream (the brief's immediate producer).
+    assets; for the content-addressed ``research_cell`` family returns
+    the synthesis stage as upstream. Granular asset keys (persona,
+    turn, tool_call, citation, claim) return the recorded
+    upstream/downstream chain stored in the latest materialization
+    metadata so the FE can render claim → citation → tool_call without
+    re-parsing the brief.
     """
     path = _safe_decode_asset_key(key_b64)
-    lineage = asset_lineage(path)
+    granular: dict[str, list[list[str]]] | None = None
+    instance = _resolve_dagster_instance()
+    try:
+        latest_record: dict[str, Any] | None = None
+        if path and path[0] in GRANULAR_PREFIXES:
+            try:
+                history = fetch_asset_history(
+                    instance, asset_key_path=path, limit=1
+                )
+            except Exception:  # noqa: BLE001
+                history = []
+            latest_record = history[0] if history else None
+            granular = granular_asset_lineage(path, latest_record=latest_record)
+    finally:
+        try:
+            instance.dispose()
+        except Exception:  # noqa: BLE001
+            pass
+    lineage = granular or asset_lineage(path)
     return {
         "asset_key": path,
         "asset_key_encoded": key_b64,
+        "kind": kind_for_asset_key(path),
         "upstream": [
-            {"asset_key": p, "asset_key_encoded": _keys.encode_asset_key(p)}
-            for p in lineage["upstream"]
+            {
+                "asset_key": p,
+                "asset_key_encoded": _keys.encode_asset_key(p),
+                "kind": kind_for_asset_key(p),
+            }
+            for p in lineage.get("upstream", [])
         ],
         "downstream": [
-            {"asset_key": p, "asset_key_encoded": _keys.encode_asset_key(p)}
-            for p in lineage["downstream"]
+            {
+                "asset_key": p,
+                "asset_key_encoded": _keys.encode_asset_key(p),
+                "kind": kind_for_asset_key(p),
+            }
+            for p in lineage.get("downstream", [])
         ],
     }
 
@@ -372,6 +510,7 @@ def get_asset_history(key_b64: str, limit: int = 25) -> dict[str, Any]:
         return {
             "asset_key": path,
             "asset_key_encoded": key_b64,
+            "kind": kind_for_asset_key(path),
             "history": history,
         }
     finally:
@@ -891,6 +1030,91 @@ def get_study_cost(study_id: str) -> dict[str, Any]:
         except Exception:  # noqa: BLE001
             continue
     return rollup
+
+
+@app.get("/studies/{study_id}/claims")
+def get_study_claims(study_id: str) -> dict[str, Any]:
+    """List parsed claim assets for every cell of a study.
+
+    Each claim carries the parsed sentence, the cite_ids it references,
+    a denormalised summary of each cited evidence row (source label,
+    quoted snippet, link or SQL, verifier status), and the addressable
+    asset keys for the claim, the upstream citation rows, and the
+    tool calls that produced them.
+
+    The endpoint reads claim assets from the Dagster persistent
+    instance — the FE never has to re-parse ``final.md``. Cells that
+    haven't synthesised yet appear with an empty ``claims`` list and an
+    ``unavailable`` reason, never a placeholder.
+    """
+    study = read_study(study_id)
+    if study is None:
+        raise HTTPException(status_code=404, detail="No such study")
+    instance = _resolve_dagster_instance()
+    try:
+        cells_out: list[dict[str, Any]] = []
+        all_claims: list[dict[str, Any]] = []
+        for cell in study.cells:
+            cell_question = study.cell_question_template or study.question
+            # Recreate the cell-scoped (question_hash, axes_signature) pair
+            # so we can narrow the granular asset listing to one cell.
+            from ..multiverse import render_cell_question
+
+            full_question = render_cell_question(
+                cell_question, cell.addenda or []
+            )
+            qh = _keys.hash_question(full_question)
+            a_sig = _keys.axes_signature(cell.axes or None)
+            try:
+                rows = fetch_claims_for_cell(
+                    instance, question_hash=qh, axes_signature=a_sig
+                )
+            except Exception:  # noqa: BLE001
+                rows = []
+            cell_payload: dict[str, Any] = {
+                "cell_id": cell.id,
+                "run_id": cell.run_id,
+                "status": cell.status,
+                "axes": cell.axes,
+                "question_hash": qh,
+                "axes_signature": a_sig,
+                "claims": [],
+            }
+            if not rows:
+                cell_payload["unavailable_reason"] = (
+                    "cell has not produced any claim assets yet"
+                    if cell.status != "complete"
+                    else "no claims parsed from final brief"
+                )
+            for r in rows:
+                md = r.get("metadata") or {}
+                entry = {
+                    "claim_idx": md.get("claim_idx"),
+                    "section": md.get("section"),
+                    "text": md.get("text"),
+                    "cite_ids": md.get("cite_ids") or [],
+                    "citations": md.get("citations") or [],
+                    "asset_key": r.get("asset_key"),
+                    "asset_key_encoded": r.get("asset_key_encoded"),
+                    "run_id": r.get("run_id"),
+                    "timestamp": r.get("timestamp"),
+                    "upstream": md.get("upstream") or [],
+                    "downstream": md.get("downstream") or [],
+                }
+                cell_payload["claims"].append(entry)
+                all_claims.append({**entry, "cell_id": cell.id})
+            cells_out.append(cell_payload)
+        return {
+            "study_id": study_id,
+            "n_claims": sum(len(c.get("claims") or []) for c in cells_out),
+            "cells": cells_out,
+            "claims": all_claims,
+        }
+    finally:
+        try:
+            instance.dispose()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 @app.get("/studies/{study_id}/research")

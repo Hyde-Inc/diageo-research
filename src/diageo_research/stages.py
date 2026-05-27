@@ -39,6 +39,7 @@ from typing import Any
 
 from .config import get_settings
 from .events import EventBus, create_bus
+from .granular_assets import emit_interview_granular, emit_synthesis_granular
 from .interviewer import Interviewer
 from .manifest import ManifestWriter
 from .memory import DialogueMemory
@@ -160,6 +161,20 @@ class StageContext:
         self.verified_count: int = 0
         self.flagged_count: int = 0
         self.final: FinalReport | None = None
+        # Per-persona tool-call log captured during the interview stage
+        # so the granular tool_call asset emit can reach it from
+        # stage_synthesis (after global cite-id renumbering).
+        self.tool_call_logs: dict[str, list[dict[str, Any]]] = {}
+
+        # Optional Dagster instance for runless granular materialization
+        # emits. The orchestrator sets this only when running via
+        # ``materialize_research_cell``; the single-shot ``run_research``
+        # path leaves it ``None`` so emits are no-ops.
+        self.dagster_instance: Any = None
+        # Optional axes mapping for content-addressed granular keys.
+        # Single-shot runs leave this ``None`` (axes_signature falls back
+        # to "no-axes" inside :mod:`diageo_research.keys`).
+        self.axes: dict[str, str] | None = None
 
         # Bookkeeping
         self.t0 = time.monotonic()
@@ -498,7 +513,9 @@ async def stage_interviews(ctx: StageContext) -> None:
     t_stage = time.monotonic()
     sem = asyncio.Semaphore(settings.parallel_persona_limit)
 
-    async def _persona_task(p: Persona) -> SubReport:
+    async def _persona_task(
+        p: Persona,
+    ) -> tuple[SubReport, list[DialogueTurn], list[dict[str, Any]], dict[str, Any]]:
         async with sem:
             with stage_ctx("interviews"), persona_ctx(p.id):
                 return await _interview_persona(
@@ -519,6 +536,9 @@ async def stage_interviews(ctx: StageContext) -> None:
         return_exceptions=True,
     )
     sub_reports: list[SubReport] = []
+    per_persona_payloads: list[
+        tuple[Persona, SubReport, list[DialogueTurn], list[dict[str, Any]], dict[str, Any]]
+    ] = []
     for p, r in zip(ctx.personas, results):
         if isinstance(r, Exception):
             logger.exception("persona %s failed", p.id, exc_info=r)
@@ -531,11 +551,45 @@ async def stage_interviews(ctx: StageContext) -> None:
                 )
             )
             continue
-        sub_reports.append(r)
+        sub_report, turns, tool_calls, telemetry = r
+        sub_reports.append(sub_report)
+        per_persona_payloads.append((p, sub_report, turns, tool_calls, telemetry))
+        ctx.tool_call_logs[p.id] = tool_calls
     if not sub_reports:
         raise RuntimeError("All personas failed; no sub-reports to synthesize.")
     ctx.sub_reports = sub_reports
     ctx.writer.write_subreports(sub_reports)
+
+    # Emit granular per-persona / per-turn / per-tool_call asset
+    # materializations now that every parallel interview has landed.
+    # Wrap in try/except so a Dagster instance hiccup never fails the
+    # interview stage — the receipts are best-effort observability.
+    if ctx.dagster_instance is not None:
+        try:
+            per_persona_costs = (
+                (ctx.cost_tracker.to_json().get("by_persona") or {})
+                if ctx.cost_tracker is not None
+                else {}
+            )
+            for p, sub_report, turns, tool_calls, telemetry in per_persona_payloads:
+                cost_row = per_persona_costs.get(p.id) or {}
+                emit_interview_granular(
+                    ctx.dagster_instance,
+                    ctx=ctx,
+                    persona=p,
+                    sub_report=sub_report,
+                    turns=turns,
+                    tool_calls=tool_calls,
+                    persona_cost_usd=cost_row.get("cost_usd"),
+                    started_at=telemetry.get("started_at"),
+                    finished_at=telemetry.get("finished_at"),
+                    turn_timings=telemetry.get("turn_timings"),
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "granular interview materialization emission failed for run %s",
+                ctx.run_id,
+            )
     elapsed = round(time.monotonic() - t_stage, 1)
     ctx.stage_timings.append(("interviews", elapsed))
     total_cites = sum(len(s.citations) for s in sub_reports)
@@ -670,6 +724,25 @@ async def stage_synthesis(ctx: StageContext) -> None:
         "stage synthesis done in %ss — %d sections, %d citations, %d chars",
         elapsed, len(final.outline), len(final.citations), len(final.markdown),
     )
+
+    # Emit citation + claim asset materializations. We hand the synth
+    # the per-persona tool-call log captured during the interviews stage
+    # so each citation asset can point back at the originating tool
+    # call. Failure here never breaks synthesis — the brief is canonical.
+    if ctx.dagster_instance is not None:
+        try:
+            emit_synthesis_granular(
+                ctx.dagster_instance,
+                ctx=ctx,
+                final_report=final,
+                sub_reports=ctx.sub_reports,
+                tool_call_logs=ctx.tool_call_logs,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "granular synthesis materialization emission failed for run %s",
+                ctx.run_id,
+            )
     ctx.manifest.write_stage(
         "synthesis",
         elapsed_s=elapsed,
@@ -715,7 +788,23 @@ async def _interview_persona(
     *,
     enable_web_browse: bool | None = None,
     max_browses_per_cell: int | None = None,
-) -> SubReport:
+) -> tuple[SubReport, list[DialogueTurn], list[dict[str, Any]], dict[str, Any]]:
+    """Run one persona's interview and return everything needed for granular asset emit.
+
+    Returns ``(sub_report, turns, tool_call_log, telemetry)``. The
+    ``telemetry`` dict carries per-turn timing (``turn_timings``), the
+    persona-level wall-clock window, and the raw tool-call log so the
+    caller can emit per-persona / per-turn / per-tool_call Dagster
+    materializations after the gather completes.
+    """
+    import datetime as _dt
+
+    def _now_iso() -> str:
+        return _dt.datetime.now(tz=_dt.timezone.utc).isoformat()
+
+    persona_started_at = _now_iso()
+    persona_t0 = time.monotonic()
+
     memory = DialogueMemory()
     interviewer = Interviewer(client, persona, question, memory)
     perspective = PerspectiveAgent(
@@ -728,6 +817,7 @@ async def _interview_persona(
     )
 
     turns: list[DialogueTurn] = []
+    turn_timings: dict[int, tuple[str | None, str | None, float | None]] = {}
     for t in range(1, max_turns + 1):
         q = await interviewer.next_question()
         if q is None:
@@ -763,7 +853,12 @@ async def _interview_persona(
                 )
             )
 
+        turn_started_at = _now_iso()
+        turn_t0 = time.monotonic()
         turn = await perspective.answer(q, memory, t, on_event=on_event)
+        turn_latency = round(max(0.0, time.monotonic() - turn_t0), 3)
+        turn_finished_at = _now_iso()
+        turn_timings[t] = (turn_started_at, turn_finished_at, turn_latency)
         memory.append(turn)
         turns.append(turn)
         await memory.refresh_summary_if_needed(client)
@@ -792,12 +887,15 @@ async def _interview_persona(
         "[" + ",\n".join(t.model_dump_json(indent=2) for t in turns) + "]"
     )
     (persona_dir / "subreport.md").write_text(sub_report.markdown)
+    tool_calls_snapshot: list[dict[str, Any]] = list(
+        perspective.registry.tool_call_log
+    )
     try:
         import json as _json
 
         tools_payload = {
             "persona_id": persona.id,
-            "calls": list(perspective.registry.tool_call_log),
+            "calls": tool_calls_snapshot,
         }
         (persona_dir / "tools.json").write_text(
             _json.dumps(tools_payload, indent=2, default=str), encoding="utf-8"
@@ -825,7 +923,13 @@ async def _interview_persona(
             },
         )
     )
-    return sub_report
+    telemetry: dict[str, Any] = {
+        "started_at": persona_started_at,
+        "finished_at": _now_iso(),
+        "wall_time_s": round(max(0.0, time.monotonic() - persona_t0), 3),
+        "turn_timings": turn_timings,
+    }
+    return sub_report, turns, tool_calls_snapshot, telemetry
 
 
 # ------------------------------------------------------ Partial brief writer

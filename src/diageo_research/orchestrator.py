@@ -303,6 +303,17 @@ async def materialize_research_cell(
         parent_loop=parent_loop,
     )
 
+    ctx.axes = dict(axes) if axes else None
+    # Resolve the Dagster instance once up-front so:
+    #   (a) the worker thread that drives ``materialize()`` shares the
+    #       same disk-backed event log as the parent loop;
+    #   (b) the stage bodies can emit runless granular materializations
+    #       (per-persona, per-turn, per-tool_call, per-citation, per-claim)
+    #       against the same instance Dagit reads from.
+    # Disposal happens in the outer ``finally`` so a stage emit landing
+    # right before cleanup doesn't race a closed handle.
+    dagster_instance = _resolve_dagster_instance()
+    ctx.dagster_instance = dagster_instance
     register_stage_context(run_id, ctx)
     run_token = run_ctx(run_id)
     run_token.__enter__()
@@ -316,12 +327,13 @@ async def materialize_research_cell(
     cell_status = "pending"
     cell_error: str | None = None
     try:
-        result, dagster_instance = await asyncio.to_thread(
+        result, _instance_back = await asyncio.to_thread(
             _run_dagster_materialize,
             run_id=run_id,
             partition_set_name=cell_partitions.name,
             assets=ALL_ASSETS,
             run_verifier=settings.enable_verifier,
+            instance=dagster_instance,
         )
         try:
             if not result.success:
@@ -469,6 +481,7 @@ def _run_dagster_materialize(
     partition_set_name: str,
     assets: list[Any],
     run_verifier: bool,
+    instance: Any | None = None,
 ) -> tuple[Any, Any]:
     """Synchronously execute one cell's assets through Dagster.
 
@@ -481,6 +494,13 @@ def _run_dagster_materialize(
     disabled in settings we skip the ``verifier`` asset by selecting
     everything else explicitly.
 
+    ``instance`` lets the caller pass a pre-resolved
+    :class:`DagsterInstance` so the parent loop's
+    :class:`StageContext` and the worker-thread :func:`materialize`
+    share the same disk-backed event log. Passing ``None`` falls back
+    to a fresh :func:`_resolve_dagster_instance` for callers that
+    don't need to share state (tests).
+
     Returns ``(result, instance)`` so the caller can:
 
     * Inspect ``result.success`` / events for the per-stage step status.
@@ -490,7 +510,8 @@ def _run_dagster_materialize(
     """
     from dagster import AssetSelection, materialize
 
-    instance = _resolve_dagster_instance()
+    if instance is None:
+        instance = _resolve_dagster_instance()
     try:
         instance.add_dynamic_partitions(partition_set_name, [run_id])
     except Exception:  # noqa: BLE001

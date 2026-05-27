@@ -15,9 +15,19 @@ Tools are **scoped by `persona_type`**:
 
 Per-turn caps: ``max_web_browse_per_turn`` (default 1) prevents a single
 turn from burning 30+ minutes on browse loops.
+
+``tool_call_log`` is the runtime audit trail this dispatcher keeps. Each
+log entry carries enough state for the granular ``tool_call`` asset
+materializations to reconstruct what happened (tool name, args, outcome,
+cite_id, result summary, started/finished/latency timestamps). The
+granular asset emit functions read this log in
+:mod:`diageo_research.granular_assets`; the workbench reads the same log
+when rendering the per-persona tools tab.
 """
 from __future__ import annotations
 
+import datetime as _dt
+import time
 from typing import Any
 from urllib.parse import urlparse
 
@@ -27,6 +37,10 @@ from .browser import browse
 from .duckdb_tool import run_query
 from .web_fetch import TOOL_SPEC as WEB_FETCH_SPEC
 from .web_fetch import fetch as web_fetch
+
+
+def _utcnow_iso() -> str:
+    return _dt.datetime.now(tz=_dt.timezone.utc).isoformat()
 
 
 def _fetch_failure_key(url: str) -> str:
@@ -181,6 +195,75 @@ class ToolRegistry:
             out.append(spec)
         return out
 
+    def _new_log_entry(
+        self,
+        *,
+        tool: str,
+        args: dict[str, Any] | None = None,
+        cite_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Open a partial log entry and record start timing.
+
+        The dispatch paths below close the entry (see :meth:`_close_entry`)
+        once they know the outcome. Splitting it this way means every
+        log entry carries ``started_at`` / ``finished_at`` / ``latency_s``
+        without each path having to track its own clock.
+        """
+        entry: dict[str, Any] = {
+            "tool": tool,
+            "args": dict(args or {}),
+            "outcome": "unknown",
+            "success": False,
+            "started_at": _utcnow_iso(),
+            "_monotonic_start": time.monotonic(),
+        }
+        # Mirror frequently-read fields at the top level so callers that
+        # only look at ``tool``/``url``/``sql``/``query``/``cite_id``
+        # (e.g. the existing tools.json reader) keep seeing them.
+        if cite_id:
+            entry["cite_id"] = cite_id
+        if isinstance(args, dict):
+            for k in ("url", "sql", "query"):
+                if k in args:
+                    entry[k] = args[k]
+        return entry
+
+    def _close_entry(
+        self,
+        entry: dict[str, Any],
+        *,
+        outcome: str,
+        success: bool | None = None,
+        n_snippets: int | None = None,
+        n_rows: int | None = None,
+        result_summary: str | None = None,
+        reason: str | None = None,
+        cite_id: str | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        """Close a partial log entry, attach it to ``tool_call_log``."""
+        finished = time.monotonic()
+        started = entry.pop("_monotonic_start", finished)
+        entry["finished_at"] = _utcnow_iso()
+        entry["latency_s"] = round(max(0.0, finished - started), 3)
+        entry["outcome"] = outcome
+        entry["success"] = (
+            bool(success) if success is not None else (outcome == "ok")
+        )
+        if n_snippets is not None:
+            entry["n_snippets"] = int(n_snippets)
+        if n_rows is not None:
+            entry["n_rows"] = int(n_rows)
+        if result_summary:
+            entry["result_summary"] = result_summary
+        if reason:
+            entry["reason"] = reason
+        if cite_id and "cite_id" not in entry:
+            entry["cite_id"] = cite_id
+        if extra:
+            entry.update(extra)
+        self.tool_call_log.append(entry)
+
     async def dispatch(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         if name not in self.allowed_tool_names:
             return {
@@ -193,9 +276,13 @@ class ToolRegistry:
         if name == "web_browse":
             settings = get_settings()
             query = args.get("query", "")
+            entry = self._new_log_entry(tool="web_browse", args=args)
             if not self._enable_web_browse:
-                self.tool_call_log.append(
-                    {"tool": "web_browse", "query": query, "outcome": "disabled"}
+                self._close_entry(
+                    entry,
+                    outcome="disabled",
+                    success=False,
+                    reason="web_browse disabled for this run",
                 )
                 return {
                     "snippets": [],
@@ -210,8 +297,11 @@ class ToolRegistry:
                     ),
                 }
             if self._browse_calls_total >= self._max_browses_per_cell:
-                self.tool_call_log.append(
-                    {"tool": "web_browse", "query": query, "outcome": "cell_cap"}
+                self._close_entry(
+                    entry,
+                    outcome="cell_cap",
+                    success=False,
+                    reason="per-cell browse cap exhausted",
                 )
                 return {
                     "snippets": [],
@@ -224,8 +314,11 @@ class ToolRegistry:
                     ),
                 }
             if self._browse_calls_this_turn >= settings.max_web_browse_per_turn:
-                self.tool_call_log.append(
-                    {"tool": "web_browse", "query": query, "outcome": "turn_cap"}
+                self._close_entry(
+                    entry,
+                    outcome="turn_cap",
+                    success=False,
+                    reason="per-turn browse cap exhausted",
                 )
                 return {
                     "snippets": [],
@@ -241,19 +334,49 @@ class ToolRegistry:
             self._browse_calls_this_turn += 1
             self._browse_calls_total += 1
             raw = await browse(query, int(args.get("max_pages", 3)))
-            self.tool_call_log.append(
-                {"tool": "web_browse", "query": query, "outcome": "ok", "n_snippets": len(raw)}
+            payload = self._assign_browser_snippets(raw, query)
+            snippets = payload.get("snippets", []) or []
+            result_summary = (
+                snippets[0].get("title", "")[:160]
+                if snippets and isinstance(snippets[0], dict)
+                else ""
             )
-            return self._assign_browser_snippets(raw, query)
+            # Tag the entry with the first new B? cite_id so the granular
+            # tool_call asset can link to the corresponding citation.
+            first_cite = (
+                snippets[0].get("cite_id")
+                if snippets and isinstance(snippets[0], dict)
+                else None
+            )
+            self._close_entry(
+                entry,
+                outcome="ok",
+                success=True,
+                n_snippets=len(snippets),
+                result_summary=result_summary,
+                cite_id=first_cite,
+                extra={
+                    "cite_ids": [
+                        s.get("cite_id")
+                        for s in snippets
+                        if isinstance(s, dict) and s.get("cite_id")
+                    ],
+                },
+            )
+            return payload
 
         if name == "web_fetch":
             settings = get_settings()
             url = args.get("url", "")
+            entry = self._new_log_entry(tool="web_fetch", args=args)
             # Per-cell cap first: an exhausted cell shouldn't even check
             # the cache, the model needs to stop fetching entirely.
             if self._fetch_calls_total >= settings.max_fetches_per_cell:
-                self.tool_call_log.append(
-                    {"tool": "web_fetch", "url": url, "outcome": "cell_cap"}
+                self._close_entry(
+                    entry,
+                    outcome="cell_cap",
+                    success=False,
+                    reason="per-cell fetch cap exhausted",
                 )
                 return {
                     "snippets": [],
@@ -266,8 +389,11 @@ class ToolRegistry:
                     ),
                 }
             if self._fetch_calls_this_turn >= settings.max_fetches_per_turn:
-                self.tool_call_log.append(
-                    {"tool": "web_fetch", "url": url, "outcome": "turn_cap"}
+                self._close_entry(
+                    entry,
+                    outcome="turn_cap",
+                    success=False,
+                    reason="per-turn fetch cap exhausted",
                 )
                 return {
                     "snippets": [],
@@ -286,13 +412,11 @@ class ToolRegistry:
             cache_key = _fetch_failure_key(url)
             cached_reason = self._failed_urls.get(cache_key)
             if cached_reason:
-                self.tool_call_log.append(
-                    {
-                        "tool": "web_fetch",
-                        "url": url,
-                        "outcome": "cached_failure",
-                        "reason": cached_reason,
-                    }
+                self._close_entry(
+                    entry,
+                    outcome="cached_failure",
+                    success=False,
+                    reason=cached_reason,
                 )
                 return {
                     "snippets": [],
@@ -316,13 +440,11 @@ class ToolRegistry:
             # tool_call_log captures it for the asset viewer.
             if not raw:
                 failure_reason = self._failed_urls.get(cache_key, "unknown")
-                self.tool_call_log.append(
-                    {
-                        "tool": "web_fetch",
-                        "url": url,
-                        "outcome": "failed",
-                        "reason": failure_reason,
-                    }
+                self._close_entry(
+                    entry,
+                    outcome="failed",
+                    success=False,
+                    reason=failure_reason,
                 )
                 return {
                     "snippets": [],
@@ -333,25 +455,65 @@ class ToolRegistry:
                         f"now cached as failed for the rest of this cell."
                     ),
                 }
-            self.tool_call_log.append(
-                {"tool": "web_fetch", "url": url, "outcome": "ok", "n_snippets": len(raw)}
+            payload = self._assign_browser_snippets(raw, url)
+            snippets = payload.get("snippets", []) or []
+            first_cite = (
+                snippets[0].get("cite_id")
+                if snippets and isinstance(snippets[0], dict)
+                else None
             )
-            return self._assign_browser_snippets(raw, url)
+            result_summary = (
+                snippets[0].get("title", "")[:160]
+                if snippets and isinstance(snippets[0], dict)
+                else ""
+            )
+            self._close_entry(
+                entry,
+                outcome="ok",
+                success=True,
+                n_snippets=len(snippets),
+                result_summary=result_summary,
+                cite_id=first_cite,
+                extra={
+                    "cite_ids": [
+                        s.get("cite_id")
+                        for s in snippets
+                        if isinstance(s, dict) and s.get("cite_id")
+                    ],
+                },
+            )
+            return payload
 
         if name == "duckdb_query":
             self._q += 1
             cite_id = f"Q{self._q}"
             sql = args.get("sql", "")
+            entry = self._new_log_entry(
+                tool="duckdb_query", args={"sql": sql}, cite_id=cite_id
+            )
+            # Mirror the truncated SQL onto the entry so existing tools.json
+            # readers see the same field they did before this refactor.
+            entry["sql"] = (sql or "").strip()[:240]
             result = run_query(sql, cite_id=cite_id)
             self.duckdb_results.append(result)
-            self.tool_call_log.append(
-                {
-                    "tool": "duckdb_query",
-                    "cite_id": cite_id,
-                    "sql": (sql or "").strip()[:240],
-                    "outcome": "error" if result.error else "ok",
-                    "n_rows": len(result.rows or []),
-                }
+            n_rows = len(result.rows or [])
+            outcome = "error" if result.error else "ok"
+            result_summary = ""
+            if result.error:
+                result_summary = f"error: {result.error}"
+            elif result.rows:
+                head = result.rows[0]
+                result_summary = ", ".join(
+                    f"{k}={head[k]}" for k in list(head.keys())[:4]
+                )[:200]
+            self._close_entry(
+                entry,
+                outcome=outcome,
+                success=(outcome == "ok"),
+                n_rows=n_rows,
+                result_summary=result_summary,
+                cite_id=cite_id,
+                reason=result.error or None,
             )
             return result.model_dump()
 
