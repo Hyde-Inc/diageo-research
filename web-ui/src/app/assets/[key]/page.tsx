@@ -215,6 +215,7 @@ function ReviewPanel({
   const metadata = latest?.metadata ?? {};
   const producedPaths = stringArray(metadata.produced_paths);
   const rows = readableMetadata(metadata);
+  const structured = renderStructuredKind(latest?.kind, metadata);
   return (
     <FocusCard className="grid gap-4">
       <SectionHeader
@@ -228,6 +229,8 @@ function ReviewPanel({
           {latest.description}
         </div>
       ) : null}
+
+      {structured ? <StructuredView view={structured} /> : null}
 
       <div className="grid gap-3 md:grid-cols-2">
         {rows.map((row) => (
@@ -617,6 +620,369 @@ function ErrorBox({ message }: { message: string }) {
 function statusLabel(asset: AssetSummary | null) {
   if (!asset) return 'not materialized';
   return stringValue(asset.metadata.status) || (asset.timestamp ? 'materialized' : 'not run');
+}
+
+// ─── Structured view for the new persisted kinds (M7 / FR-AT-2) ─────
+//
+// Renders growth_driver / counterfactual / decision / in_year_query /
+// task asset payloads as key/value cards with linked references where
+// applicable, so /assets/<key> isn't a raw JSON dump for the kinds the
+// MBP loop emits.
+
+type StructuredView = {
+  heading: string;
+  sections: StructuredSection[];
+};
+
+type StructuredSection = {
+  label: string;
+  body: React.ReactNode;
+};
+
+function renderStructuredKind(
+  kind: string | undefined,
+  metadata: AssetMetadata,
+): StructuredView | null {
+  if (!kind) return null;
+  switch (kind) {
+    case 'growth_driver':
+      return renderGrowthDriverDetail(metadata);
+    case 'counterfactual':
+      return renderCounterfactualDetail(metadata);
+    case 'decision':
+      return renderDecisionDetail(metadata);
+    case 'in_year_query':
+      return renderInYearDetail(metadata);
+    case 'task':
+      return renderTaskDetail(metadata);
+    default:
+      return null;
+  }
+}
+
+function StructuredView({ view }: { view: StructuredView }) {
+  return (
+    <div className="grid gap-3 rounded-2xl border border-blue-100 bg-blue-50/40 p-4">
+      <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-700">
+        {view.heading}
+      </h3>
+      <div className="grid gap-3">
+        {view.sections.map((s) => (
+          <div
+            key={s.label}
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2"
+          >
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+              {s.label}
+            </div>
+            <div className="mt-1 text-sm leading-snug text-slate-800">
+              {s.body}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function plainList(values: unknown): React.ReactNode {
+  const arr = Array.isArray(values)
+    ? values.filter((v): v is string => typeof v === 'string')
+    : [];
+  if (arr.length === 0) return <span className="text-slate-500">none</span>;
+  return (
+    <ul className="grid gap-1">
+      {arr.map((item) => (
+        <li key={item}>{item}</li>
+      ))}
+    </ul>
+  );
+}
+
+function renderGrowthDriverDetail(md: AssetMetadata): StructuredView {
+  const driverName = stringValue(md.driver_name) || 'Growth driver';
+  const mustDoTitle = stringValue(md.must_do_title) || stringValue(md.must_do);
+  const sections: StructuredSection[] = [
+    {
+      label: 'Driver',
+      body: <span className="font-medium text-slate-950">{driverName}</span>,
+    },
+    {
+      label: 'Must-Do',
+      body: mustDoTitle || <span className="text-slate-500">—</span>,
+    },
+    {
+      label: 'One-line',
+      body: stringValue(md.one_line) || (
+        <span className="text-slate-500">—</span>
+      ),
+    },
+    {
+      label: 'Confidence',
+      body: stringValue(md.confidence_pill) || (
+        <span className="text-slate-500">—</span>
+      ),
+    },
+    { label: 'Hypotheses', body: plainList(md.hypotheses) },
+    {
+      label: 'Fragile assumption',
+      body: stringValue(md.fragile_assumption) || (
+        <span className="text-slate-500">—</span>
+      ),
+    },
+    { label: 'Evidence pointers', body: plainList(md.evidence_pointers) },
+    { label: 'Markets', body: plainList(md.markets) },
+    { label: 'Validate next', body: plainList(md.validate_next) },
+  ];
+  if (md.illustrative === true) {
+    sections.unshift({
+      label: 'Tag',
+      body: (
+        <span className="inline-flex w-fit items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-amber-800">
+          Illustrative
+        </span>
+      ),
+    });
+  }
+  return { heading: 'Growth driver detail', sections };
+}
+
+function renderCounterfactualDetail(md: AssetMetadata): StructuredView {
+  const scope = (md.scope ?? {}) as Record<string, unknown>;
+  const driverId = stringValue(scope.driver_id);
+  const findingId = stringValue(scope.finding_id);
+  const variants = Array.isArray(md.variants) ? (md.variants as unknown[]) : [];
+  const sections: StructuredSection[] = [
+    {
+      label: 'Prompt',
+      body: stringValue(md.prompt) || <span className="text-slate-500">—</span>,
+    },
+    {
+      label: 'Scope',
+      body: (
+        <span>
+          Study {stringValue(scope.study_id) || '—'}
+          {driverId ? ` · Driver ${driverId}` : ''}
+          {findingId ? ` · Finding ${findingId}` : ''}
+        </span>
+      ),
+    },
+    {
+      label: `Variants (${variants.length})`,
+      body:
+        variants.length === 0 ? (
+          <span className="text-slate-500">none</span>
+        ) : (
+          <ul className="grid gap-1.5">
+            {variants.map((v, idx) => (
+              <li key={idx} className="text-[13px]">
+                {variantOneLine(v)}
+              </li>
+            ))}
+          </ul>
+        ),
+    },
+    {
+      label: 'Assumes',
+      body: plainList(md.assumes),
+    },
+    {
+      label: 'Does not assume',
+      body: plainList(md.does_not_assume),
+    },
+  ];
+  return { heading: 'Counterfactual detail', sections };
+}
+
+function variantOneLine(v: unknown): React.ReactNode {
+  if (!v || typeof v !== 'object') return String(v);
+  const obj = v as Record<string, unknown>;
+  const title = stringValue(obj.title);
+  const effect = stringValue(obj.effect_value) || stringValue(obj.effectValue);
+  return (
+    <span>
+      <span className="font-medium text-slate-900">{title || 'variant'}</span>
+      {effect ? <span className="text-slate-500"> · {effect}</span> : null}
+    </span>
+  );
+}
+
+function renderDecisionDetail(md: AssetMetadata): StructuredView {
+  const scope = (md.scope ?? {}) as Record<string, unknown>;
+  const confidence = (md.confidence ?? {}) as Record<string, unknown>;
+  const snapshot = (md.snapshot ?? {}) as Record<string, unknown>;
+  const refs = Array.isArray(md.counterfactual_refs)
+    ? (md.counterfactual_refs as unknown[]).filter(
+        (r): r is string => typeof r === 'string',
+      )
+    : [];
+  const decisionId = stringValue(md.decision_id);
+  const sections: StructuredSection[] = [
+    {
+      label: 'Recommendation',
+      body: (
+        <span className="font-medium text-slate-950">
+          {stringValue(md.recommendation) || '—'}
+        </span>
+      ),
+    },
+    {
+      label: 'Confidence',
+      body: (
+        <span>
+          {stringValue(confidence.label) || '—'} —{' '}
+          {stringValue(confidence.sentence) || '—'} ({Number(
+            confidence.holds_in ?? 0,
+          )}{' '}
+          of {Number(confidence.of ?? 0)})
+        </span>
+      ),
+    },
+    {
+      label: 'Scope',
+      body: (
+        <span>
+          Study {stringValue(scope.study_id) || '—'}
+          {stringValue(scope.driver_id)
+            ? ` · Driver ${stringValue(scope.driver_id)}`
+            : ''}
+          {stringValue(scope.finding_id)
+            ? ` · Finding ${stringValue(scope.finding_id)}`
+            : ''}
+        </span>
+      ),
+    },
+    {
+      label: 'Owner',
+      body: stringValue(md.owner) || <span className="text-slate-500">—</span>,
+    },
+    {
+      label: 'Committed at',
+      body: formatTimestamp(stringValue(md.committed_at)),
+    },
+    {
+      label: 'Fragile assumption',
+      body: stringValue(md.fragile_assumption) || (
+        <span className="text-slate-500">—</span>
+      ),
+    },
+    {
+      label: 'Inputs used',
+      body: plainList(md.inputs_used),
+    },
+    {
+      label: 'Counterfactual refs',
+      body:
+        refs.length === 0 ? (
+          <span className="text-slate-500">none</span>
+        ) : (
+          <ul className="grid gap-1 font-mono text-[12px]">
+            {refs.map((r) => (
+              <li key={r}>{r}</li>
+            ))}
+          </ul>
+        ),
+    },
+    {
+      label: 'Snapshot hashes',
+      body: (
+        <div className="grid gap-0.5 font-mono text-[12px]">
+          <span>evidence · {stringValue(snapshot.evidence_hash) || '—'}</span>
+          <span>claims · {stringValue(snapshot.claims_hash) || '—'}</span>
+          <span>curve · {stringValue(snapshot.curve_hash) || '—'}</span>
+        </div>
+      ),
+    },
+  ];
+  if (decisionId) {
+    sections.push({
+      label: 'Decision page',
+      body: (
+        <Link
+          href={`/decision/${decisionId}`}
+          className="inline-flex items-center gap-1 text-slate-700 underline-offset-2 hover:text-slate-950 hover:underline"
+        >
+          Open /decision/{decisionId.slice(0, 12)}…
+          <ArrowRight className="h-3 w-3" />
+        </Link>
+      ),
+    });
+  }
+  return { heading: 'Decision detail', sections };
+}
+
+function renderInYearDetail(md: AssetMetadata): StructuredView {
+  const diff = (md.diff ?? {}) as Record<string, unknown>;
+  const boundTo = stringValue(md.bound_to);
+  const sections: StructuredSection[] = [
+    {
+      label: 'Bound to decision',
+      body: boundTo ? (
+        <Link
+          href={`/decision/${boundTo}`}
+          className="inline-flex items-center gap-1 text-slate-700 underline-offset-2 hover:text-slate-950 hover:underline"
+        >
+          /decision/{boundTo.slice(0, 12)}…
+          <ArrowRight className="h-3 w-3" />
+        </Link>
+      ) : (
+        <span className="text-slate-500">—</span>
+      ),
+    },
+    { label: 'Asked at', body: formatTimestamp(stringValue(md.asked_at)) },
+    { label: 'Question', body: stringValue(md.question) || '—' },
+    { label: 'Answer', body: stringValue(md.answer) || '—' },
+    { label: 'Evidence added', body: plainList(diff.evidence_added) },
+    { label: 'Evidence invalidated', body: plainList(diff.evidence_invalidated) },
+    { label: 'Evidence changed', body: plainList(diff.evidence_changed) },
+  ];
+  return { heading: 'In-year query detail', sections };
+}
+
+function renderTaskDetail(md: AssetMetadata): StructuredView {
+  const scope = (md.scope ?? {}) as Record<string, unknown>;
+  const sections: StructuredSection[] = [
+    {
+      label: 'Kind',
+      body: stringValue(md.task_kind) || stringValue(md.kind) || '—',
+    },
+    {
+      label: 'Description',
+      body: stringValue(md.description) || (
+        <span className="text-slate-500">—</span>
+      ),
+    },
+    {
+      label: 'Status',
+      body: stringValue(md.status) || 'open',
+    },
+    {
+      label: 'Scope',
+      body: (
+        <span>
+          Study {stringValue(scope.study_id) || '—'}
+          {stringValue(scope.driver_id)
+            ? ` · Driver ${stringValue(scope.driver_id)}`
+            : ''}
+          {stringValue(scope.finding_id)
+            ? ` · Finding ${stringValue(scope.finding_id)}`
+            : ''}
+          {stringValue(scope.decision_id)
+            ? ` · Decision ${stringValue(scope.decision_id)}`
+            : ''}
+        </span>
+      ),
+    },
+    {
+      label: 'Due date',
+      body: stringValue(md.due_date) || 'no due date',
+    },
+    {
+      label: 'Created at',
+      body: formatTimestamp(stringValue(md.created_at)),
+    },
+  ];
+  return { heading: 'Task detail', sections };
 }
 
 function readableMetadata(metadata: AssetMetadata) {

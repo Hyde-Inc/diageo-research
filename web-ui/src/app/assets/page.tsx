@@ -21,9 +21,51 @@ import {
   type AssetsListResponse,
 } from '@/components/workbench/types';
 
-const KIND_FILTERS = ['all', 'declared', 'cell', 'source', 'evidence'] as const;
+// Filter chips mirror the backend ASSET_KINDS set in
+// src/diageo_research/web/api.py (M7 / FR-AT-1). The legacy "source"
+// and "evidence" chips have been dropped — they never matched any
+// backend kind and silently filtered everything out.
+const KIND_FILTERS = [
+  'all',
+  'declared',
+  'cell',
+  'persona',
+  'turn',
+  'tool_call',
+  'citation',
+  'claim',
+  'growth_driver',
+  'counterfactual',
+  'decision',
+  'in_year_query',
+  'task',
+] as const;
 
 type KindFilter = (typeof KIND_FILTERS)[number];
+
+const KIND_LABELS: Record<KindFilter, string> = {
+  all: 'all',
+  declared: 'declared',
+  cell: 'cell',
+  persona: 'persona',
+  turn: 'turn',
+  tool_call: 'tool call',
+  citation: 'citation',
+  claim: 'claim',
+  growth_driver: 'growth driver',
+  counterfactual: 'counterfactual',
+  decision: 'decision',
+  in_year_query: 'in-year query',
+  task: 'task',
+};
+
+const SUMMARY_KINDS: ReadonlySet<string> = new Set([
+  'growth_driver',
+  'counterfactual',
+  'decision',
+  'in_year_query',
+  'task',
+]);
 
 export default function AssetsPage() {
   const [assetState, setAssetState] = useState<{
@@ -69,6 +111,21 @@ export default function AssetsPage() {
     }
     return counts;
   }, [graphState.data]);
+
+  // Map decision_id → number of in_year_query assets that bind to it,
+  // so the decision summary card can carry a "tested in-year N times"
+  // badge (FR-AT-2). Cheap because /assets returns metadata inline.
+  const inYearByDecision = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const asset of assetState.data?.assets ?? []) {
+      if (asset.kind !== 'in_year_query') continue;
+      const md = asset.metadata ?? {};
+      const boundTo = typeof md.bound_to === 'string' ? md.bound_to : '';
+      if (!boundTo) continue;
+      counts.set(boundTo, (counts.get(boundTo) ?? 0) + 1);
+    }
+    return counts;
+  }, [assetState.data]);
 
   const filteredAssets = useMemo(() => {
     const assets = assetState.data?.assets ?? [];
@@ -158,7 +215,7 @@ export default function AssetsPage() {
                       : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900',
                   )}
                 >
-                  {item}
+                  {KIND_LABELS[item]}
                 </button>
               ))}
             </div>
@@ -175,19 +232,282 @@ export default function AssetsPage() {
             </div>
           ) : (
             <section className="grid gap-3 md:grid-cols-2">
-              {filteredAssets.map((asset) => (
-                <AssetCard
-                  key={`${asset.asset_key_encoded}-${asset.partition_key ?? 'none'}`}
-                  asset={asset}
-                  downstreamCount={downstreamCounts.get(assetName(asset)) ?? 0}
-                />
-              ))}
+              {filteredAssets.map((asset) => {
+                const summaryKind = SUMMARY_KINDS.has(assetKindLabel(asset))
+                  ? (assetKindLabel(asset) as SummaryKind)
+                  : null;
+                if (summaryKind) {
+                  return (
+                    <SummaryCard
+                      key={`${asset.asset_key_encoded}-${asset.partition_key ?? 'none'}`}
+                      asset={asset}
+                      kind={summaryKind}
+                      inYearCount={
+                        summaryKind === 'decision'
+                          ? (inYearByDecision.get(
+                              decisionIdOf(asset) ?? '',
+                            ) ?? 0)
+                          : 0
+                      }
+                    />
+                  );
+                }
+                return (
+                  <AssetCard
+                    key={`${asset.asset_key_encoded}-${asset.partition_key ?? 'none'}`}
+                    asset={asset}
+                    downstreamCount={downstreamCounts.get(assetName(asset)) ?? 0}
+                  />
+                );
+              })}
             </section>
           )}
         </FocusCard>
       </div>
     </main>
   );
+}
+
+type SummaryKind =
+  | 'growth_driver'
+  | 'counterfactual'
+  | 'decision'
+  | 'in_year_query'
+  | 'task';
+
+function SummaryCard({
+  asset,
+  kind,
+  inYearCount,
+}: {
+  asset: AssetSummary;
+  kind: SummaryKind;
+  inYearCount: number;
+}) {
+  const md = (asset.metadata ?? {}) as Record<string, unknown>;
+  const content = (() => {
+    switch (kind) {
+      case 'growth_driver':
+        return renderGrowthDriverSummary(md);
+      case 'counterfactual':
+        return renderCounterfactualSummary(md);
+      case 'decision':
+        return renderDecisionSummary(md, inYearCount);
+      case 'in_year_query':
+        return renderInYearSummary(md);
+      case 'task':
+        return renderTaskSummary(md);
+    }
+  })();
+  return (
+    <article className="group grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-950/[0.03] transition-all hover:-translate-y-0.5 hover:border-slate-300">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="truncate text-sm font-semibold tracking-tight text-slate-950">
+            {content.title}
+          </h2>
+          {content.subtitle ? (
+            <p className="mt-0.5 text-[12px] leading-snug text-slate-600">
+              {content.subtitle}
+            </p>
+          ) : null}
+        </div>
+        <KindBadge kind={KIND_LABELS[kind as KindFilter] ?? kind} />
+      </div>
+      {content.facts.length > 0 ? (
+        <ul className="grid gap-1 text-[12px] text-slate-700">
+          {content.facts.map((fact) => (
+            <li key={fact.label} className="flex items-baseline gap-1.5">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                {fact.label}
+              </span>
+              <span className="truncate font-medium text-slate-800">
+                {fact.value}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <div className="flex flex-wrap gap-1.5">
+        {content.badges.map((badge) => (
+          <Badge
+            key={badge.label}
+            variant="outline"
+            className={cn(
+              'border text-[10px] font-medium',
+              badge.tone === 'amber'
+                ? 'border-amber-200 bg-amber-50 text-amber-700'
+                : badge.tone === 'emerald'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                  : badge.tone === 'orange'
+                    ? 'border-orange-200 bg-orange-50 text-orange-700'
+                    : 'border-slate-200 bg-slate-50 text-slate-600',
+            )}
+          >
+            {badge.label}
+          </Badge>
+        ))}
+      </div>
+      <Link
+        href={`/assets/${asset.asset_key_encoded}`}
+        className="inline-flex h-9 items-center justify-center gap-2 rounded-full bg-slate-950 px-4 text-[12px] font-semibold text-white shadow-sm transition-colors hover:bg-slate-800"
+      >
+        Open
+        <ArrowRight className="h-3.5 w-3.5" />
+      </Link>
+    </article>
+  );
+}
+
+type SummaryFact = { label: string; value: string };
+type SummaryBadge = {
+  label: string;
+  tone: 'slate' | 'amber' | 'emerald' | 'orange';
+};
+type SummaryContent = {
+  title: string;
+  subtitle: string | null;
+  facts: SummaryFact[];
+  badges: SummaryBadge[];
+};
+
+function renderGrowthDriverSummary(
+  md: Record<string, unknown>,
+): SummaryContent {
+  const driverName = stringField(md.driver_name) || 'Growth driver';
+  const mustDo = stringField(md.must_do_title) || stringField(md.must_do);
+  const confidence = stringField(md.confidence_pill);
+  const illustrative = md.illustrative === true;
+  const badges: SummaryBadge[] = [];
+  if (confidence) badges.push({ label: confidence, tone: 'slate' });
+  if (illustrative) badges.push({ label: 'Illustrative', tone: 'amber' });
+  return {
+    title: driverName,
+    subtitle: mustDo ? `Must-Do · ${mustDo}` : null,
+    facts: [],
+    badges,
+  };
+}
+
+function renderCounterfactualSummary(
+  md: Record<string, unknown>,
+): SummaryContent {
+  const prompt = stringField(md.prompt) || 'Counterfactual scenario';
+  const variants = Array.isArray(md.variants) ? md.variants.length : 0;
+  const scope = (md.scope ?? {}) as Record<string, unknown>;
+  const driverId = stringField(scope.driver_id);
+  const findingId = stringField(scope.finding_id);
+  const subtitle = driverId
+    ? `for driver ${driverId}`
+    : findingId
+      ? `for finding ${findingId}`
+      : null;
+  return {
+    title: prompt,
+    subtitle,
+    facts: [
+      { label: 'Variants', value: String(variants) },
+      { label: 'Study', value: stringField(scope.study_id) || '—' },
+    ],
+    badges: [],
+  };
+}
+
+function renderDecisionSummary(
+  md: Record<string, unknown>,
+  inYearCount: number,
+): SummaryContent {
+  const recommendation =
+    stringField(md.recommendation) || 'Committed decision';
+  const committedAt = stringField(md.committed_at);
+  const scope = (md.scope ?? {}) as Record<string, unknown>;
+  const scopeLabel =
+    stringField(scope.driver_id) ||
+    stringField(scope.finding_id) ||
+    stringField(scope.study_id) ||
+    '—';
+  const owner = stringField(md.owner);
+  const facts: SummaryFact[] = [
+    { label: 'Scope', value: scopeLabel },
+    { label: 'Committed', value: formatTimestamp(committedAt) },
+  ];
+  if (owner) facts.push({ label: 'Owner', value: owner });
+  const badges: SummaryBadge[] = [];
+  if (inYearCount > 0) {
+    badges.push({
+      label: `tested in-year ${inYearCount} time${inYearCount === 1 ? '' : 's'}`,
+      tone: 'emerald',
+    });
+  }
+  return {
+    title: recommendation,
+    subtitle: null,
+    facts,
+    badges,
+  };
+}
+
+function renderInYearSummary(md: Record<string, unknown>): SummaryContent {
+  const boundTo = stringField(md.bound_to);
+  const askedAt = stringField(md.asked_at);
+  const diff = (md.diff ?? {}) as Record<string, unknown>;
+  const added = Array.isArray(diff.evidence_added)
+    ? diff.evidence_added.length
+    : 0;
+  const invalidated = Array.isArray(diff.evidence_invalidated)
+    ? diff.evidence_invalidated.length
+    : 0;
+  const changed = Array.isArray(diff.evidence_changed)
+    ? diff.evidence_changed.length
+    : 0;
+  return {
+    title: boundTo
+      ? `In-year query for decision ${boundTo.slice(0, 12)}…`
+      : 'In-year query',
+    subtitle: `${added} added · ${invalidated} invalidated · ${changed} shifted`,
+    facts: [{ label: 'Asked', value: formatTimestamp(askedAt) }],
+    badges:
+      added + invalidated + changed === 0
+        ? [{ label: 'no evidence change', tone: 'slate' }]
+        : [],
+  };
+}
+
+function renderTaskSummary(md: Record<string, unknown>): SummaryContent {
+  const taskKind = stringField(md.task_kind) || stringField(md.kind) || 'task';
+  const status = stringField(md.status) || 'open';
+  const due = stringField(md.due_date) || 'no due date';
+  const scope = (md.scope ?? {}) as Record<string, unknown>;
+  const scopeLabel =
+    stringField(scope.driver_id) ||
+    stringField(scope.finding_id) ||
+    stringField(scope.study_id) ||
+    '—';
+  const tone: SummaryBadge['tone'] =
+    status === 'done' ? 'emerald' : status === 'in_progress' ? 'slate' : 'amber';
+  return {
+    title: stringField(md.description) || `Task — ${taskKind}`,
+    subtitle: `kind · ${taskKind}`,
+    facts: [
+      { label: 'Scope', value: scopeLabel },
+      { label: 'Due', value: due },
+    ],
+    badges: [{ label: status, tone }],
+  };
+}
+
+function decisionIdOf(asset: AssetSummary): string | undefined {
+  if (asset.kind !== 'decision') return undefined;
+  const md = asset.metadata ?? {};
+  const fromMd = typeof md.decision_id === 'string' ? md.decision_id : null;
+  if (fromMd) return fromMd;
+  return asset.asset_key.at(-1) ?? undefined;
+}
+
+function stringField(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number') return String(value);
+  return '';
 }
 
 function AssetCard({
