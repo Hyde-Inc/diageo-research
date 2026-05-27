@@ -1,19 +1,30 @@
 'use client';
 
 /**
- * /evidence/[id] — one claim per page, linear vertical flow.
+ * /evidence/[id] — verify one claim, end-to-end.
  *
- * The id maps to a spec-curve cluster_id. For the evidence chain we
- * use the highest-evidence agreeing cell as the canonical source so the
- * page can show real Dagster materialization stages from that cell.
+ * Replaces the previous "linear claim → source → transformation →
+ * output" walk that printed "lens·solo" dimension badges and a generic
+ * "100% robust" chip. The redesigned page reads like:
  *
- * Layout, top to bottom:
- *   1. Claim          — the cluster's representative recommendation
- *   2. Source         — which cells voted "agree" (and which run we're
- *                       quoting from)
- *   3. Transformation — the stage chain that produced the brief, drawn
- *                       from `wb.materializations(run_id)`
- *   4. Output         — the robustness number + agreement counts
+ *   Verify panel        — three plain-language checks (rubric,
+ *                          provenance, robustness) mirroring the
+ *                          /answer ConfidencePanel.
+ *   Step 1 Claim        — the actual sentence(s) from the final brief,
+ *                          with a "see full paragraph" toggle when the
+ *                          paragraph is long.
+ *   Step 2 Sources      — clickable source cards built from final.json
+ *                          citations (BLS, BEA, DISCUS, SQL queries,
+ *                          …) with the [Sx] citations that appear in
+ *                          the claim's paragraph highlighted first.
+ *   Step 3 Transformation — pipeline steps in plain language, with a
+ *                            disclosure for raw timings/cost.
+ *   Step 4 Robustness     — sentence + small bar viz + "Spawn
+ *                            counterfactual" CTA to /plan.
+ *
+ * Honest gaps: when something is missing we say so in stakeholder
+ * language ("Couldn't locate the surrounding paragraph", "No sources
+ * cited yet"), rather than leaving "coming next" roadmap promises.
  */
 
 import Link from 'next/link';
@@ -24,11 +35,12 @@ import {
   ArrowRight,
   CheckCircle2,
   Database,
-  FileText,
+  ExternalLink,
   Layers,
   Quote,
+  Sparkles,
 } from 'lucide-react';
-import { FocusCard, FocusPlaceholder, StudyShell } from '@/components/study/study-shell';
+import { FocusCard, StudyShell } from '@/components/study/study-shell';
 import { useStudyData, withStudy } from '@/components/study/use-study';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -36,8 +48,34 @@ import {
   wb,
   type CellSummary,
   type Materialization,
+  type RunCitation,
+  type RunFinal,
   type SpecCurveRow,
 } from '@/components/workbench/types';
+import {
+  agreementToneClass,
+  cellDimensionLabel,
+  describeStage,
+  extractCiteIds,
+  extractClaimTitle,
+  findClaimParagraph,
+  formatSourceSummary,
+  summarizeAgreement,
+  summarizeCitations,
+  unlabeledSourceFallback,
+} from '@/components/evidence/claim-utils';
+import { SourceCard } from '@/components/evidence/source-card';
+import { VerifyPanel } from '@/components/evidence/verify-panel';
+
+type Loadable<T> = {
+  loading: boolean;
+  value: T | null;
+  error: string | null;
+};
+
+function emptyLoadable<T>(): Loadable<T> {
+  return { loading: true, value: null, error: null };
+}
 
 export default function EvidencePage({
   params,
@@ -58,19 +96,21 @@ export default function EvidencePage({
     if (!row) return [];
     return cells.filter((c) => row.statuses[c.id] === 'agree');
   }, [row, cells]);
-
   const sourceCell = useMemo<CellSummary | null>(() => {
     if (!row) return null;
     if (agreeingCells.length > 0) return agreeingCells[0];
     return cells.find((c) => row.statuses[c.id]) ?? null;
   }, [row, agreeingCells, cells]);
 
-  // Keep mats keyed to the run_id we fetched for, so the loading flag
-  // and contents stay aligned without a synchronous setState in the
-  // effect (which the project's lint rules reject).
+  // ── Per-run data: final.json (sources) and materializations (stages)
   const [matsFetch, setMatsFetch] = useState<{
     runId: string;
-    mats: Materialization[] | null;
+    value: Materialization[] | null;
+    error: string | null;
+  } | null>(null);
+  const [finalFetch, setFinalFetch] = useState<{
+    runId: string;
+    value: RunFinal | null;
     error: string | null;
   } | null>(null);
 
@@ -81,13 +121,30 @@ export default function EvidencePage({
     wb.materializations(runId)
       .then((res) => {
         if (cancelled) return;
-        setMatsFetch({ runId, mats: res.materializations, error: null });
+        setMatsFetch({
+          runId,
+          value: res.materializations,
+          error: null,
+        });
       })
       .catch((err) => {
         if (cancelled) return;
         setMatsFetch({
           runId,
-          mats: null,
+          value: null,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    wb.runFinal(runId)
+      .then((res) => {
+        if (cancelled) return;
+        setFinalFetch({ runId, value: res, error: null });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setFinalFetch({
+          runId,
+          value: null,
           error: err instanceof Error ? err.message : String(err),
         });
       });
@@ -97,25 +154,97 @@ export default function EvidencePage({
   }, [sourceCell]);
 
   const currentRunId = sourceCell?.run_id ?? null;
-  const mats =
-    matsFetch && matsFetch.runId === currentRunId ? matsFetch.mats : null;
-  const matsError =
-    matsFetch && matsFetch.runId === currentRunId ? matsFetch.error : null;
-  const matsLoading =
-    currentRunId != null &&
-    (matsFetch == null || matsFetch.runId !== currentRunId);
+  const mats: Loadable<Materialization[]> = useMemo(() => {
+    if (!currentRunId) return { loading: false, value: null, error: null };
+    if (matsFetch && matsFetch.runId === currentRunId) {
+      return {
+        loading: false,
+        value: matsFetch.value,
+        error: matsFetch.error,
+      };
+    }
+    return emptyLoadable();
+  }, [matsFetch, currentRunId]);
+
+  const finalLoad: Loadable<RunFinal> = useMemo(() => {
+    if (!currentRunId) return { loading: false, value: null, error: null };
+    if (finalFetch && finalFetch.runId === currentRunId) {
+      return {
+        loading: false,
+        value: finalFetch.value,
+        error: finalFetch.error,
+      };
+    }
+    return emptyLoadable();
+  }, [finalFetch, currentRunId]);
+
+  const citations: RunCitation[] = useMemo(
+    () => finalLoad.value?.json?.citations ?? [],
+    [finalLoad.value],
+  );
+  const summary = useMemo(() => summarizeCitations(citations), [citations]);
+  const claimTitle = row ? extractClaimTitle(row.representative) : '';
+  const paragraphMatch = useMemo(() => {
+    if (!row || !finalLoad.value?.markdown) return null;
+    return findClaimParagraph(finalLoad.value.markdown, row.representative);
+  }, [row, finalLoad.value]);
+  const referencedIds = useMemo(() => {
+    if (!row) return [];
+    const text = paragraphMatch?.paragraph ?? row.representative;
+    return extractCiteIds(text);
+  }, [row, paragraphMatch]);
+  const sortedCitations = useMemo(() => {
+    if (!citations.length || !referencedIds.length) return citations;
+    const order = new Map(referencedIds.map((cite_id, i) => [cite_id, i]));
+    return [...citations].sort((a, b) => {
+      const ai = order.has(a.cite_id) ? (order.get(a.cite_id) ?? 999) : 1000;
+      const bi = order.has(b.cite_id) ? (order.get(b.cite_id) ?? 999) : 1000;
+      return ai - bi;
+    });
+  }, [citations, referencedIds]);
+  const referencedCitations = sortedCitations.filter((c) =>
+    referencedIds.includes(c.cite_id),
+  );
+  const otherCitations = sortedCitations.filter(
+    (c) => !referencedIds.includes(c.cite_id),
+  );
+
+  // The "Spawn a counter-scenario" CTA links to /plan today. A
+  // follow-up will prefill the textarea with the dimension-swap
+  // instruction, once the plan page settles (it is being rewritten by
+  // a sibling change). Hint the dimension to the user in the link
+  // text instead, so they can still type the swap themselves.
+  const counterfactualHref = withStudy('/plan', studyId);
+  const counterfactualHint = useMemo(() => {
+    if (!cells.length) return null;
+    const dimensions = new Map<string, Set<string>>();
+    for (const c of cells) {
+      for (const [d, v] of Object.entries(c.axes)) {
+        if (!dimensions.has(d)) dimensions.set(d, new Set());
+        dimensions.get(d)!.add(v);
+      }
+    }
+    const candidates = Array.from(dimensions.entries()).filter(
+      ([, vs]) => vs.size > 1,
+    );
+    return candidates[0]?.[0] ?? null;
+  }, [cells]);
 
   return (
     <StudyShell
       data={data}
-      eyebrow={`Evidence #${id}`}
-      title="From claim to output number."
-      intro="A linear walk from the recommendation back to the cells, the stages, and the robustness score."
+      eyebrow={`Claim #${id}`}
+      title={row ? claimTitle : 'Claim'}
+      intro={
+        row
+          ? 'Walk from the sentence in the brief back to the sources, the steps, and the scenarios that tested it.'
+          : 'Pick a claim from the evidence list.'
+      }
       back={{
         href: row
           ? withStudy(`/scenario/${row.cluster_id}`, studyId)
-          : withStudy('/scenario', studyId),
-        label: 'Back to scenario',
+          : withStudy('/evidence', studyId),
+        label: 'Back to claims',
       }}
     >
       {!studyId ? null : loadingCurve || !curve ? (
@@ -132,35 +261,62 @@ export default function EvidencePage({
       ) : !row ? (
         <FocusCard>
           <p className="text-sm text-slate-600">
-            No cluster <span className="font-mono">#{id}</span> on the
-            current spec curve.
+            No claim <span className="font-mono">#{id}</span> on the
+            current evidence list. The list rebuilds every load — open{' '}
+            <Link
+              href={withStudy('/evidence', studyId)}
+              className="font-medium text-slate-900 underline-offset-4 hover:underline"
+            >
+              the claims list
+            </Link>{' '}
+            to pick another one.
           </p>
         </FocusCard>
       ) : (
         <div className="grid gap-3">
+          <StickyClaimHeader
+            row={row}
+            studyId={studyId}
+            claimTitle={claimTitle}
+          />
+
+          <VerifyPanel
+            row={row}
+            sources={summary}
+            hasSources={summary.total > 0}
+            loadingSources={finalLoad.loading}
+          />
+
           <Step
             number={1}
             label="Claim"
             Icon={Quote}
             tone="emerald"
           >
-            <p className="text-balance text-base leading-relaxed text-slate-800">
-              {row.representative}
-            </p>
+            <ClaimBody
+              row={row}
+              paragraph={paragraphMatch?.paragraph ?? null}
+              loading={finalLoad.loading}
+              error={finalLoad.error}
+            />
           </Step>
 
           <Connector />
 
           <Step
             number={2}
-            label="Source"
+            label="Sources"
             Icon={Database}
             tone="blue"
           >
-            <SourceBody
-              cells={agreeingCells}
-              quotedCell={sourceCell}
-              total={cells.length}
+            <SourcesBody
+              referenced={referencedCitations}
+              other={otherCitations}
+              loading={finalLoad.loading}
+              error={finalLoad.error}
+              sourceCell={sourceCell}
+              agreeingCellCount={agreeingCells.length}
+              totalCellCount={cells.length}
             />
           </Step>
 
@@ -173,9 +329,9 @@ export default function EvidencePage({
             tone="violet"
           >
             <TransformationBody
-              mats={mats}
-              loading={matsLoading}
-              error={matsError}
+              mats={mats.value}
+              loading={mats.loading}
+              error={mats.error}
               cell={sourceCell}
             />
           </Step>
@@ -184,25 +340,24 @@ export default function EvidencePage({
 
           <Step
             number={4}
-            label="Output number"
+            label="Robustness"
             Icon={CheckCircle2}
             tone="amber"
           >
-            <OutputBody row={row} totalCells={cells.length} />
+            <RobustnessBody
+              row={row}
+              counterfactualHref={counterfactualHref}
+              counterfactualHint={counterfactualHint}
+            />
           </Step>
-
-          <FocusPlaceholder
-            title="Per-claim citations are coming"
-            body="Today we trace the claim back to a representative agreeing cell. The next iteration adds first-class citations (sentence-level pointers from the brief into source documents and tool calls), so we can quote the exact text the claim is based on."
-          />
 
           <div className="flex flex-wrap items-center gap-2 pt-2">
             <Link
-              href={withStudy(`/scenario/${row.cluster_id}`, studyId)}
+              href={withStudy('/evidence', studyId)}
               className="inline-flex h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-[12px] font-medium text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
-              Back to scenario
+              Back to claims
             </Link>
             <Link
               href={withStudy('/answer', studyId)}
@@ -217,6 +372,52 @@ export default function EvidencePage({
     </StudyShell>
   );
 }
+
+// ── Sticky claim header ────────────────────────────────────────────
+
+function StickyClaimHeader({
+  row,
+  studyId,
+  claimTitle,
+}: {
+  row: SpecCurveRow;
+  studyId: string | null;
+  claimTitle: string;
+}) {
+  const agree = summarizeAgreement(row);
+  return (
+    <div className="sticky top-2 z-10 -mx-1 rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 shadow-sm backdrop-blur sm:top-3 sm:px-4">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+            Verifying claim
+          </p>
+          <p className="truncate text-sm font-semibold text-slate-900">
+            {claimTitle}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span
+            className={cn(
+              'inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em]',
+              agreementToneClass(agree.tone),
+            )}
+          >
+            {agree.text}
+          </span>
+          <Link
+            href={withStudy(`/scenario/${row.cluster_id}`, studyId)}
+            className="hidden rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 sm:inline-flex"
+          >
+            View scenario detail
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Step shell + connector ─────────────────────────────────────────
 
 function Step({
   number,
@@ -272,80 +473,227 @@ function Connector() {
   );
 }
 
-function SourceBody({
-  cells,
-  quotedCell,
-  total,
+// ── Step 1: Claim body ─────────────────────────────────────────────
+
+function ClaimBody({
+  row,
+  paragraph,
+  loading,
+  error,
 }: {
-  cells: CellSummary[];
-  quotedCell: CellSummary | null;
-  total: number;
+  row: SpecCurveRow;
+  paragraph: string | null;
+  loading: boolean;
+  error: string | null;
 }) {
-  if (cells.length === 0) {
-    return (
-      <p className="text-[13px] text-slate-600">
-        No cells voted &ldquo;agree&rdquo; for this scenario in the
-        current curve. The claim is a candidate the synthesizer raised
-        but no defensible framing has supported yet.
-      </p>
-    );
-  }
+  const [open, setOpen] = useState(false);
+  // Reuse extractClaimTitle's cleaner for the quote so the blockquote
+  // doesn't render the raw "- **Lead recommendation:** …" prefix that
+  // some persona sub-reports use before their key sentence.
+  const cleanedRep = useMemo(
+    () => extractClaimTitle(row.representative, 9999),
+    [row],
+  );
+  const showToggle = paragraph != null && paragraph.length > cleanedRep.length + 80;
   return (
     <div className="grid gap-2">
-      <p className="text-[13px] leading-snug text-slate-700">
-        {cells.length} of {total} cells produced a brief that supports
-        this claim. We&apos;re quoting the run from{' '}
-        {quotedCell ? (
-          <span className="font-mono text-[11px] text-slate-900">
-            {quotedCell.id}
-          </span>
-        ) : (
-          'the lead cell'
-        )}
-        {quotedCell ? (
-          <>
-            {' '}
-            (run{' '}
-            <span className="font-mono text-[11px] text-slate-900">
-              {quotedCell.run_id}
-            </span>
-            ).
-          </>
-        ) : (
-          '.'
-        )}
-      </p>
-      <ul className="grid gap-1.5">
-        {cells.slice(0, 8).map((cell) => (
-          <li
-            key={cell.id}
-            className="flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] shadow-sm"
-          >
-            {Object.entries(cell.axes).map(([axis, value]) => (
-              <Badge
-                key={axis}
-                variant="outline"
-                className="border-slate-200 bg-slate-50 font-mono text-[10px] text-slate-700"
-              >
-                <span className="text-slate-500">{axis}</span>
-                <span className="mx-0.5 text-slate-400">·</span>
-                {value}
-              </Badge>
-            ))}
-            <span className="ml-auto font-mono text-[10px] text-slate-400">
-              {cell.id}
-            </span>
-          </li>
-        ))}
-        {cells.length > 8 ? (
-          <li className="text-[11px] text-slate-500">
-            +{cells.length - 8} more
-          </li>
-        ) : null}
-      </ul>
+      <blockquote className="rounded-2xl border-l-4 border-emerald-200 bg-emerald-50/40 px-4 py-3 text-[14px] leading-relaxed text-slate-800">
+        “{cleanedRep}”
+      </blockquote>
+      {error ? (
+        <p className="text-[12px] text-orange-700">
+          Couldn&apos;t load the brief to fetch the surrounding paragraph:{' '}
+          {error}
+        </p>
+      ) : loading ? (
+        <p className="text-[12px] text-slate-500">
+          Loading the surrounding paragraph from the brief…
+        </p>
+      ) : paragraph == null ? (
+        <p className="text-[12px] text-slate-500">
+          Couldn&apos;t locate the surrounding paragraph in the brief.
+          The claim above is the verbatim cluster representative.
+        </p>
+      ) : showToggle ? (
+        <details
+          open={open}
+          onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
+          className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+        >
+          <summary className="cursor-pointer text-[12px] font-medium text-slate-700">
+            {open ? 'Hide full paragraph' : 'See full paragraph'}
+          </summary>
+          <p className="mt-2 whitespace-pre-wrap text-[12px] leading-relaxed text-slate-700">
+            {paragraph}
+          </p>
+        </details>
+      ) : (
+        <p className="text-[12px] leading-relaxed text-slate-600">
+          The claim sentence is shown verbatim above; it&apos;s the full
+          paragraph in the brief.
+        </p>
+      )}
     </div>
   );
 }
+
+// ── Step 2: Sources body ───────────────────────────────────────────
+
+function SourcesBody({
+  referenced,
+  other,
+  loading,
+  error,
+  sourceCell,
+  agreeingCellCount,
+  totalCellCount,
+}: {
+  referenced: RunCitation[];
+  other: RunCitation[];
+  loading: boolean;
+  error: string | null;
+  sourceCell: CellSummary | null;
+  agreeingCellCount: number;
+  totalCellCount: number;
+}) {
+  if (!sourceCell) {
+    return (
+      <p className="text-[13px] text-slate-600">
+        No scenario voted &ldquo;agree&rdquo; for this claim yet. It is a
+        candidate the synthesizer raised but no defensible framing has
+        supported.
+      </p>
+    );
+  }
+  if (loading) {
+    return (
+      <div className="grid gap-2">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div
+            key={i}
+            className="h-20 animate-pulse rounded-2xl bg-slate-200/70"
+          />
+        ))}
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <p className="text-[12px] text-orange-700">
+        Couldn&apos;t load the brief to extract citations: {error}
+      </p>
+    );
+  }
+
+  const dimensionLabel = cellDimensionLabel(sourceCell);
+  const totalCited = referenced.length + other.length;
+  const summary = summarizeCitations([...referenced, ...other]);
+  const scenarioCount = agreeingCellCount > 0 ? agreeingCellCount : 1;
+
+  return (
+    <div className="grid gap-3">
+      <p className="text-[12px] leading-snug text-slate-600">
+        Quoted from the brief produced by{' '}
+        <span className="font-medium text-slate-800">{dimensionLabel}</span>.{' '}
+        {agreeingCellCount > 0 ? (
+          <>
+            {agreeingCellCount} of {totalCellCount}{' '}
+            {totalCellCount === 1 ? 'scenario' : 'scenarios'} produced a
+            brief that supports this claim.
+          </>
+        ) : (
+          <>No scenarios fully agree; this is the closest brief.</>
+        )}
+      </p>
+
+      {totalCited === 0 ? (
+        <p className="text-[13px] text-slate-600">
+          The brief did not cite any verifiable sources for this claim
+          ({totalCellCount === 1 ? 'a known gap for single-scenario studies' : 'investigate the source cell'}).{' '}
+          <span className="text-slate-500">
+            Source cell:{' '}
+            <span className="font-mono text-[11px]">{sourceCell.id}</span>{' '}
+            ·{' '}
+            <span className="font-mono text-[11px]">
+              {unlabeledSourceFallback(sourceCell.run_id)}
+            </span>
+          </span>
+        </p>
+      ) : (
+        <>
+          {referenced.length > 0 ? (
+            <div className="grid gap-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                Cited in this claim ({referenced.length})
+              </p>
+              <div className="grid gap-2">
+                {referenced.map((c) => (
+                  <SourceCard key={c.cite_id} citation={c} />
+                ))}
+              </div>
+            </div>
+          ) : (
+            <p className="text-[12px] text-slate-500">
+              The claim text does not reference specific citations; the
+              brief used {totalCited} source
+              {totalCited === 1 ? '' : 's'} across the full paragraph —
+              listed below.
+            </p>
+          )}
+
+          {other.length > 0 ? (
+            <details className="rounded-2xl border border-slate-200 bg-white">
+              <summary className="cursor-pointer px-3 py-2 text-[12px] font-medium text-slate-700">
+                Other sources in this brief ({other.length})
+              </summary>
+              <div className="grid gap-2 border-t border-slate-200 p-3">
+                {other.map((c) => (
+                  <SourceCard key={c.cite_id} citation={c} />
+                ))}
+              </div>
+            </details>
+          ) : null}
+
+          <PartialSourcesNote
+            referenced={referenced}
+            total={totalCited}
+            scenarios={scenarioCount}
+            summary={summary}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+function PartialSourcesNote({
+  referenced,
+  total,
+  scenarios,
+  summary,
+}: {
+  referenced: RunCitation[];
+  total: number;
+  scenarios: number;
+  summary: ReturnType<typeof summarizeCitations>;
+}) {
+  // Surface partial-evidence honesty: if some citations are unverified
+  // or the brief shipped fewer sources than scenarios, say so.
+  const unverified = referenced.filter((c) => c.verified === false).length;
+  if (unverified === 0 && scenarios <= 1 && total <= 10) return null;
+  return (
+    <p className="text-[11px] leading-snug text-slate-500">
+      Provenance check: {formatSourceSummary(summary)} across {scenarios}{' '}
+      {scenarios === 1 ? 'scenario' : 'scenarios'}.
+      {unverified > 0
+        ? ` ${unverified} of these failed automated verification —
+            treat them as background context, not load-bearing evidence.`
+        : ''}
+    </p>
+  );
+}
+
+// ── Step 3: Transformation body ────────────────────────────────────
 
 function TransformationBody({
   mats,
@@ -368,7 +716,7 @@ function TransformationBody({
   if (error) {
     return (
       <p className="text-[12px] text-orange-700">
-        Couldn&apos;t load Dagster materializations: {error}
+        Couldn&apos;t load the pipeline receipt for this run: {error}
       </p>
     );
   }
@@ -387,79 +735,195 @@ function TransformationBody({
   if (mats.length === 0) {
     return (
       <p className="text-[12px] text-slate-600">
-        No <code className="font-mono text-[11px]">dagster_materializations.jsonl</code>{' '}
-        on disk for this run yet — the runner writes one line per stage as
-        it completes.
+        No pipeline receipt on disk for this run yet — the runner writes
+        one line per step as it completes.
       </p>
     );
   }
+
+  const steps = mats.map(describeStage);
+  const totalElapsed = mats.reduce((acc, m) => acc + (m.elapsed_s ?? 0), 0);
+  const totalSpend = mats.reduce((acc, m) => acc + (m.spent_usd ?? 0), 0);
+  const totalCalls = mats.reduce((acc, m) => acc + (m.n_calls ?? 0), 0);
+
   return (
-    <ol className="grid gap-1.5">
-      {mats.map((m, i) => (
-        <li
-          key={`${m.stage}-${i}`}
-          className="flex flex-wrap items-baseline gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[12px] shadow-sm"
-        >
-          <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-            {String(i + 1).padStart(2, '0')}
-          </span>
-          <span className="font-mono text-[11px] font-semibold text-slate-900">
-            {m.stage}
-          </span>
-          {m.model_id ? (
-            <Badge
-              variant="outline"
-              className="border-slate-200 bg-slate-50 font-mono text-[9px] text-slate-600"
+    <div className="grid gap-2">
+      <ol className="grid gap-1.5">
+        {steps.map((s, i) => (
+          <li
+            key={`${s.raw_stage}-${i}`}
+            className="grid grid-cols-[auto_minmax(0,1fr)] gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm"
+          >
+            <span className="grid h-6 w-6 place-items-center rounded-md bg-slate-100 font-mono text-[10px] font-bold text-slate-600">
+              {String(i + 1).padStart(2, '0')}
+            </span>
+            <div className="min-w-0">
+              <p className="text-[12px] font-semibold text-slate-900">
+                {s.title}
+              </p>
+              <p className="text-[11px] leading-snug text-slate-600">
+                {s.description}
+              </p>
+            </div>
+          </li>
+        ))}
+      </ol>
+
+      <details className="mt-1 rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-3 py-2">
+        <summary className="cursor-pointer text-[11px] font-medium text-slate-600">
+          Show raw timings and cost ({totalElapsed.toFixed(1)}s ·{' '}
+          {totalCalls} calls · ${totalSpend.toFixed(4)})
+        </summary>
+        <ul className="mt-2 grid gap-1.5">
+          {mats.map((m, i) => (
+            <li
+              key={`raw-${m.stage}-${i}`}
+              className="flex flex-wrap items-baseline gap-2 rounded-lg bg-white px-2 py-1 text-[11px] shadow-inner"
             >
-              {m.model_id}
-            </Badge>
-          ) : null}
-          {m.elapsed_s != null ? (
-            <span className="font-mono text-[10px] text-slate-500">
-              {m.elapsed_s.toFixed(1)}s
-            </span>
-          ) : null}
-          {m.spent_usd != null ? (
-            <span className="ml-auto font-mono text-[10px] text-slate-500">
-              ${m.spent_usd.toFixed(4)}
-            </span>
-          ) : null}
-        </li>
-      ))}
-      <li className="flex items-center gap-1 text-[10px] text-slate-500">
-        <FileText className="h-3 w-3" />
-        produces{' '}
-        <code className="font-mono">runs/{cell.run_id}/final.md</code>
-      </li>
-    </ol>
+              <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                {String(i + 1).padStart(2, '0')}
+              </span>
+              <span className="font-mono text-[11px] font-semibold text-slate-900">
+                {m.stage}
+              </span>
+              {m.model_id ? (
+                <Badge
+                  variant="outline"
+                  className="border-slate-200 bg-slate-50 font-mono text-[9px] text-slate-600"
+                >
+                  {m.model_id}
+                </Badge>
+              ) : null}
+              {m.elapsed_s != null ? (
+                <span className="font-mono text-[10px] text-slate-500">
+                  {m.elapsed_s.toFixed(1)}s
+                </span>
+              ) : null}
+              {m.spent_usd != null ? (
+                <span className="ml-auto font-mono text-[10px] text-slate-500">
+                  ${m.spent_usd.toFixed(4)}
+                </span>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+        <p className="mt-2 flex items-center gap-1 text-[10px] text-slate-500">
+          <ExternalLink className="h-3 w-3" />
+          Receipt path:{' '}
+          <code className="font-mono">
+            runs/{cell.run_id}/dagster_materializations.jsonl
+          </code>
+        </p>
+      </details>
+    </div>
   );
 }
 
-function OutputBody({
+// ── Step 4: Robustness body ────────────────────────────────────────
+
+function RobustnessBody({
   row,
-  totalCells,
+  counterfactualHref,
+  counterfactualHint,
 }: {
   row: SpecCurveRow;
-  totalCells: number;
+  counterfactualHref: string;
+  counterfactualHint: string | null;
 }) {
-  const pct = Math.round(row.robustness * 100);
-  const total = row.n_agree + row.n_weaker + row.n_flips + row.n_missing;
+  const agree = summarizeAgreement(row);
+  const total = agree.total;
+  const agreeCount = agree.agree;
+  const pct = total > 0 ? agreeCount / total : 0;
+  const barTone =
+    agree.tone === 'strong'
+      ? 'bg-emerald-500'
+      : agree.tone === 'mixed'
+        ? 'bg-yellow-500'
+        : agree.tone === 'weak'
+          ? 'bg-orange-500'
+          : 'bg-slate-300';
+
   return (
-    <div className="grid gap-2">
-      <div className="flex flex-wrap items-baseline gap-3">
-        <span className="text-3xl font-bold leading-none tabular-nums text-slate-950">
-          {pct}%
-        </span>
-        <span className="text-[13px] text-slate-600">
-          robust · {row.n_agree}/{total} cells agree across{' '}
-          {totalCells} defensible specifications
-        </span>
-      </div>
-      <p className="text-[12px] leading-snug text-slate-500">
-        Robustness is computed by the spec curve every time it&apos;s
-        requested — there&apos;s no cached score on disk, so this number
-        always reflects the current set of completed cells.
+    <div className="grid gap-3">
+      <p className="text-[14px] leading-relaxed text-slate-800">
+        {total === 0 ? (
+          'Not yet evaluated across any scenario.'
+        ) : (
+          <>
+            Holds in <span className="font-semibold">{agreeCount}</span> of{' '}
+            <span className="font-semibold">{total}</span>{' '}
+            {total === 1 ? 'scenario' : 'scenarios'} so far.
+            {total <= 1
+              ? ' Add more scenarios to stress-test.'
+              : row.n_flips > 0
+                ? ` ${row.n_flips} scenario${row.n_flips === 1 ? '' : 's'} flip the claim — investigate before relying on it.`
+                : ''}
+          </>
+        )}
       </p>
+      <div
+        className="h-2 w-full overflow-hidden rounded-full bg-slate-100"
+        aria-label={`${agreeCount} of ${total} scenarios agree`}
+      >
+        <div
+          className={cn('h-full transition-[width]', barTone)}
+          style={{ width: `${Math.max(pct * 100, total > 0 ? 6 : 0)}%` }}
+        />
+      </div>
+      <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
+        <Legend tone="emerald" label={`agree ${row.n_agree}`} />
+        <Legend tone="amber" label={`weaker ${row.n_weaker}`} />
+        <Legend tone="orange" label={`flip ${row.n_flips}`} />
+        <Legend tone="slate" label={`missing ${row.n_missing}`} />
+      </div>
+      {row.fragile_specs.length > 0 ? (
+        <p className="text-[12px] text-slate-600">
+          <span className="font-semibold text-slate-700">Fragile under:</span>{' '}
+          {row.fragile_specs.slice(0, 3).join(', ')}
+          {row.fragile_specs.length > 3
+            ? ` (+${row.fragile_specs.length - 3} more)`
+            : ''}
+        </p>
+      ) : null}
+      <div className="grid gap-1.5">
+        <Link
+          href={counterfactualHref}
+          className="inline-flex w-fit items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[12px] font-medium text-slate-800 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50"
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+          Spawn a counter-scenario
+        </Link>
+        {counterfactualHint ? (
+          <p className="text-[11px] text-slate-500">
+            Suggestion: swap the{' '}
+            <span className="font-medium text-slate-700">
+              {counterfactualHint}
+            </span>{' '}
+            dimension to a value this study hasn&apos;t tested yet.
+          </p>
+        ) : null}
+      </div>
     </div>
+  );
+}
+
+function Legend({
+  tone,
+  label,
+}: {
+  tone: 'emerald' | 'amber' | 'orange' | 'slate';
+  label: string;
+}) {
+  const cls = {
+    emerald: 'bg-emerald-500',
+    amber: 'bg-yellow-500',
+    orange: 'bg-orange-500',
+    slate: 'bg-slate-300',
+  }[tone];
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className={cn('h-2 w-2 rounded-full', cls)} />
+      <span className="font-mono">{label}</span>
+    </span>
   );
 }

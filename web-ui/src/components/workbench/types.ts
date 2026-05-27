@@ -207,10 +207,59 @@ export type MaterializationsResponse = {
   materializations: Materialization[];
 };
 
+// Mirrors the ``Citation`` model in ``src/diageo_research/models.py``.
+// Each citation is one row in the brief's reference list — either a web
+// document fetched by the browser tool, or a DuckDB query the analyst
+// persona ran. ``cite_id`` is the [S1]/[S2]-style handle the markdown
+// uses to reference it.
+export type RunCitation = {
+  cite_id: string;
+  source: 'browser' | 'duckdb';
+  url?: string | null;
+  title?: string | null;
+  sql?: string | null;
+  snippet?: string | null;
+  verified?: boolean | null;
+  verification_note?: string | null;
+};
+
+export type RunFinalJson = {
+  question?: string;
+  outline?: string[];
+  markdown?: string;
+  citations?: RunCitation[];
+};
+
 export type RunFinal = {
   run_id: string;
   markdown?: string;
-  json?: Record<string, unknown>;
+  json?: RunFinalJson;
+};
+
+// One row in the per-persona ``tools.json`` written at end-of-interview
+// by the orchestrator. The shape is loose because we capture different
+// fields per outcome (``ok``, ``failed``, ``cell_cap`` etc). Surface only
+// the fields the evidence UX actually reads.
+export type RunToolCall = {
+  tool: 'web_browse' | 'web_fetch' | 'duckdb_query' | string;
+  outcome: string;
+  query?: string;
+  url?: string;
+  sql?: string;
+  cite_id?: string;
+  n_snippets?: number;
+  n_rows?: number;
+  reason?: string;
+};
+
+export type RunToolPersona = {
+  persona_id: string;
+  calls: RunToolCall[];
+};
+
+export type RunToolsResponse = {
+  run_id: string;
+  personas: RunToolPersona[];
 };
 
 // ─── Study detail + pre-registration ───────────────────────────────
@@ -375,6 +424,8 @@ export const wb = {
   materializations: (runId: string) =>
     wbFetch<MaterializationsResponse>(`/runs/${runId}/materializations`),
   runFinal: (runId: string) => wbFetch<RunFinal>(`/runs/${runId}/final`),
+  runTools: (runId: string) =>
+    wbFetch<RunToolsResponse>(`/runs/${runId}/tools`),
   ask: (studyId: string, body: AskRequest) =>
     wbFetch<AskResponse>(`/studies/${studyId}/ask`, {
       method: 'POST',
