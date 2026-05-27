@@ -20,6 +20,7 @@ import {
   type AssetGraph,
   type AssetSummary,
   type AssetsListResponse,
+  type SpecCurve,
 } from '@/components/workbench/types';
 
 // Filter chips mirror the backend ASSET_KINDS set in
@@ -105,6 +106,69 @@ function AssetsPageBody() {
   }>({ data: null, error: null });
   const [query, setQuery] = useState('');
 
+  // Lineage filter: when /assets is opened with ?cluster=N&study=…
+  // (from the ConfidencePanel "See provenance trace" row) we narrow
+  // the list to assets that touched any cell in that cluster. The
+  // spec curve is the only place that maps cluster_id → cell.run_id,
+  // so we fetch it lazily and derive the run_id set.
+  const studyParam = searchParams.get('study');
+  const clusterParam = searchParams.get('cluster');
+  const clusterId = clusterParam != null ? Number(clusterParam) : null;
+  const clusterActive =
+    Boolean(studyParam) && clusterId != null && Number.isFinite(clusterId);
+  const [clusterCurve, setClusterCurve] = useState<{
+    studyId: string;
+    curve: SpecCurve | null;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!clusterActive || !studyParam) return;
+    let cancelled = false;
+    wb.specCurve(studyParam)
+      .then((curve) => {
+        if (!cancelled) setClusterCurve({ studyId: studyParam, curve });
+      })
+      .catch(() => {
+        if (!cancelled) setClusterCurve({ studyId: studyParam, curve: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [studyParam, clusterActive]);
+
+  const clusterRunIds = useMemo<Set<string> | null>(() => {
+    if (!clusterActive) return null;
+    if (!clusterCurve?.curve) return new Set();
+    const row = clusterCurve.curve.rows.find(
+      (r) => r.cluster_id === clusterId,
+    );
+    if (!row) return new Set();
+    const ids = new Set<string>();
+    const cellById = new Map(clusterCurve.curve.cells.map((c) => [c.id, c]));
+    for (const [cellId, status] of Object.entries(row.statuses)) {
+      if (status === 'missing') continue;
+      const cell = cellById.get(cellId);
+      if (cell?.run_id) ids.add(cell.run_id);
+    }
+    return ids;
+  }, [clusterActive, clusterCurve, clusterId]);
+
+  const clusterTitle = useMemo<string | null>(() => {
+    if (!clusterCurve?.curve || clusterId == null) return null;
+    const row = clusterCurve.curve.rows.find(
+      (r) => r.cluster_id === clusterId,
+    );
+    if (!row) return null;
+    return row.representative.split(/(?<=[.!?])\s+/)[0]?.slice(0, 96) ?? null;
+  }, [clusterCurve, clusterId]);
+
+  const onClearCluster = useCallback(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('cluster');
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname);
+  }, [pathname, router, searchParams]);
+
   const setKindAndUrl = useCallback(
     (next: KindFilter) => {
       const params = new URLSearchParams(searchParams.toString());
@@ -172,6 +236,18 @@ function AssetsPageBody() {
     return assets.filter((asset) => {
       const assetKind = assetKindLabel(asset).toLowerCase();
       if (kind !== 'all' && assetKind !== kind) return false;
+      if (clusterRunIds != null) {
+        const md = asset.metadata ?? {};
+        const mdCluster =
+          typeof md.cluster_id === 'number'
+            ? md.cluster_id
+            : typeof md.cluster_id === 'string'
+              ? Number(md.cluster_id)
+              : null;
+        const runMatch = asset.run_id ? clusterRunIds.has(asset.run_id) : false;
+        const clusterMatch = mdCluster != null && mdCluster === clusterId;
+        if (!runMatch && !clusterMatch) return false;
+      }
       if (!needle) return true;
       const haystack = [
         assetName(asset),
@@ -186,7 +262,17 @@ function AssetsPageBody() {
         .toLowerCase();
       return haystack.includes(needle);
     });
-  }, [assetState.data, kind, query]);
+  }, [assetState.data, kind, query, clusterRunIds, clusterId]);
+
+  // Total before the cluster filter so the pill can read "N of M".
+  const totalForCounts = useMemo(() => {
+    const assets = assetState.data?.assets ?? [];
+    return assets.filter((asset) => {
+      const assetKind = assetKindLabel(asset).toLowerCase();
+      if (kind !== 'all' && assetKind !== kind) return false;
+      return true;
+    }).length;
+  }, [assetState.data, kind]);
 
   return (
     <main className="min-h-svh bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.10),transparent_32rem),linear-gradient(180deg,#f8fafc_0%,#eef2f7_100%)] px-4 py-8 font-sans text-slate-950 sm:px-6">
@@ -225,6 +311,16 @@ function AssetsPageBody() {
           error={graphState.error}
           downstreamCounts={downstreamCounts}
         />
+
+        {clusterRunIds != null ? (
+          <ClusterScopePill
+            clusterId={clusterId ?? 0}
+            title={clusterTitle}
+            visible={filteredAssets.length}
+            total={totalForCounts}
+            onClear={onClearCluster}
+          />
+        ) : null}
 
         <FocusCard className="grid gap-4">
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
@@ -304,6 +400,43 @@ function AssetsPageBody() {
         </FocusCard>
       </div>
     </main>
+  );
+}
+
+function ClusterScopePill({
+  clusterId,
+  title,
+  visible,
+  total,
+  onClear,
+}: {
+  clusterId: number;
+  title: string | null;
+  visible: number;
+  total: number;
+  onClear: () => void;
+}) {
+  return (
+    <div className="sticky top-2 z-10 rounded-2xl border border-amber-200 bg-amber-50/90 px-3 py-2 text-[12px] text-amber-900 shadow-sm backdrop-blur">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="leading-snug">
+          Showing provenance for{' '}
+          <span className="font-semibold">
+            cluster {clusterId}
+            {title ? `: "${title}"` : ''}
+          </span>{' '}
+          — <span className="font-mono">{visible}</span> of{' '}
+          <span className="font-mono">{total}</span> assets
+        </p>
+        <button
+          type="button"
+          onClick={onClear}
+          className="rounded-full border border-amber-300 bg-white px-3 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100"
+        >
+          Show all
+        </button>
+      </div>
+    </div>
   );
 }
 

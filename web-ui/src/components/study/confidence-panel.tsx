@@ -1,3 +1,6 @@
+import Link from 'next/link';
+import { ArrowRight } from 'lucide-react';
+
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { Prereg, SpecCurve } from '@/components/workbench/types';
@@ -26,6 +29,8 @@ export function ConfidencePanel({
   provenance,
   raiseConfidence,
   className,
+  studyId,
+  clusterId,
 }: {
   curve: SpecCurve | null;
   prereg?: Prereg | null;
@@ -33,6 +38,11 @@ export function ConfidencePanel({
   provenance?: ProvenanceInput;
   raiseConfidence?: string[];
   className?: string;
+  // Optional context for turning each check into a clickable row that
+  // lands on a surface the user can act on. When omitted the rows
+  // render as plain summary cards (legacy behaviour).
+  studyId?: string | null;
+  clusterId?: number | null;
 }) {
   const lead = curve?.rows[0] ?? null;
   const total =
@@ -102,12 +112,24 @@ export function ConfidencePanel({
               : `Required data: ${interval?.requiredData ?? 'connected outcome or holdout observations tied to this study.'}`,
           ]}
           tone={intervalAvailable ? 'ready' : 'needs-data'}
+          actionHref={
+            studyId
+              ? `/setup?study=${studyId}&focus=holdout${clusterId != null ? `&cluster=${clusterId}` : ''}`
+              : null
+          }
+          actionLabel="Open holdout setup"
         />
         <TrustCheck
           title="2. Provenance"
           status={provenanceAvailable ? 'Trace available' : 'Trace incomplete'}
           detail={[`${source} -> ${transformation} -> ${output}`]}
           tone={provenanceAvailable ? 'ready' : 'needs-data'}
+          actionHref={
+            studyId
+              ? `/assets?study=${studyId}${clusterId != null ? `&cluster=${clusterId}` : ''}`
+              : null
+          }
+          actionLabel="See provenance trace"
         />
         <TrustCheck
           title="3. Robustness"
@@ -133,6 +155,12 @@ export function ConfidencePanel({
                   ? 'watch'
                   : 'risk'
           }
+          actionHref={
+            studyId
+              ? `/robustness?study=${studyId}${clusterId != null ? `&cluster=${clusterId}` : ''}`
+              : null
+          }
+          actionLabel="Open robustness view"
         />
       </div>
 
@@ -158,14 +186,18 @@ function TrustCheck({
   status,
   detail,
   tone,
+  actionHref,
+  actionLabel,
 }: {
   title: string;
   status: string;
   detail: string[];
   tone: 'ready' | 'watch' | 'risk' | 'needs-data';
+  actionHref?: string | null;
+  actionLabel?: string;
 }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+  const inner = (
+    <>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
         <span
@@ -182,6 +214,30 @@ function TrustCheck({
           <p key={line}>{line}</p>
         ))}
       </div>
+      {actionHref ? (
+        <p className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-slate-700 group-hover:underline">
+          {actionLabel ?? 'Open'}
+          <ArrowRight
+            className="h-3 w-3 transition-transform group-hover:translate-x-0.5"
+            aria-hidden
+          />
+        </p>
+      ) : null}
+    </>
+  );
+  if (actionHref) {
+    return (
+      <Link
+        href={actionHref}
+        className="group block rounded-2xl border border-slate-200 bg-white p-4 text-left transition-colors hover:border-slate-300 hover:bg-slate-50"
+      >
+        {inner}
+      </Link>
+    );
+  }
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      {inner}
     </div>
   );
 }

@@ -38,7 +38,6 @@ import {
   ExternalLink,
   Layers,
   Quote,
-  Sparkles,
 } from 'lucide-react';
 import { FocusCard, StudyShell } from '@/components/study/study-shell';
 import { useStudyData, withStudy } from '@/components/study/use-study';

@@ -180,6 +180,8 @@ export default function ResearchPage() {
             <ConfidencePanel
               curve={curve}
               prereg={prereg}
+              studyId={studyId}
+              clusterId={selected?.clusterId ?? null}
               interval={{
                 kind: 'confidence interval',
                 available: false,
