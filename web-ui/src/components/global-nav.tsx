@@ -23,6 +23,8 @@ import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import {
   CheckCircle2,
+  ChevronsLeft,
+  ChevronsRight,
   Circle,
   Clock,
   Compass,
@@ -37,6 +39,7 @@ import {
   PencilLine,
   Settings2,
   Telescope,
+  Target,
   TrendingUp,
   XCircle,
   type LucideIcon,
@@ -61,7 +64,7 @@ import {
   type AssetSummary,
   type StudySummary,
 } from '@/components/workbench/types';
-import { cn } from '@/lib/utils';
+import { cn, useLocalStorageString } from '@/lib/utils';
 
 type NavItem = { href: string; label: string; Icon: LucideIcon };
 
@@ -92,15 +95,53 @@ const SEEDED_MBP_LABEL = 'Crown Royal × NFL 2026-27 MBP';
 const SEEDED_MBP_DISPLAY_ID = 'mbp_crown_royal_nfl_2026';
 const SEEDED_MBP_HINT = 'Planning context · MBP cycle Q3 2026 → Q2 2027';
 
+const SIDEBAR_STORAGE_KEY = 'diageo:sidebar:collapsed';
+const SIDEBAR_WIDTH_EXPANDED = '220px';
+const SIDEBAR_WIDTH_COLLAPSED = '64px';
+
 export function GlobalNav() {
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Persisted collapse state. Default is "0" (expanded) and SSR-safe
+  // via useSyncExternalStore in useLocalStorageString — no setState in
+  // effect, no hydration mismatch.
+  const [storedCollapsed, setStoredCollapsed] = useLocalStorageString(
+    SIDEBAR_STORAGE_KEY,
+    '0',
+  );
+  const collapsed = storedCollapsed === '1';
+
+  // Drive layout width via a CSS variable on <html>. The layout grid in
+  // src/app/layout.tsx reads `var(--sidebar-w, 220px)` so the main
+  // content reflows without a hooks-in-the-server-layout dance. Cleanup
+  // on unmount restores the default so other surfaces don't inherit a
+  // collapsed width.
+  useEffect(() => {
+    const root = document.documentElement;
+    const w = collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED;
+    root.style.setProperty('--sidebar-w', w);
+    return () => {
+      root.style.removeProperty('--sidebar-w');
+    };
+  }, [collapsed]);
+
+  const toggleCollapsed = () => {
+    setStoredCollapsed(collapsed ? '0' : '1');
+  };
+
   return (
     <>
       <aside
         aria-label="Primary navigation"
-        className="sticky top-0 hidden h-svh w-[220px] shrink-0 flex-col gap-3 overflow-y-auto border-r border-slate-200 bg-white/95 px-3 py-4 backdrop-blur lg:flex"
+        data-collapsed={collapsed || undefined}
+        className={cn(
+          'sticky top-0 hidden h-svh shrink-0 flex-col gap-3 overflow-y-auto border-r border-slate-200 bg-white/95 backdrop-blur transition-[width,padding] duration-200 lg:flex',
+          collapsed ? 'w-[64px] px-1.5 py-4' : 'w-[220px] px-3 py-4',
+        )}
       >
-        <SidebarContents />
+        <SidebarContents
+          collapsed={collapsed}
+          onToggleCollapse={toggleCollapsed}
+        />
       </aside>
       <div className="sticky top-0 z-40 flex h-12 items-center gap-2 border-b border-slate-200 bg-white/95 px-4 backdrop-blur lg:hidden">
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
@@ -118,7 +159,10 @@ export function GlobalNav() {
             className="w-[260px] max-w-[80vw] overflow-y-auto bg-white p-4"
           >
             <SheetTitle className="sr-only">Navigation</SheetTitle>
-            <SidebarContents onNavigate={() => setMobileOpen(false)} />
+            <SidebarContents
+              collapsed={false}
+              onNavigate={() => setMobileOpen(false)}
+            />
           </SheetContent>
         </Sheet>
         <Link
@@ -135,49 +179,141 @@ export function GlobalNav() {
   );
 }
 
-function SidebarContents({ onNavigate }: { onNavigate?: () => void }) {
+function SidebarContents({
+  collapsed,
+  onToggleCollapse,
+  onNavigate,
+}: {
+  collapsed: boolean;
+  onToggleCollapse?: () => void;
+  onNavigate?: () => void;
+}) {
   const data = useStudyData();
   return (
     <>
-      <BrandHeader />
-      <ContextSwitcher data={data} />
-      <NavSection title="Routes">
-        <NavList items={PRIMARY_NAV} studyId={data.studyId} onNavigate={onNavigate} />
+      <BrandHeader
+        collapsed={collapsed}
+        onToggleCollapse={onToggleCollapse}
+      />
+      {collapsed ? (
+        <CollapsedContextHint data={data} onExpand={onToggleCollapse} />
+      ) : (
+        <ContextSwitcher data={data} />
+      )}
+      <NavSection title="Routes" collapsed={collapsed}>
+        <NavList
+          items={PRIMARY_NAV}
+          studyId={data.studyId}
+          collapsed={collapsed}
+          onNavigate={onNavigate}
+        />
       </NavSection>
-      <NavSection title="Workspaces">
-        <NavList items={SECONDARY_NAV} studyId={data.studyId} onNavigate={onNavigate} />
+      <NavSection title="Workspaces" collapsed={collapsed}>
+        <NavList
+          items={SECONDARY_NAV}
+          studyId={data.studyId}
+          collapsed={collapsed}
+          onNavigate={onNavigate}
+        />
       </NavSection>
-      <RecentDecisions studyId={data.studyId} onNavigate={onNavigate} />
+      {collapsed ? null : (
+        <RecentDecisions studyId={data.studyId} onNavigate={onNavigate} />
+      )}
     </>
   );
 }
 
-function BrandHeader() {
+function BrandHeader({
+  collapsed,
+  onToggleCollapse,
+}: {
+  collapsed: boolean;
+  onToggleCollapse?: () => void;
+}) {
   return (
-    <Link
-      href="/"
-      className="flex items-center gap-2 font-semibold tracking-tight text-slate-950"
+    <div
+      className={cn(
+        'flex items-center gap-1.5',
+        collapsed ? 'flex-col' : 'justify-between',
+      )}
     >
-      <span className="grid h-7 w-7 place-items-center rounded-lg bg-slate-950 text-white shadow-sm">
-        <FlaskConical className="h-4 w-4" />
-      </span>
-      <span className="text-sm">ADC Research</span>
-    </Link>
+      <Link
+        href="/"
+        title="ADC Research · Home"
+        className={cn(
+          'flex items-center gap-2 font-semibold tracking-tight text-slate-950',
+          collapsed && 'justify-center',
+        )}
+      >
+        <span className="grid h-7 w-7 place-items-center rounded-lg bg-slate-950 text-white shadow-sm">
+          <FlaskConical className="h-4 w-4" />
+        </span>
+        {collapsed ? null : <span className="text-sm">ADC Research</span>}
+      </Link>
+      {onToggleCollapse ? (
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-expanded={!collapsed}
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+        >
+          {collapsed ? (
+            <ChevronsRight className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronsLeft className="h-3.5 w-3.5" />
+          )}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function CollapsedContextHint({
+  data,
+  onExpand,
+}: {
+  data: ReturnType<typeof useStudyData>;
+  onExpand?: () => void;
+}) {
+  const { studyId, studySummary } = data;
+  const isMbp = studyId === SEEDED_MBP_STUDY;
+  const id = isMbp ? SEEDED_MBP_DISPLAY_ID : studyId ?? '';
+  const label = isMbp
+    ? SEEDED_MBP_LABEL
+    : studySummary
+      ? humaniseName(studySummary.name)
+      : 'No study selected';
+  return (
+    <button
+      type="button"
+      onClick={onExpand}
+      title={id ? `Working on · ${label} · ${id}` : 'Working on · pick a study'}
+      aria-label={`Working on ${label}. Expand sidebar to change.`}
+      className="mx-auto inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+    >
+      <Target className="h-4 w-4" />
+    </button>
   );
 }
 
 function NavSection({
   title,
+  collapsed,
   children,
 }: {
   title: string;
+  collapsed?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <section className="grid gap-1.5">
-      <h2 className="px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-        {title}
-      </h2>
+      {collapsed ? null : (
+        <h2 className="px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+          {title}
+        </h2>
+      )}
       {children}
     </section>
   );
@@ -186,10 +322,12 @@ function NavSection({
 function NavList({
   items,
   studyId,
+  collapsed,
   onNavigate,
 }: {
   items: NavItem[];
   studyId: string | null;
+  collapsed?: boolean;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
@@ -208,15 +346,20 @@ function NavList({
               href={href}
               onClick={onNavigate}
               aria-current={active ? 'page' : undefined}
+              title={collapsed ? item.label : undefined}
+              aria-label={collapsed ? item.label : undefined}
               className={cn(
-                'flex items-center gap-2 rounded-lg px-2 py-1.5 text-[12px] font-medium transition-colors',
+                'flex items-center rounded-lg text-[12px] font-medium transition-colors',
+                collapsed
+                  ? 'h-9 w-9 mx-auto justify-center'
+                  : 'gap-2 px-2 py-1.5',
                 active
                   ? 'bg-slate-950 text-white shadow-sm'
                   : 'text-slate-700 hover:bg-slate-100 hover:text-slate-950',
               )}
             >
               <item.Icon className="h-3.5 w-3.5" />
-              {item.label}
+              {collapsed ? null : item.label}
             </Link>
           </li>
         );

@@ -31,7 +31,13 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full bg-slate-50 text-slate-950">
-        <div className="lg:grid lg:min-h-svh lg:grid-cols-[220px_minmax(0,1fr)]">
+        {/*
+          Sidebar width is driven by `--sidebar-w` so the GlobalNav
+          (client) can toggle collapse without making this layout a
+          client component. Default 220px; collapsed = 64px. The grid
+          template animates so width changes don't snap.
+        */}
+        <div className="lg:grid lg:min-h-svh lg:grid-cols-[var(--sidebar-w,220px)_minmax(0,1fr)] lg:transition-[grid-template-columns] lg:duration-200">
           <Suspense fallback={<div className="hidden lg:block lg:h-svh lg:w-[220px] lg:border-r lg:border-slate-200 lg:bg-white" />}>
             <GlobalNav />
           </Suspense>
