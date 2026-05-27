@@ -1670,6 +1670,12 @@ class DecisionAsset:
     owner: str
     committed_at: str
     snapshot: dict[str, Any]
+    # Optional human descriptor of the MBP context this decision was
+    # committed inside. Populated by the API layer when the decision's
+    # scope names a ``driver_id`` (M3 — Crown Royal × NFL seed). Stays
+    # ``None`` for research-finding decisions so the FE can fall back to
+    # the existing study/finding scope copy.
+    mbp: dict[str, Any] | None = None
 
     def asset_key_path(self) -> list[str]:
         return decision_asset_key(
@@ -1690,6 +1696,7 @@ class DecisionAsset:
             "owner": self.owner,
             "committed_at": self.committed_at,
             "snapshot": dict(self.snapshot or {}),
+            "mbp": dict(self.mbp) if self.mbp else None,
             "asset_key_path": self.asset_key_path(),
             "asset_key_encoded": _keys.encode_asset_key(self.asset_key_path()),
         }

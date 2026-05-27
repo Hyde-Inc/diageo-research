@@ -49,7 +49,16 @@ export function StudyShell({
   eyebrow?: string;
   title: React.ReactNode;
   intro?: string;
-  back?: { href: string; label: string };
+  back?: {
+    href: string;
+    label: string;
+    /** When set, the back affordance renders as a button that calls
+     * this handler instead of navigating to ``href``. ``href`` is
+     * still required so the button can fall back to a deterministic
+     * route when there's no history (and so consumers can render a
+     * sensible href if they swap the shell out later). */
+    onClick?: () => void;
+  };
   actions?: React.ReactNode;
   contentClassName?: string;
   /** If false, the header chrome is rendered without the rounded card border. */
@@ -80,13 +89,24 @@ export function StudyShell({
         >
           <div className="min-w-0 flex-1">
             {back ? (
-              <Link
-                href={back.href}
-                className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-500 transition-colors hover:text-slate-900"
-              >
-                <ArrowLeft className="h-3 w-3" />
-                {back.label}
-              </Link>
+              back.onClick ? (
+                <button
+                  type="button"
+                  onClick={back.onClick}
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-500 transition-colors hover:text-slate-900"
+                >
+                  <ArrowLeft className="h-3 w-3" />
+                  {back.label}
+                </button>
+              ) : (
+                <Link
+                  href={back.href}
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-500 transition-colors hover:text-slate-900"
+                >
+                  <ArrowLeft className="h-3 w-3" />
+                  {back.label}
+                </Link>
+              )
             ) : null}
             {eyebrow ? (
               <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">

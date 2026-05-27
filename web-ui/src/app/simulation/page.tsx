@@ -58,6 +58,8 @@ import {
   type AssetSummary,
   type CounterfactualScopeBody,
   type DecisionScopeBody,
+  type GrowthDriverDTO,
+  type MustDoDTO,
   type ResearchSummary,
   type TaskScopeBody,
 } from '@/components/workbench/types';
@@ -119,12 +121,23 @@ type ValidateState =
     }
   | { kind: 'error'; message: string };
 
+// Hardcoded for the single seeded MBP. Mirrors the descriptor that
+// /api/decisions stamps on a committed decision when its scope names a
+// driver_id, so the simulation page can render the same MBP-scope copy
+// before commit.
+const SEEDED_MBP_NAME = 'Crown Royal × NFL 2026-27 MBP';
+
 function SimulationBody() {
   const data = useStudyData();
   const { studyId, curve, detail } = data;
   const router = useRouter();
   const search = useSearchParams();
   const [summary, setSummary] = useState<ResearchSummary | null>(null);
+  const [growthDrivers, setGrowthDrivers] = useState<{
+    studyId: string | null;
+    drivers: GrowthDriverDTO[];
+    mustDos: MustDoDTO[];
+  }>({ studyId: null, drivers: [], mustDos: [] });
   const [toast, setToast] = useState<{
     id: number;
     title: string;
@@ -144,6 +157,30 @@ function SimulationBody() {
       })
       .catch(() => {
         if (!cancelled) setSummary(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [studyId]);
+
+  // Fetch the planning-context drivers when scoped to a driver, so the
+  // ScopeCard can render the MBP descriptor (mbp · must_do · driver)
+  // instead of the underlying study question.
+  useEffect(() => {
+    if (!studyId) return;
+    let cancelled = false;
+    wb.growthDrivers(studyId)
+      .then((res) => {
+        if (cancelled) return;
+        setGrowthDrivers({
+          studyId,
+          drivers: res.drivers ?? [],
+          mustDos: res.must_dos ?? [],
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setGrowthDrivers({ studyId, drivers: [], mustDos: [] });
       });
     return () => {
       cancelled = true;
@@ -301,7 +338,11 @@ function SimulationBody() {
               <ScopeCard
                 scope={scope}
                 findingTitle={findingTitle}
-                detailQuestion={detail?.question ?? null}
+                mbpDescriptor={
+                  scope.kind === 'driver'
+                    ? buildScopeMbpDescriptor(scope, growthDrivers)
+                    : null
+                }
               />
               <VariantsGrid variants={variants} />
               <DisclosureBlock variants={variants} scope={scope} />
@@ -400,6 +441,30 @@ function deriveScope(args: {
     };
   }
   return { kind: 'empty' };
+}
+
+// Resolve the planning-context descriptor (MBP · Must-Do · Driver)
+// for a driver-scoped counterfactual. Falls back to the slug-derived
+// label when the growth-drivers fetch hasn't landed yet so the card
+// never renders blank.
+function buildScopeMbpDescriptor(
+  scope: DriverScope,
+  payload: {
+    studyId: string | null;
+    drivers: GrowthDriverDTO[];
+    mustDos: MustDoDTO[];
+  },
+): ScopeMbpDescriptor {
+  const driverRow = payload.drivers.find(
+    (d) => d.driver_id === scope.driverSlug,
+  );
+  const mustDoId = driverRow?.must_do || scope.mustDoSlug || '';
+  const mustDoRow = payload.mustDos.find((m) => m.id === mustDoId);
+  return {
+    mbpName: SEEDED_MBP_NAME,
+    mustDo: mustDoRow?.title || scope.mustDoLabel || '',
+    driver: driverRow?.driver_name || scope.driverLabel,
+  };
 }
 
 // Title-case kebab/snake fragments, but keep small connectors lowercase
@@ -981,16 +1046,27 @@ function buildFindingVariants(
   ];
 }
 
+type ScopeMbpDescriptor = {
+  mbpName: string;
+  mustDo: string;
+  driver: string;
+};
+
 function ScopeCard({
   scope,
   findingTitle,
-  detailQuestion,
+  mbpDescriptor,
 }: {
   scope: Scope;
   findingTitle: string | null;
-  detailQuestion: string | null;
+  mbpDescriptor: ScopeMbpDescriptor | null;
 }) {
   if (scope.kind === 'driver') {
+    const segments = mbpDescriptor
+      ? [mbpDescriptor.mbpName, mbpDescriptor.mustDo, mbpDescriptor.driver]
+          .filter(Boolean)
+          .join(' · ')
+      : null;
     return (
       <FocusCard tone="muted" className="border-dashed">
         <div className="grid gap-2">
@@ -999,7 +1075,7 @@ function ScopeCard({
               variant="outline"
               className="border-slate-300 bg-white text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600"
             >
-              Scope: growth driver
+              Scope: planning context
             </Badge>
             <Badge
               variant="outline"
@@ -1008,25 +1084,29 @@ function ScopeCard({
               Illustrative
             </Badge>
           </div>
-          <p className="text-[13px] leading-snug text-slate-800">
-            Driver:{' '}
-            <span className="font-semibold text-slate-950">
-              {scope.driverLabel}
-            </span>
-            {scope.mustDoLabel ? (
-              <>
-                {' · Must-Do: '}
-                <span className="font-semibold text-slate-950">
-                  {scope.mustDoLabel}
-                </span>
-              </>
-            ) : null}
-          </p>
-          {detailQuestion ? (
-            <p className="text-[12px] leading-snug text-slate-600">
-              Active study question: {detailQuestion}
+          {segments ? (
+            <p className="text-[13px] leading-snug text-slate-900">
+              <span className="font-semibold text-slate-950">{segments}</span>
             </p>
-          ) : null}
+          ) : (
+            <p className="text-[13px] leading-snug text-slate-800">
+              Driver:{' '}
+              <span className="font-semibold text-slate-950">
+                {scope.driverLabel}
+              </span>
+              {scope.mustDoLabel ? (
+                <>
+                  {' · Must-Do: '}
+                  <span className="font-semibold text-slate-950">
+                    {scope.mustDoLabel}
+                  </span>
+                </>
+              ) : null}
+            </p>
+          )}
+          {/* Active study question is intentionally suppressed for
+              driver-scoped counter-scenarios — the MBP descriptor is
+              the working scope, not the underlying study question. */}
         </div>
       </FocusCard>
     );

@@ -503,6 +503,16 @@ export type DecisionResponse = {
   snapshot: DecisionSnapshot;
 };
 
+export type DecisionMbpDescriptor = {
+  mbp_name: string;
+  brand: string;
+  cycle_window: string;
+  must_do_id: string;
+  must_do: string;
+  driver_id: string;
+  driver: string;
+};
+
 export type DecisionRecord = {
   kind: 'decision';
   decision_id: string;
@@ -515,6 +525,7 @@ export type DecisionRecord = {
   owner: string;
   committed_at: string;
   snapshot: DecisionSnapshot;
+  mbp?: DecisionMbpDescriptor | null;
   asset_key_path: string[];
   asset_key_encoded: string;
 };

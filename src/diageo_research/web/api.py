@@ -1436,6 +1436,21 @@ async def stream_study(study_id: str) -> EventSourceResponse:
 GROWTH_DRIVERS_SAMPLES_DIR = SAMPLES_DIR / "growth_drivers"
 GROWTH_DRIVERS_DEFAULT_SAMPLE = "crown_royal_nfl.yaml"
 
+# Human descriptor for the seeded planning context. The seed file name
+# is the index (so a future second MBP gets its own entry) and the
+# values surface to the FE in the DecisionAsset payload so /simulation
+# and /decision/[id] can show "Crown Royal × NFL 2026-27 MBP · Win
+# Football Tailgating · Crown Peach tailgate" rather than the raw
+# study question. Keep in sync with the SEEDED_MBP constants in
+# web-ui/src/app/page.tsx and web-ui/src/components/global-nav.tsx.
+SEEDED_MBP_DESCRIPTORS: dict[str, dict[str, str]] = {
+    "crown_royal_nfl.yaml": {
+        "mbp_name": "Crown Royal × NFL 2026-27 MBP",
+        "brand": "Crown Royal",
+        "cycle_window": "Q3 2026 → Q2 2027",
+    },
+}
+
 
 class CounterfactualScope(BaseModel):
     """Scope tuple for a counterfactual.
@@ -1721,6 +1736,45 @@ def post_counterfactual(req: CounterfactualRequest) -> dict[str, Any]:
 # ----------------------------------------------------- Decision POST
 
 
+def _build_mbp_descriptor(
+    *,
+    driver_id: str,
+    sample_filename: str = GROWTH_DRIVERS_DEFAULT_SAMPLE,
+) -> dict[str, str] | None:
+    """Resolve a planner-readable MBP descriptor for a driver-scoped decision.
+
+    Looks up the driver and its parent Must-Do in the YAML seed, then
+    pairs them with the SEEDED_MBP_DESCRIPTORS entry for the same seed
+    file. Returns ``None`` when the driver doesn't appear in any seed
+    (research-finding decisions, or unknown driver ids), which lets the
+    FE fall back to the study/finding scope copy.
+    """
+    if not driver_id:
+        return None
+    seed = _load_growth_driver_seed(sample_filename)
+    drivers = list(seed.get("drivers") or [])
+    must_dos = list(seed.get("must_dos") or [])
+    must_do_by_id = {str(m.get("id")): m for m in must_dos if m.get("id")}
+    driver_raw = next(
+        (d for d in drivers if str(d.get("driver_id")) == str(driver_id)),
+        None,
+    )
+    if driver_raw is None:
+        return None
+    must_do_id = str(driver_raw.get("must_do") or "")
+    must_do = must_do_by_id.get(must_do_id) or {}
+    base = SEEDED_MBP_DESCRIPTORS.get(sample_filename, {})
+    return {
+        "mbp_name": str(base.get("mbp_name") or ""),
+        "brand": str(base.get("brand") or ""),
+        "cycle_window": str(base.get("cycle_window") or ""),
+        "must_do_id": must_do_id,
+        "must_do": str(must_do.get("title") or ""),
+        "driver_id": str(driver_raw.get("driver_id") or driver_id),
+        "driver": str(driver_raw.get("driver_name") or ""),
+    }
+
+
 def _collect_decision_evidence_pointers(
     *, study_id: str, scope: dict[str, Any], inputs_used: list[str]
 ) -> list[str]:
@@ -1869,6 +1923,9 @@ def post_decision(req: DecisionRequest) -> dict[str, Any]:
         owner=req.owner,
         committed_at=committed_at,
     )
+    mbp_descriptor = _build_mbp_descriptor(
+        driver_id=str(scope_dict.get("driver_id") or ""),
+    )
     asset = DecisionAsset(
         decision_id=decision_id,
         scope=scope_dict,
@@ -1880,6 +1937,7 @@ def post_decision(req: DecisionRequest) -> dict[str, Any]:
         owner=req.owner,
         committed_at=committed_at,
         snapshot=snapshot,
+        mbp=mbp_descriptor,
     )
     instance = _resolve_dagster_instance()
     try:
@@ -1897,6 +1955,7 @@ def post_decision(req: DecisionRequest) -> dict[str, Any]:
         "scope": scope_dict,
         "committed_at": committed_at,
         "snapshot": snapshot,
+        "mbp": mbp_descriptor,
     }
 
 
@@ -1909,10 +1968,19 @@ def get_decision(decision_id: str) -> dict[str, Any]:
 
     Helper for the FE's /decision/[id] page. The persistence file is
     the source of truth — the Dagster event log just mirrors it.
+
+    Hydrates ``mbp`` on read for legacy decisions persisted before the
+    descriptor was introduced, so the FE can render the MBP-scope
+    provenance line without a one-off backfill.
     """
     payload = load_decision_asset(DECISION_ASSET_PREFIX, decision_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="no such decision")
+    if not payload.get("mbp"):
+        scope = payload.get("scope") or {}
+        driver_id = scope.get("driver_id") if isinstance(scope, dict) else None
+        if driver_id:
+            payload["mbp"] = _build_mbp_descriptor(driver_id=str(driver_id))
     return payload
 
 

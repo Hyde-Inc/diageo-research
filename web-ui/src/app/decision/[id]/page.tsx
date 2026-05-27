@@ -26,6 +26,7 @@
  */
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { use, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
@@ -79,6 +80,7 @@ export default function DecisionDetailPage({
 }) {
   const { id } = use(params);
   const data = useStudyData();
+  const router = useRouter();
   const [fetched, setFetched] = useState<DecisionFetch | null>(null);
   const [inYear, setInYear] = useState<InYearState>({ kind: 'idle' });
 
@@ -139,12 +141,22 @@ export default function DecisionDetailPage({
     }
   };
 
+  const backHref = withStudy('/assets', studyId);
+  const handleBack = () => {
+    // window.history is only available client-side, but this is a
+    // 'use client' component so we can branch on history.length>1.
+    if (typeof window !== 'undefined' && window.history.length > 1) {
+      router.back();
+    } else {
+      router.push(backHref);
+    }
+  };
   return (
     <StudyShell
       data={data}
       eyebrow="Committed decision"
       title={record ? record.recommendation : 'Decision'}
-      back={{ href: withStudy('/assets', studyId), label: 'Back to /assets' }}
+      back={{ href: backHref, label: 'Back', onClick: handleBack }}
       contentClassName="max-w-[1200px]"
       mainLabel="Decision detail"
       rightLabel="In-year action"
@@ -208,11 +220,42 @@ function DecisionBody({
           <p className="text-[12px] leading-snug text-slate-500">
             Committed by{' '}
             <span className="font-medium text-slate-700">{record.owner}</span>{' '}
-            on {formatCommittedAt(record.committed_at)} for study{' '}
-            <span className="font-medium text-slate-700">
-              {studyLabel ?? scope.study_id ?? '—'}
-            </span>
-            .
+            on {formatCommittedAt(record.committed_at)}
+            {record.mbp ? (
+              <>
+                {' in '}
+                <span className="font-medium text-slate-700">
+                  {[
+                    record.mbp.mbp_name,
+                    record.mbp.must_do,
+                    record.mbp.driver,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </span>
+                .
+              </>
+            ) : findingId ? (
+              <>
+                {' for finding '}
+                <span className="font-medium text-slate-700">
+                  {humaniseSlug(findingId)}
+                </span>{' '}
+                in study{' '}
+                <span className="font-medium text-slate-700">
+                  {studyLabel ?? scope.study_id ?? '—'}
+                </span>
+                .
+              </>
+            ) : (
+              <>
+                {' for study '}
+                <span className="font-medium text-slate-700">
+                  {studyLabel ?? scope.study_id ?? '—'}
+                </span>
+                .
+              </>
+            )}
           </p>
           <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">

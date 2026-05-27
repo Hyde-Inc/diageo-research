@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   ArrowRight,
   DatabaseZap,
@@ -67,7 +68,32 @@ const SUMMARY_KINDS: ReadonlySet<string> = new Set([
   'task',
 ]);
 
+const KIND_FILTER_SET: ReadonlySet<string> = new Set(KIND_FILTERS);
+
+function readKindFromParams(searchParams: { get: (key: string) => string | null }): KindFilter {
+  const raw = searchParams.get('kind');
+  if (raw && KIND_FILTER_SET.has(raw)) return raw as KindFilter;
+  return 'all';
+}
+
 export default function AssetsPage() {
+  return (
+    <Suspense fallback={null}>
+      <AssetsPageBody />
+    </Suspense>
+  );
+}
+
+function AssetsPageBody() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  // The chip group is fully URL-driven. Reading kind straight off
+  // the search params (no mirrored state) means deep-links like
+  // /assets?kind=decision activate the matching chip on first render
+  // and back/forward keeps the page in sync without a sync effect.
+  const kind = readKindFromParams(searchParams);
+
   const [assetState, setAssetState] = useState<{
     data: AssetsListResponse | null;
     error: string | null;
@@ -78,7 +104,20 @@ export default function AssetsPage() {
     error: string | null;
   }>({ data: null, error: null });
   const [query, setQuery] = useState('');
-  const [kind, setKind] = useState<KindFilter>('all');
+
+  const setKindAndUrl = useCallback(
+    (next: KindFilter) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (next === 'all') {
+        params.delete('kind');
+      } else {
+        params.set('kind', next);
+      }
+      const qs = params.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname);
+    },
+    [pathname, router, searchParams],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -207,7 +246,7 @@ export default function AssetsPage() {
                 <button
                   key={item}
                   type="button"
-                  onClick={() => setKind(item)}
+                  onClick={() => setKindAndUrl(item)}
                   className={cn(
                     'rounded-full border px-3 py-1 text-[12px] font-medium capitalize transition-colors',
                     kind === item
@@ -302,12 +341,12 @@ function SummaryCard({
   return (
     <article className="group grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-950/[0.03] transition-all hover:-translate-y-0.5 hover:border-slate-300">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="truncate text-sm font-semibold tracking-tight text-slate-950">
+        <div className="min-w-0 flex-1">
+          <h2 className="line-clamp-2 text-sm font-semibold leading-snug tracking-tight text-slate-950">
             {content.title}
           </h2>
           {content.subtitle ? (
-            <p className="mt-0.5 text-[12px] leading-snug text-slate-600">
+            <p className="mt-0.5 line-clamp-2 text-[12px] leading-snug text-slate-600">
               {content.subtitle}
             </p>
           ) : null}
@@ -398,9 +437,9 @@ function renderCounterfactualSummary(
   const driverId = stringField(scope.driver_id);
   const findingId = stringField(scope.finding_id);
   const subtitle = driverId
-    ? `for driver ${driverId}`
+    ? `for driver ${humaniseSlug(driverId)}`
     : findingId
-      ? `for finding ${findingId}`
+      ? `for finding ${humaniseSlug(findingId)}`
       : null;
   return {
     title: prompt,
@@ -421,11 +460,13 @@ function renderDecisionSummary(
     stringField(md.recommendation) || 'Committed decision';
   const committedAt = stringField(md.committed_at);
   const scope = (md.scope ?? {}) as Record<string, unknown>;
-  const scopeLabel =
-    stringField(scope.driver_id) ||
-    stringField(scope.finding_id) ||
-    stringField(scope.study_id) ||
-    '—';
+  const driverId = stringField(scope.driver_id);
+  const findingId = stringField(scope.finding_id);
+  const scopeLabel = driverId
+    ? humaniseSlug(driverId)
+    : findingId
+      ? humaniseSlug(findingId)
+      : stringField(scope.study_id) || '—';
   const owner = stringField(md.owner);
   const facts: SummaryFact[] = [
     { label: 'Scope', value: scopeLabel },
@@ -478,16 +519,18 @@ function renderTaskSummary(md: Record<string, unknown>): SummaryContent {
   const status = stringField(md.status) || 'open';
   const due = stringField(md.due_date) || 'no due date';
   const scope = (md.scope ?? {}) as Record<string, unknown>;
-  const scopeLabel =
-    stringField(scope.driver_id) ||
-    stringField(scope.finding_id) ||
-    stringField(scope.study_id) ||
-    '—';
+  const driverId = stringField(scope.driver_id);
+  const findingId = stringField(scope.finding_id);
+  const scopeLabel = driverId
+    ? humaniseSlug(driverId)
+    : findingId
+      ? humaniseSlug(findingId)
+      : stringField(scope.study_id) || '—';
   const tone: SummaryBadge['tone'] =
     status === 'done' ? 'emerald' : status === 'in_progress' ? 'slate' : 'amber';
   return {
-    title: stringField(md.description) || `Task — ${taskKind}`,
-    subtitle: `kind · ${taskKind}`,
+    title: stringField(md.description) || `Task — ${humaniseSlug(taskKind)}`,
+    subtitle: `kind · ${humaniseSlug(taskKind)}`,
     facts: [
       { label: 'Scope', value: scopeLabel },
       { label: 'Due', value: due },
@@ -502,6 +545,15 @@ function decisionIdOf(asset: AssetSummary): string | undefined {
   const fromMd = typeof md.decision_id === 'string' ? md.decision_id : null;
   if (fromMd) return fromMd;
   return asset.asset_key.at(-1) ?? undefined;
+}
+
+function humaniseSlug(slug: string): string {
+  if (!slug) return slug;
+  return slug
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b([a-z])/g, (_, c: string) => c.toUpperCase());
 }
 
 function stringField(value: unknown): string {
