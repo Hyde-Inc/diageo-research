@@ -84,10 +84,13 @@ const SECONDARY_NAV: NavItem[] = [
 ];
 
 // Single seeded MBP for now. Its bound study is study_31c6667a40, so
-// the working-context picker treats "Crown Royal × NFL MBP" as a label
-// alias for that study id.
+// the working-context picker treats "Crown Royal × NFL 2026-27 MBP" as
+// a label alias for that study id. The display id mirrors the planner
+// vocabulary (mbp_...) rather than leaking the underlying study handle.
 const SEEDED_MBP_STUDY = 'study_31c6667a40';
-const SEEDED_MBP_LABEL = 'Crown Royal × NFL MBP';
+const SEEDED_MBP_LABEL = 'Crown Royal × NFL 2026-27 MBP';
+const SEEDED_MBP_DISPLAY_ID = 'mbp_crown_royal_nfl_2026';
+const SEEDED_MBP_HINT = 'Planning context · MBP cycle Q3 2026 → Q2 2027';
 
 export function GlobalNav() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -228,13 +231,18 @@ function ContextSwitcher({ data }: { data: ReturnType<typeof useStudyData> }) {
     b.created_at.localeCompare(a.created_at),
   );
   const isMbp = studyId === SEEDED_MBP_STUDY;
-  const label = isMbp
+  const triggerPrimary = isMbp
     ? SEEDED_MBP_LABEL
     : studySummary
-      ? truncate(studySummary.question, 36)
+      ? humaniseName(studySummary.name)
       : ordered.length === 0
         ? 'No studies yet'
         : 'Pick a working context';
+  const triggerSecondary = isMbp
+    ? SEEDED_MBP_DISPLAY_ID
+    : studySummary
+      ? studySummary.id
+      : '';
 
   return (
     <section className="grid gap-1">
@@ -250,19 +258,31 @@ function ContextSwitcher({ data }: { data: ReturnType<typeof useStudyData> }) {
         <Select value={studyId ?? undefined} onValueChange={setStudyId}>
           <SelectTrigger
             aria-label="Active working context"
-            className="h-9 w-full justify-between rounded-xl border-slate-200 bg-white text-sm shadow-sm hover:bg-slate-50"
+            title={triggerSecondary ? `${triggerPrimary} · ${triggerSecondary}` : triggerPrimary}
+            className="h-auto w-full items-start justify-between gap-2 rounded-xl border-slate-200 bg-white px-2.5 py-1.5 text-sm shadow-sm hover:bg-slate-50 [&>span]:line-clamp-none"
           >
-            <span className="min-w-0 flex-1 truncate text-left text-sm font-medium text-slate-900">
-              {label}
+            <span className="grid min-w-0 flex-1 gap-0.5 text-left">
+              <span className="line-clamp-1 text-[13px] font-semibold leading-tight text-slate-950">
+                {triggerPrimary}
+              </span>
+              {triggerSecondary ? (
+                <span className="line-clamp-1 font-mono text-[10px] leading-tight text-slate-500">
+                  {triggerSecondary}
+                </span>
+              ) : null}
             </span>
           </SelectTrigger>
-          <SelectContent className="min-w-[280px]">
+          <SelectContent className="min-w-[320px]">
             <SelectGroup>
               <SelectLabel className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                 Planning contexts
               </SelectLabel>
               <SelectItem value={SEEDED_MBP_STUDY}>
-                <span className="text-sm font-medium">{SEEDED_MBP_LABEL}</span>
+                <ContextItem
+                  primary={SEEDED_MBP_LABEL}
+                  secondary={SEEDED_MBP_DISPLAY_ID}
+                  hint={SEEDED_MBP_HINT}
+                />
               </SelectItem>
             </SelectGroup>
             <SelectGroup>
@@ -273,11 +293,13 @@ function ContextSwitcher({ data }: { data: ReturnType<typeof useStudyData> }) {
                 .filter((s) => s.id !== SEEDED_MBP_STUDY)
                 .map((s) => (
                   <SelectItem key={s.id} value={s.id}>
-                    <span className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2">
+                    <span className="flex items-start gap-2">
                       <StatusGlyph status={s.status} />
-                      <span className="min-w-0 truncate text-sm font-medium">
-                        {humaniseName(s.name)}
-                      </span>
+                      <ContextItem
+                        primary={humaniseName(s.name)}
+                        secondary={s.id}
+                        hint={s.question}
+                      />
                     </span>
                   </SelectItem>
                 ))}
@@ -291,6 +313,32 @@ function ContextSwitcher({ data }: { data: ReturnType<typeof useStudyData> }) {
         </Select>
       )}
     </section>
+  );
+}
+
+function ContextItem({
+  primary,
+  secondary,
+  hint,
+}: {
+  primary: string;
+  secondary: string;
+  hint?: string;
+}) {
+  return (
+    <span className="grid min-w-0 flex-1 gap-0.5">
+      <span className="line-clamp-1 text-[13px] font-semibold text-slate-950">
+        {primary}
+      </span>
+      <span className="line-clamp-1 font-mono text-[10px] text-slate-500">
+        {secondary}
+      </span>
+      {hint ? (
+        <span className="line-clamp-1 text-[11px] leading-snug text-slate-500">
+          {hint}
+        </span>
+      ) : null}
+    </span>
   );
 }
 

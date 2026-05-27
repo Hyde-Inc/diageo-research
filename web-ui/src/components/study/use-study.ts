@@ -23,6 +23,7 @@ import {
   type StudyDetail,
   type StudySummary,
 } from '@/components/workbench/types';
+import { useLocalStorageString } from '@/lib/utils';
 
 export type StudyData = {
   /** All studies known to the backend. */
@@ -68,6 +69,13 @@ export function withStudy(
   return search ? `${url.pathname}?${search}` : url.pathname;
 }
 
+/**
+ * localStorage key for the user's explicit working-on selection. The URL
+ * `?study=` param still wins when present (deep links must stay stable);
+ * this only seeds the default for routes that don't carry the param.
+ */
+const STUDY_STORAGE_KEY = 'diageo:study:selected';
+
 export function useStudyData(): StudyData {
   const router = useRouter();
   const pathname = usePathname();
@@ -77,6 +85,10 @@ export function useStudyData(): StudyData {
   const [studies, setStudies] = useState<StudySummary[]>([]);
   const [loadingStudies, setLoadingStudies] = useState(true);
   const [studiesError, setStudiesError] = useState<string | null>(null);
+  const [storedStudyId, setStoredStudyId] = useLocalStorageString(
+    STUDY_STORAGE_KEY,
+    '',
+  );
   const [detailFetch, setDetailFetch] = useState<Fetched<StudyDetail> | null>(null);
   const [curveFetch, setCurveFetch] = useState<Fetched<SpecCurve> | null>(null);
   const [costFetch, setCostFetch] = useState<Fetched<StudyCost> | null>(null);
@@ -115,19 +127,24 @@ export function useStudyData(): StudyData {
     };
   }, []);
 
-  // Resolve studyId: explicit ?study= wins; otherwise pick the freshest
-  // study with a completed cell, otherwise the first.
+  // Resolve studyId: explicit ?study= wins; then a previously persisted
+  // selection (so the sidebar's "working on" choice survives navigation
+  // to a route without ?study=); finally the freshest study with a
+  // completed cell, otherwise the first.
   const studyId = useMemo<string | null>(() => {
     if (studyParam && studies.some((s) => s.id === studyParam)) {
       return studyParam;
     }
     if (studies.length === 0) return null;
+    if (storedStudyId && studies.some((s) => s.id === storedStudyId)) {
+      return storedStudyId;
+    }
     const ordered = [...studies].sort((a, b) =>
       b.created_at.localeCompare(a.created_at),
     );
     const candidate = ordered.find((s) => s.n_complete > 0) ?? ordered[0];
     return candidate.id;
-  }, [studyParam, studies]);
+  }, [studyParam, studies, storedStudyId]);
 
   // Fetch all study-bound payloads when the active study changes.
   useEffect(() => {
@@ -187,6 +204,7 @@ export function useStudyData(): StudyData {
   );
 
   const setStudyId = (id: string) => {
+    setStoredStudyId(id);
     const params = new URLSearchParams(searchParams.toString());
     params.set('study', id);
     const qs = params.toString();
