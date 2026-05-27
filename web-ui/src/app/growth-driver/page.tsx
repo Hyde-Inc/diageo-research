@@ -53,162 +53,231 @@ type MustDo = {
 
 const MUST_DOS: MustDo[] = [
   {
-    id: 'distinctiveness',
-    title: 'Regain distinctiveness',
+    id: 'gameday',
+    title: 'Own NFL Gameday',
     summary:
-      'Unite World Cup Hispanic fans through music, reenergize on-premise, and celebrate the taste of Hispanic culture.',
-    apSplit: 42,
-    confidence: 72,
-    focusMarkets: ['Miami', 'Los Angeles', 'Houston', 'New York'],
+      'Reinforce Crown Royal as the Whisky of the NFL across stadium, sports-bar, and home gameday occasions.',
+    apSplit: 44,
+    confidence: 73,
+    focusMarkets: ['Dallas', 'Pittsburgh', 'Buffalo', 'Kansas City'],
   },
   {
-    id: 'pina',
-    title: 'Unleash Piña',
+    id: 'tailgating',
+    title: 'Win Football Tailgating',
     summary:
-      'Seize daytime occasions and maximize summer holidays with an easy, refreshing Piña story.',
-    apSplit: 34,
-    confidence: 65,
-    focusMarkets: ['Florida', 'Texas', 'California', 'Arizona'],
+      'Make Crown Royal Peach the default tailgate pour through signature serves and grill/sauce partnerships in NFL-heavy markets.',
+    apSplit: 33,
+    confidence: 68,
+    focusMarkets: ['Green Bay', 'Nashville', 'Tampa', 'Atlanta'],
   },
   {
-    id: 'value',
-    title: 'Deliver more value',
+    id: 'hosting',
+    title: 'Build Sunday Hosting Rituals',
     summary:
-      'Optimize the format mix and activate formats that help shoppers choose Buchanan’s more often.',
-    apSplit: 24,
+      'Stake the Sunday couch as a Crown Royal moment via recipe and serving content and Q4 retail display kits.',
+    apSplit: 23,
     confidence: 61,
-    focusMarkets: ['National retail', 'Club', 'Grocery', 'Convenience'],
+    focusMarkets: ['New York', 'Chicago', 'Philadelphia', 'Phoenix'],
   },
 ];
 
 const GROWTH_DRIVERS: GrowthDriver[] = [
   {
-    id: 'world-cup-music',
-    mustDoId: 'distinctiveness',
-    title: 'World Cup music moments',
+    id: 'stadium-suite-ritual',
+    mustDoId: 'gameday',
+    title: 'Stadium suite ritual',
     oneLine:
-      'Make Buchanan’s the whisky brand that shows up where Hispanic fans gather before and after matches.',
+      'Anchor Crown Royal as the premium pour inside NFL stadium suites and clubs, with hospitality cues fans actively notice.',
     hypotheses: [
-      'Music-led watch parties can make the brand feel culturally present, not just advertised.',
-      'A clear on-premise ritual gives bartenders and hosts a reason to recommend Buchanan’s.',
+      'Premium suite occasions still reward whisky on prestige cues, so Crown Royal earns presence where the moment warrants it.',
+      'A recognizable suite ritual — signature serve plus branded glassware — carries from gameday into year-round venue use.',
     ],
     activities: [
-      { quarter: 'Q1', label: 'Artist and venue partners', emphasis: 'launch' },
-      { quarter: 'Q2', label: 'Matchday music series', emphasis: 'pulse' },
-      { quarter: 'Q3', label: 'On-premise ritual push', emphasis: 'sustain' },
-      { quarter: 'Q4', label: 'Finals and holiday hosting', emphasis: 'pulse' },
+      { quarter: 'Q3', label: 'Suite menu refresh', emphasis: 'launch' },
+      { quarter: 'Q4', label: 'Premium hospitality launch', emphasis: 'sustain' },
+      { quarter: 'Q1', label: 'Playoff luxury packages', emphasis: 'pulse' },
+      { quarter: 'Q2', label: 'Draft-night clubroom', emphasis: 'sustain' },
     ],
-    focusMarkets: ['Miami', 'Los Angeles', 'Houston', 'New York'],
+    focusMarkets: ['Dallas', 'Pittsburgh', 'Buffalo', 'Kansas City'],
     confidence: 74,
     evidence: [
-      'Demo placeholder: Hispanic soccer viewing occasions over-index on group hosting.',
-      'Demo placeholder: music partnerships lift recall when tied to a repeated ritual.',
+      'Demo placeholder: NFL suite occasions over-index on premium-spirit choice across the whisky category.',
+      'Demo placeholder: branded glassware lifts brand recall when paired with a repeatable signature serve.',
     ],
     whatWouldChangeOurMind:
-      'If venue partners cannot deliver repeat attendance, or if fans read the activation as generic sponsorship.',
+      'If suite operators cannot land the signature serve consistently, or if guests read the hospitality as background rather than a brand moment.',
     validateNext: [
-      'Pressure-test partner shortlist with local sales leads.',
-      'Compare music-led and food-led creative in a quick concept read.',
+      'Walk the proposed suite serve past three venue operators for execution risk.',
+      'Check whether suite recall translates into household reach beyond ticket holders.',
     ],
     simulationPrompt:
-      'Stress-test whether World Cup music spend should stay national or move into the four focus markets.',
+      'Stress-test whether suite spend should stay in tier-1 NFL cities or extend into playoff host markets.',
   },
   {
-    id: 'hispanic-taste',
-    mustDoId: 'distinctiveness',
-    title: 'Taste of Hispanic culture',
+    id: 'sports-bar-takeover',
+    mustDoId: 'gameday',
+    title: 'Sports-bar takeover',
     oneLine:
-      'Give Buchanan’s a food and flavor role that feels specific to Hispanic celebrations.',
+      'Become the default Sunday whisky pour at NFL-loud sports bars through staff training, gameday menus, and at-home watch-party kits.',
     hypotheses: [
-      'Cultural taste cues can refresh distinctiveness without changing the core liquid story.',
-      'Retail and on-premise can use the same flavor cues if the serve is simple.',
+      'Bartender recommendations move whisky choice in sports-bar settings, so staff training has outsized return on spend.',
+      'A travel-ready watch-party kit lets the bar moment carry into home hosting without reshooting creative.',
     ],
     activities: [
-      { quarter: 'Q1', label: 'Serve and food pairings', emphasis: 'launch' },
-      { quarter: 'Q2', label: 'Cinco and summer hosting', emphasis: 'pulse' },
-      { quarter: 'Q3', label: 'Retail display kits', emphasis: 'sustain' },
-      { quarter: 'Q4', label: 'Holiday table content', emphasis: 'pulse' },
+      { quarter: 'Q3', label: 'Bar staff training', emphasis: 'launch' },
+      { quarter: 'Q4', label: 'Gameday LTO menus', emphasis: 'sustain' },
+      { quarter: 'Q1', label: 'Watch-party kits', emphasis: 'pulse' },
+      { quarter: 'Q2', label: 'Off-season cocktail rotation', emphasis: 'sustain' },
     ],
-    focusMarkets: ['Los Angeles', 'Houston', 'Chicago'],
-    confidence: 69,
+    focusMarkets: ['Dallas', 'Pittsburgh', 'Buffalo', 'Kansas City'],
+    confidence: 70,
     evidence: [
-      'Demo placeholder: food-led Hispanic culture work improves relevance among light buyers.',
-      'Demo placeholder: simple serves travel better from social to store displays.',
+      'Demo placeholder: sports-bar staff recommendations swing trial more than menu position alone.',
+      'Demo placeholder: shared watch-party kits travel from bar to home without losing the brand cue.',
     ],
     whatWouldChangeOurMind:
-      'If taste cues dilute premium perception or repeat buyers do not recognize Buchanan’s in the work.',
+      'If staff training does not hold past kickoff weekend, or if LTO menus get displaced by competitor placements once the season is on.',
     validateNext: [
-      'Run a creative check on premium cues.',
-      'Ask distributors which serve materials would actually be used.',
+      'Audit how many trained bars still feature Crown Royal in week 8.',
+      'Compare watch-party kit redemption against a simple coupon offer.',
     ],
     simulationPrompt:
-      'Compare a food-led route against the matchday music route for distinctiveness and purchase intent.',
+      'Stress-test whether sports-bar staff training holds its lift past the first month of the season.',
   },
   {
-    id: 'daytime-pina',
-    mustDoId: 'pina',
-    title: 'Daytime Piña occasions',
+    id: 'crown-peach-tailgate',
+    mustDoId: 'tailgating',
+    title: 'Crown Peach tailgate',
     oneLine:
-      'Position Buchanan’s Piña as an easy daytime choice for brunch, patio, and beach-adjacent occasions.',
+      'Make Crown Royal Peach the default tailgate pour, anchored by signature-serve content and grill/sauce partnerships in NFL-heavy markets.',
     hypotheses: [
-      'Daytime occasions can bring in incremental serves without competing directly with the core evening ritual.',
-      'Light, bright creative can make whisky feel easier to consider in warm-weather moments.',
+      'Tailgaters lean toward sweet-finish whiskies, so Crown Peach has a structural advantage over flagship Crown.',
+      'Pairing with a grill/sauce partner gives the tailgate occasion a built-in co-promo footprint without inflating paid media.',
     ],
     activities: [
-      { quarter: 'Q1', label: 'Brunch and patio playbook', emphasis: 'launch' },
-      { quarter: 'Q2', label: 'Memorial Day launch', emphasis: 'pulse' },
-      { quarter: 'Q3', label: 'Summer holiday bursts', emphasis: 'pulse' },
-      { quarter: 'Q4', label: 'Learnings for next summer', emphasis: 'sustain' },
+      { quarter: 'Q3', label: 'Tailgate kit launch', emphasis: 'launch' },
+      { quarter: 'Q4', label: 'Grill-partner co-promo', emphasis: 'sustain' },
+      { quarter: 'Q1', label: 'Playoff parking-lot push', emphasis: 'pulse' },
+      { quarter: 'Q2', label: 'Recipe library refresh', emphasis: 'sustain' },
     ],
-    focusMarkets: ['Florida', 'Texas', 'California', 'Arizona'],
+    focusMarkets: ['Green Bay', 'Nashville', 'Tampa', 'Atlanta'],
+    confidence: 71,
+    evidence: [
+      'Demo placeholder: flavored whisky over-indexes in outdoor and tailgate occasions.',
+      'Demo placeholder: co-branded grill content drives stronger serve recall than standalone ads.',
+    ],
+    whatWouldChangeOurMind:
+      'If Crown Peach trial in tailgate occasions cannibalizes flagship Crown more than it recruits new buyers.',
+    validateNext: [
+      'Compare Crown Peach trial lift across markets with and without a grill partner.',
+      'Validate which serve format — cocktail, shot, or mixer — carries the highest at-event repeat.',
+    ],
+    simulationPrompt:
+      'Stress-test whether tailgate spend should weight to Crown Peach or stay split with flagship Crown.',
+  },
+  {
+    id: 'grill-sauce-partnerships',
+    mustDoId: 'tailgating',
+    title: 'Grill & sauce partnerships',
+    oneLine:
+      'Lock Crown Royal into the gameday cookout through co-branded grill, sauce, and rub partnerships that meet shoppers in the aisle.',
+    hypotheses: [
+      'A grill or sauce partner already owns the cookout cart, so the partnership delivers shelf reach we would otherwise pay to build.',
+      'Co-branded SKUs at peak season give retailers a real reason to feature Crown Royal in front-of-store displays.',
+    ],
+    activities: [
+      { quarter: 'Q3', label: 'Partner shortlisting', emphasis: 'launch' },
+      { quarter: 'Q4', label: 'Co-branded SKU drop', emphasis: 'sustain' },
+      { quarter: 'Q1', label: 'Playoff bundles', emphasis: 'pulse' },
+      { quarter: 'Q2', label: 'Learnings into next season', emphasis: 'sustain' },
+    ],
+    focusMarkets: ['Green Bay', 'Nashville', 'Tampa', 'Atlanta'],
+    confidence: 66,
+    evidence: [
+      'Demo placeholder: co-branded BBQ partnerships unlock end-cap features outside the spirits aisle.',
+      'Demo placeholder: playoff bundles travel well when paired with grocery sauce SKUs.',
+    ],
+    whatWouldChangeOurMind:
+      'If chosen partners trade short-term volume for a brand fit Crown Royal cannot live with year-round.',
+    validateNext: [
+      'Pressure-test the partner shortlist with retail account leads.',
+      'Measure whether co-branded SKUs hold price versus pure discount features.',
+    ],
+    simulationPrompt:
+      'Stress-test whether co-branded grill partners should anchor mass retail or premium grocery first.',
+  },
+  {
+    id: 'sunday-funday-recipes',
+    mustDoId: 'hosting',
+    title: 'Sunday Funday recipes',
+    oneLine:
+      'Stake the Sunday couch as a Crown Royal moment with recipe content, hosting cues, and serve ideas that travel from social to the kitchen.',
+    hypotheses: [
+      'Sunday hosts borrow recipes more than they borrow ads, so recipe-led content is the durable hook for the occasion.',
+      'Holiday and football overlap in Q4 compresses hosting demand into the same weeks we already plan against.',
+    ],
+    activities: [
+      { quarter: 'Q3', label: 'Recipe content drop', emphasis: 'launch' },
+      { quarter: 'Q4', label: 'Holiday + football overlap', emphasis: 'sustain' },
+      { quarter: 'Q1', label: 'Playoff hosting kits', emphasis: 'pulse' },
+      { quarter: 'Q2', label: 'Carry-over to NCAA', emphasis: 'sustain' },
+    ],
+    focusMarkets: ['New York', 'Chicago', 'Philadelphia', 'Phoenix'],
     confidence: 67,
     evidence: [
-      'Demo placeholder: warm-weather occasions show headroom for flavored whisky.',
-      'Demo placeholder: holiday bursts are easier to fund when linked to clear serve ideas.',
+      'Demo placeholder: recipe-led content compounds reach better than one-off creative bursts.',
+      'Demo placeholder: NFL and holiday hosting overlap concentrates a meaningful share of seasonal volume.',
     ],
     whatWouldChangeOurMind:
-      'If daytime Piña mainly shifts existing buyers from evening occasions instead of recruiting new ones.',
+      'If hosts treat the recipes as content to scroll past rather than save and serve at the next Sunday gathering.',
     validateNext: [
-      'Estimate incremental reach by occasion.',
-      'Test whether holiday creative improves trial intent among lighter whisky buyers.',
+      'Track save and share rates on Sunday Funday recipe posts versus standard creative.',
+      'Pilot a small NCAA-season carry-over to see if the ritual holds outside the NFL window.',
     ],
     simulationPrompt:
-      'Simulate moving 5 points of spend from Q4 hosting into Q2 and Q3 Piña holiday bursts.',
+      'Stress-test whether Sunday hosting spend should follow the NFL calendar or extend through bowl season.',
   },
   {
-    id: 'format-mix',
-    mustDoId: 'value',
-    title: 'Format mix activation',
+    id: 'q4-retail-display-kits',
+    mustDoId: 'hosting',
+    title: 'Q4 retail display kits',
     oneLine:
-      'Use the right pack and size message for each channel so value feels helpful, not cheap.',
+      'Lock in big-box and grocery Q4 display kits that turn Crown Royal into the visible Sunday hosting cue at point of purchase.',
     hypotheses: [
-      'Format guidance can protect premium perception while still answering price sensitivity.',
-      'Channel-specific packs can reduce wasted spend on broad discounting.',
+      'Q4 display real estate gets crowded fast, so design and approval need to land before the season starts to win shelf.',
+      'Reusing display assets into a playoff reset lets the same investment work twice without new creative cost.',
     ],
     activities: [
-      { quarter: 'Q1', label: 'Channel format rules', emphasis: 'launch' },
-      { quarter: 'Q2', label: 'Club and grocery tests', emphasis: 'sustain' },
-      { quarter: 'Q3', label: 'Back-to-gathering offers', emphasis: 'pulse' },
-      { quarter: 'Q4', label: 'Holiday value bundles', emphasis: 'pulse' },
+      { quarter: 'Q3', label: 'Display design lock', emphasis: 'launch' },
+      { quarter: 'Q4', label: 'Big-box rollout', emphasis: 'sustain' },
+      { quarter: 'Q1', label: 'Reset for playoffs', emphasis: 'pulse' },
+      { quarter: 'Q2', label: 'Learnings for next year', emphasis: 'sustain' },
     ],
-    focusMarkets: ['National retail', 'Club', 'Grocery', 'Convenience'],
-    confidence: 62,
+    focusMarkets: ['New York', 'Chicago', 'Philadelphia', 'Phoenix'],
+    confidence: 64,
     evidence: [
-      'Demo placeholder: value sensitivity rises when shoppers trade across bottle sizes.',
-      'Demo placeholder: bundle messaging performs better when anchored in hosting needs.',
+      'Demo placeholder: locked Q4 display design wins more end caps than late-cycle requests.',
+      'Demo placeholder: playoff resets extend display ROI when assets are designed to be reused.',
     ],
     whatWouldChangeOurMind:
-      'If larger formats cannibalize premium bottles faster than they recruit new shoppers.',
+      'If retail buyers cannot commit to enough Q4 end-cap placements to justify the display investment.',
     validateNext: [
-      'Check format elasticity by channel.',
-      'Ask sales teams where bundle execution is realistic this year.',
+      'Confirm end-cap commitments by retailer before locking the print run.',
+      'Test a small playoff-reset pilot in two markets before scaling.',
     ],
     simulationPrompt:
-      'Model whether value spend should favor larger formats, smaller trial packs, or holiday bundles.',
+      'Stress-test whether Q4 display spend should focus on big-box, grocery, or club channels first.',
   },
 ];
 
-const QUARTERS: Quarter[] = ['Q1', 'Q2', 'Q3', 'Q4'];
+const QUARTERS: Quarter[] = ['Q3', 'Q4', 'Q1', 'Q2'];
+
+const QUARTER_LABELS: Record<Quarter, string> = {
+  Q3: 'Q3 2026',
+  Q4: 'Q4 2026',
+  Q1: 'Q1 2027',
+  Q2: 'Q2 2027',
+};
 
 const QUARTER_STYLES: Record<
   QuarterActivity['emphasis'],
@@ -230,7 +299,7 @@ const QUARTER_STYLES: Record<
 
 export default function GrowthDriverPage() {
   const data = useStudyData();
-  const [selectedId, setSelectedId] = useState(GROWTH_DRIVERS[0].id);
+  const [selectedId, setSelectedId] = useState('crown-peach-tailgate');
   const selected =
     GROWTH_DRIVERS.find((driver) => driver.id === selectedId) ??
     GROWTH_DRIVERS[0];
@@ -249,7 +318,7 @@ export default function GrowthDriverPage() {
       data={data}
       eyebrow="Growth driver planner"
       title="Plan growth drivers, with the evidence and confidence beside each card"
-      intro="Demo planner inspired by Buchanan’s MBP slide. Each Must-Do and Growth Driver carries a confidence pill, an evidence chip, and a stress-test action so the plan stays honest before any spend moves."
+      intro="Demo planner inspired by a Crown Royal NFL-season MBP. Each Must-Do and Growth Driver carries a confidence pill, an evidence chip, and a stress-test action so the plan stays honest before any spend moves."
       contentClassName="max-w-[1420px]"
     >
       <FocusCard className="overflow-hidden p-0 sm:p-0">
@@ -268,7 +337,7 @@ export default function GrowthDriverPage() {
                 </span>
               </div>
               <h2 className="mt-2 text-xl font-semibold tracking-tight text-slate-950">
-                Buchanan’s growth driver planner
+                Crown Royal’s growth driver planner
               </h2>
               <p className="mt-1 max-w-3xl text-sm leading-snug text-slate-600">
                 Start from familiar MBP choices, then open each driver to see the
@@ -400,7 +469,7 @@ export default function GrowthDriverPage() {
                       key={quarter}
                       className="rounded-xl bg-slate-100 px-3 py-2 text-center text-xs font-semibold text-slate-600"
                     >
-                      {quarter}
+                      {QUARTER_LABELS[quarter]}
                     </div>
                   ))}
                 </div>
