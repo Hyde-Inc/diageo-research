@@ -27,12 +27,49 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { RunCitation } from '@/components/workbench/types';
 import { citationKind, hostFromUrl, sourceLabel } from './claim-utils';
+import {
+  isGarbageSnippet,
+  SNIPPET_UNAVAILABLE_FALLBACK,
+  VERIFIER_BADGE_TOOLTIP,
+} from './source-helpers';
 
-export function SourceCard({ citation }: { citation: RunCitation }) {
+export type SourceCardProps = {
+  citation: RunCitation;
+  /** Cite ids this card represents (when grouped with duplicates). */
+  aliases?: string[];
+  /**
+   * Preferred snippet (e.g. the sentence from the brief paragraph
+   * that names this cite). Used in place of the raw scraped snippet
+   * for web docs when set, since the paragraph-derived sentence is
+   * the curated context the analyst saw.
+   */
+  preferredSnippet?: string | null;
+  /** Extra snippets discovered during dedupe, rendered collapsed. */
+  extraSnippets?: string[];
+};
+
+export function SourceCard({
+  citation,
+  aliases = [],
+  preferredSnippet = null,
+  extraSnippets = [],
+}: SourceCardProps) {
   const kind = citationKind(citation);
   const label = sourceLabel(citation);
   const host = hostFromUrl(citation.url);
   const verified = citation.verified;
+
+  // For web docs, prefer the curated paragraph-derived sentence; the
+  // raw scraped snippet is often binary / page chrome. SQL keeps its
+  // own renderer below.
+  const rawSnippet = citation.snippet?.trim() ?? '';
+  const snippetIsGarbage = isGarbageSnippet(rawSnippet);
+  const renderedSnippet =
+    kind === 'web' && preferredSnippet
+      ? preferredSnippet
+      : kind === 'web' && snippetIsGarbage
+        ? null
+        : rawSnippet || null;
 
   return (
     <article className="grid gap-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition-colors hover:border-slate-300">
@@ -51,21 +88,57 @@ export function SourceCard({ citation }: { citation: RunCitation }) {
         </span>
       </header>
 
+      {aliases.length > 0 ? (
+        <p className="text-[10px] uppercase tracking-wider text-slate-500">
+          cited as{' '}
+          <span className="font-mono text-slate-700">[{citation.cite_id}]</span>
+          {aliases.map((a) => (
+            <span key={a} className="font-mono text-slate-700">
+              {' '}[{a}]
+            </span>
+          ))}
+        </p>
+      ) : null}
+
       {kind === 'sql' && citation.sql ? (
         <pre className="max-h-32 overflow-auto rounded-lg bg-slate-50 px-3 py-2 font-mono text-[11px] leading-snug text-slate-700">
           {trimSql(citation.sql)}
         </pre>
-      ) : citation.snippet ? (
+      ) : renderedSnippet ? (
         <p className="line-clamp-3 text-[12px] leading-snug text-slate-600">
-          {citation.snippet}
+          {renderedSnippet}
         </p>
+      ) : kind === 'web' ? (
+        <p className="text-[12px] italic leading-snug text-slate-500">
+          {SNIPPET_UNAVAILABLE_FALLBACK}
+        </p>
+      ) : null}
+
+      {extraSnippets.length > 0 ? (
+        <details className="rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-1.5 text-[11px]">
+          <summary className="cursor-pointer font-medium text-slate-700">
+            See {extraSnippets.length} other snippet
+            {extraSnippets.length === 1 ? '' : 's'} from grouped citations
+          </summary>
+          <ul className="mt-1.5 grid gap-1">
+            {extraSnippets.map((snippet) => (
+              <li
+                key={snippet}
+                className="rounded-md bg-white px-2 py-1 text-slate-600 shadow-inner"
+              >
+                {snippet}
+              </li>
+            ))}
+          </ul>
+        </details>
       ) : null}
 
       <footer className="flex flex-wrap items-center gap-2 pt-1">
         {typeof verified === 'boolean' ? (
           <span
+            title={VERIFIER_BADGE_TOOLTIP}
             className={cn(
-              'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold',
+              'inline-flex cursor-help items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold',
               verified
                 ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
                 : 'border-orange-200 bg-orange-50 text-orange-700',

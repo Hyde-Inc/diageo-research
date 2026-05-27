@@ -65,6 +65,13 @@ import {
   unlabeledSourceFallback,
 } from '@/components/evidence/claim-utils';
 import { SourceCard } from '@/components/evidence/source-card';
+import {
+  extractVerifierFlags,
+  findCiteSentence,
+  groupCitations,
+  type CitationGroup,
+} from '@/components/evidence/source-helpers';
+import { VerifierFlags } from '@/components/evidence/verifier-flags';
 import { VerifyPanel } from '@/components/evidence/verify-panel';
 
 type Loadable<T> = {
@@ -208,6 +215,25 @@ export default function EvidencePage({
   const otherCitations = sortedCitations.filter(
     (c) => !referencedIds.includes(c.cite_id),
   );
+  // Group duplicates (same URL/host + same/garbage snippet) so cards
+  // don't repeat. The "cited as [Sx] [Sy]" header on the primary card
+  // preserves the alias trail.
+  const referencedGroups = useMemo(
+    () => groupCitations(referencedCitations),
+    [referencedCitations],
+  );
+  const otherGroups = useMemo(
+    () => groupCitations(otherCitations),
+    [otherCitations],
+  );
+  // Verifier flags get promoted above the source cards. They're
+  // computed from the union so we surface failures regardless of
+  // whether the cite landed in the referenced or other bucket.
+  const verifierFlags = useMemo(
+    () => extractVerifierFlags(citations),
+    [citations],
+  );
+  const claimParagraph = paragraphMatch?.paragraph ?? null;
 
   // The "Spawn a counter-scenario" CTA links to /plan today. A
   // follow-up will prefill the textarea with the dimension-swap
@@ -310,13 +336,15 @@ export default function EvidencePage({
             tone="blue"
           >
             <SourcesBody
-              referenced={referencedCitations}
-              other={otherCitations}
+              referencedGroups={referencedGroups}
+              otherGroups={otherGroups}
+              verifierFlags={verifierFlags}
               loading={finalLoad.loading}
               error={finalLoad.error}
               sourceCell={sourceCell}
               agreeingCellCount={agreeingCells.length}
               totalCellCount={cells.length}
+              claimParagraph={claimParagraph}
             />
           </Step>
 
@@ -540,21 +568,25 @@ function ClaimBody({
 // ── Step 2: Sources body ───────────────────────────────────────────
 
 function SourcesBody({
-  referenced,
-  other,
+  referencedGroups,
+  otherGroups,
+  verifierFlags,
   loading,
   error,
   sourceCell,
   agreeingCellCount,
   totalCellCount,
+  claimParagraph,
 }: {
-  referenced: RunCitation[];
-  other: RunCitation[];
+  referencedGroups: CitationGroup[];
+  otherGroups: CitationGroup[];
+  verifierFlags: ReturnType<typeof extractVerifierFlags>;
   loading: boolean;
   error: string | null;
   sourceCell: CellSummary | null;
   agreeingCellCount: number;
   totalCellCount: number;
+  claimParagraph: string | null;
 }) {
   if (!sourceCell) {
     return (
@@ -586,8 +618,13 @@ function SourcesBody({
   }
 
   const dimensionLabel = cellDimensionLabel(sourceCell);
-  const totalCited = referenced.length + other.length;
-  const summary = summarizeCitations([...referenced, ...other]);
+  const referencedCitations = referencedGroups.flatMap((g) => g.members);
+  const otherCitations = otherGroups.flatMap((g) => g.members);
+  const totalCited = referencedCitations.length + otherCitations.length;
+  const summary = summarizeCitations([
+    ...referencedCitations,
+    ...otherCitations,
+  ]);
   const scenarioCount = agreeingCellCount > 0 ? agreeingCellCount : 1;
 
   return (
@@ -606,6 +643,8 @@ function SourcesBody({
         )}
       </p>
 
+      <VerifierFlags flags={verifierFlags} />
+
       {totalCited === 0 ? (
         <p className="text-[13px] text-slate-600">
           The brief did not cite any verifiable sources for this claim
@@ -621,14 +660,23 @@ function SourcesBody({
         </p>
       ) : (
         <>
-          {referenced.length > 0 ? (
+          {referencedGroups.length > 0 ? (
             <div className="grid gap-2">
               <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-                Cited in this claim ({referenced.length})
+                Cited in this claim ({referencedCitations.length})
               </p>
               <div className="grid gap-2">
-                {referenced.map((c) => (
-                  <SourceCard key={c.cite_id} citation={c} />
+                {referencedGroups.map((group) => (
+                  <SourceCard
+                    key={group.primary.cite_id}
+                    citation={group.primary}
+                    aliases={group.aliases}
+                    preferredSnippet={findCiteSentence(
+                      claimParagraph,
+                      group.primary.cite_id,
+                    )}
+                    extraSnippets={group.snippets.slice(1)}
+                  />
                 ))}
               </div>
             </div>
@@ -641,21 +689,30 @@ function SourcesBody({
             </p>
           )}
 
-          {other.length > 0 ? (
+          {otherGroups.length > 0 ? (
             <details className="rounded-2xl border border-slate-200 bg-white">
               <summary className="cursor-pointer px-3 py-2 text-[12px] font-medium text-slate-700">
-                Other sources in this brief ({other.length})
+                Other sources in this brief ({otherCitations.length})
               </summary>
               <div className="grid gap-2 border-t border-slate-200 p-3">
-                {other.map((c) => (
-                  <SourceCard key={c.cite_id} citation={c} />
+                {otherGroups.map((group) => (
+                  <SourceCard
+                    key={group.primary.cite_id}
+                    citation={group.primary}
+                    aliases={group.aliases}
+                    preferredSnippet={findCiteSentence(
+                      claimParagraph,
+                      group.primary.cite_id,
+                    )}
+                    extraSnippets={group.snippets.slice(1)}
+                  />
                 ))}
               </div>
             </details>
           ) : null}
 
           <PartialSourcesNote
-            referenced={referenced}
+            referenced={referencedCitations}
             total={totalCited}
             scenarios={scenarioCount}
             summary={summary}
