@@ -22,8 +22,9 @@
  */
 
 import Link from 'next/link';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, Search, Sparkles } from 'lucide-react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { ArrowRight, Search, Sparkles, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { FocusCard, StudyShell } from '@/components/study/study-shell';
 import { useStudyData, withStudy } from '@/components/study/use-study';
@@ -37,6 +38,7 @@ import {
 import {
   agreementToneClass,
   citationKind,
+  cleanRepresentative,
   extractClaimTitle,
   formatSourceSummary,
   summarizeAgreement,
@@ -56,8 +58,20 @@ type ClaimSourceState = {
 const EMPTY_SUMMARY: SourceSummary = { web: 0, sql: 0, doc: 0, total: 0 };
 
 export default function EvidenceIndexPage() {
+  return (
+    <Suspense fallback={null}>
+      <EvidenceIndexBody />
+    </Suspense>
+  );
+}
+
+function EvidenceIndexBody() {
   const data = useStudyData();
   const { curve, loadingCurve, studyId } = data;
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const clusterParam = searchParams.get('cluster');
 
   const [search, setSearch] = useState('');
   const [kindFilter, setKindFilter] = useState<SourceKind | 'all'>('all');
@@ -153,9 +167,37 @@ export default function EvidenceIndexPage() {
     return Array.from(out).sort();
   }, [cells]);
 
+  // ?cluster=N scopes the list to one cluster (or empty if no match).
+  // The sticky pill at the top of the page surfaces the active filter
+  // and a "Show all" affordance to clear it.
+  const clusterId = useMemo(() => {
+    if (clusterParam == null) return null;
+    const parsed = Number(clusterParam);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, [clusterParam]);
+  const clusterRow = useMemo(() => {
+    if (clusterId == null) return null;
+    return rows.find((r) => r.cluster_id === clusterId) ?? null;
+  }, [rows, clusterId]);
+  const clusterTitle = useMemo(
+    () =>
+      clusterRow
+        ? extractClaimTitle(cleanRepresentative(clusterRow.representative))
+        : null,
+    [clusterRow],
+  );
+
+  const onClearCluster = () => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('cluster');
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname);
+  };
+
   const visibleRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((row) => {
+      if (clusterId != null && row.cluster_id !== clusterId) return false;
       if (q) {
         const haystack = row.representative.toLowerCase();
         if (!haystack.includes(q)) return false;
@@ -179,6 +221,7 @@ export default function EvidenceIndexPage() {
     });
   }, [
     rows,
+    clusterId,
     search,
     kindFilter,
     scenarioFilter,
@@ -214,6 +257,16 @@ export default function EvidenceIndexPage() {
         </FocusCard>
       ) : (
         <>
+          {clusterId != null ? (
+            <ClusterScopePill
+              clusterId={clusterId}
+              clusterTitle={clusterTitle}
+              visible={visibleRows.length}
+              total={rows.length}
+              onClear={onClearCluster}
+              missing={clusterRow == null}
+            />
+          ) : null}
           <FilterBar
             search={search}
             onSearch={setSearch}
@@ -255,6 +308,54 @@ export default function EvidenceIndexPage() {
         </>
       )}
     </StudyShell>
+  );
+}
+
+function ClusterScopePill({
+  clusterId,
+  clusterTitle,
+  visible,
+  total,
+  onClear,
+  missing,
+}: {
+  clusterId: number;
+  clusterTitle: string | null;
+  visible: number;
+  total: number;
+  onClear: () => void;
+  missing: boolean;
+}) {
+  return (
+    <div className="sticky top-2 z-10 -mx-1 rounded-2xl border border-blue-200 bg-blue-50/95 px-3 py-2 shadow-sm backdrop-blur sm:top-3 sm:px-4">
+      <div className="flex flex-wrap items-center gap-2 text-[12px] leading-snug">
+        <Badge
+          variant="outline"
+          className="border-blue-200 bg-white text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-700"
+        >
+          Scoped to cluster
+        </Badge>
+        <span className="text-slate-700">
+          Showing evidence for:{' '}
+          <em className="font-semibold not-italic text-slate-950">
+            {missing
+              ? `Cluster ${clusterId} (not in latest spec curve)`
+              : (clusterTitle ?? `Cluster ${clusterId}`)}
+          </em>
+        </span>
+        <span className="text-slate-500">
+          — {visible} of {total} {total === 1 ? 'claim' : 'claims'}
+        </span>
+        <button
+          type="button"
+          onClick={onClear}
+          className="ml-auto inline-flex h-7 items-center gap-1 rounded-full border border-blue-200 bg-white px-2.5 text-[11px] font-semibold text-blue-700 shadow-sm transition-colors hover:bg-blue-100"
+        >
+          <X className="h-3 w-3" />
+          Show all
+        </button>
+      </div>
+    </div>
   );
 }
 
