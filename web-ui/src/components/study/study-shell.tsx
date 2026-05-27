@@ -3,18 +3,27 @@
 /**
  * Page shell for the focused single-job views.
  *
- * Renders consistent header chrome (study picker + a tiny breadcrumb
- * showing the active study's name + status) above the page body so each
- * focused page can stay narrow and opinionated about its single job.
+ * Renders the consistent eyebrow + H1 + (optional) intro and a content
+ * area that supports two shapes:
  *
- * The shell intentionally does NOT replicate the workbench's tab strip
- * — these pages are reachable via the global nav in `app/layout.tsx`
- * and via in-page links between siblings.
+ *   1. Single column (default): pass `children` and the layout matches
+ *      the original narrow column — this is what /scenario, /plan,
+ *      /ask, etc. still use, and they keep rendering unchanged.
+ *
+ *   2. Three column: pass any combination of `left`, `main`, and
+ *      `right`. /research, /answer, /robustness use this on desktop
+ *      (≥1280px). The page collapses to a stacked column on narrow
+ *      viewports — the caller can decide what each slot does there by
+ *      sizing its own scroll-bounded containers (see /research's
+ *      findings rail for an example).
+ *
+ * The study picker no longer lives in this header — it lives in the
+ * global top nav. The shell still owns the page heading and gracefully
+ * renders study-error / no-studies states.
  */
 
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
-import { StudyPicker } from '@/components/workbench/study-picker';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { StudyData } from './use-study';
@@ -27,21 +36,48 @@ export function StudyShell({
   back,
   actions,
   contentClassName,
+  wrap = true,
+  left,
+  main,
+  right,
+  leftLabel,
+  rightLabel,
+  mainLabel,
   children,
 }: {
   data: StudyData;
   eyebrow?: string;
-  title: string;
+  title: React.ReactNode;
   intro?: string;
   back?: { href: string; label: string };
   actions?: React.ReactNode;
   contentClassName?: string;
-  children: React.ReactNode;
+  /** If false, the header chrome is rendered without the rounded card border. */
+  wrap?: boolean;
+  /** Three-column slots. Mutually exclusive with `children`. */
+  left?: React.ReactNode;
+  main?: React.ReactNode;
+  right?: React.ReactNode;
+  leftLabel?: string;
+  mainLabel?: string;
+  rightLabel?: string;
+  children?: React.ReactNode;
 }) {
+  const hasSlots = Boolean(left || main || right);
   return (
     <div className="min-h-svh bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.10),transparent_32rem),linear-gradient(180deg,#f8fafc_0%,#eef2f7_100%)] pb-16 font-sans text-slate-950">
-      <header className="border-b border-slate-200/80 bg-white/80 px-4 py-3 shadow-sm shadow-slate-950/[0.03] backdrop-blur sm:px-6">
-        <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-3">
+      <header
+        className={cn(
+          'border-b border-slate-200/80 px-4 py-4 sm:px-6',
+          wrap ? 'bg-white/80 shadow-sm shadow-slate-950/[0.03] backdrop-blur' : '',
+        )}
+      >
+        <div
+          className={cn(
+            'mx-auto flex w-full flex-wrap items-start gap-3',
+            hasSlots ? 'max-w-[1500px]' : 'max-w-3xl',
+          )}
+        >
           <div className="min-w-0 flex-1">
             {back ? (
               <Link
@@ -57,29 +93,31 @@ export function StudyShell({
                 {eyebrow}
               </div>
             ) : null}
-            <h1 className="mt-0.5 truncate text-lg font-semibold tracking-tight text-slate-950 sm:text-xl">
+            <h1 className="mt-1 text-balance text-xl font-semibold leading-snug tracking-tight text-slate-950 sm:text-2xl">
               {title}
             </h1>
             {intro ? (
-              <p className="mt-0.5 max-w-2xl text-[12px] leading-snug text-slate-500">
+              <p className="mt-1 max-w-3xl text-[12px] leading-snug text-slate-500">
                 {intro}
               </p>
             ) : null}
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <StudyPicker
-              studies={data.studies}
-              studyId={data.studyId}
-              onChange={data.setStudyId}
-            />
-            {actions ?? null}
-          </div>
+          {actions ? (
+            <div className="flex shrink-0 items-center gap-2">{actions}</div>
+          ) : null}
         </div>
       </header>
       <main className="px-4 py-6 sm:px-6">
-        <div className={cn('mx-auto grid w-full max-w-3xl gap-4', contentClassName)}>
+        <div
+          className={cn(
+            'mx-auto w-full',
+            hasSlots ? 'max-w-[1500px]' : 'max-w-3xl',
+            !hasSlots && 'grid gap-4',
+            contentClassName,
+          )}
+        >
           {data.studiesError ? (
-            <div className="rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm font-medium text-orange-700 shadow-sm">
+            <div className="mb-4 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm font-medium text-orange-700 shadow-sm">
               Workbench API unreachable · {data.studiesError}
             </div>
           ) : null}
@@ -89,9 +127,75 @@ export function StudyShell({
               one, then come back.
             </EmptyState>
           ) : null}
-          {children}
+          {hasSlots ? (
+            <ThreeColumn
+              left={left}
+              main={main}
+              right={right}
+              leftLabel={leftLabel}
+              mainLabel={mainLabel}
+              rightLabel={rightLabel}
+            />
+          ) : (
+            children
+          )}
         </div>
       </main>
+    </div>
+  );
+}
+
+function ThreeColumn({
+  left,
+  main,
+  right,
+  leftLabel,
+  mainLabel,
+  rightLabel,
+}: {
+  left?: React.ReactNode;
+  main?: React.ReactNode;
+  right?: React.ReactNode;
+  leftLabel?: string;
+  mainLabel?: string;
+  rightLabel?: string;
+}) {
+  // Match the column template to the slots actually present so we
+  // don't leave a phantom gutter on /answer (main + right only) or any
+  // future page that uses left + main only.
+  const variant =
+    left && right ? 'three' : left ? 'left-main' : right ? 'main-right' : 'main';
+  return (
+    <div
+      className={cn(
+        'grid gap-4',
+        variant === 'three' &&
+          'xl:grid-cols-[minmax(260px,340px)_minmax(0,1fr)_minmax(260px,320px)]',
+        variant === 'left-main' &&
+          'xl:grid-cols-[minmax(260px,340px)_minmax(0,1fr)]',
+        variant === 'main-right' &&
+          'xl:grid-cols-[minmax(0,1fr)_minmax(260px,320px)]',
+      )}
+    >
+      {left ? (
+        <aside
+          aria-label={leftLabel ?? 'Side list'}
+          className="xl:sticky xl:top-16 xl:max-h-[calc(100vh-5rem)] xl:overflow-y-auto"
+        >
+          {left}
+        </aside>
+      ) : null}
+      <section aria-label={mainLabel ?? 'Main content'} className="min-w-0">
+        {main}
+      </section>
+      {right ? (
+        <aside
+          aria-label={rightLabel ?? 'Action rail'}
+          className="xl:sticky xl:top-16 xl:max-h-[calc(100vh-5rem)] xl:overflow-y-auto"
+        >
+          {right}
+        </aside>
+      ) : null}
     </div>
   );
 }

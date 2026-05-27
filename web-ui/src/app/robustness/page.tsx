@@ -1,176 +1,619 @@
 'use client';
 
 /**
- * /robustness — stoplight grid over the spec curve.
+ * /robustness — the "Sensitivity view" / Robustness curve.
  *
- * Each "scenario" is a recommendation cluster. We colour it by its
- * robustness score:
- *   green ≥ 0.7
- *   amber 0.4 – 0.7
- *   red   < 0.4
+ * Internally this is a specification curve. The visible copy avoids
+ * jargon. Layout follows Simonsohn, Simmons & Nelson (2020):
+ *   - TOP panel: one bar per scenario, sorted by the lead
+ *     recommendation's effect; bar colour encodes holds / weakens /
+ *     flips / no read.
+ *   - BOTTOM panel: a small matrix where rows are the dimensions
+ *     (taxonomy, cohort, window, …) and columns are the same scenarios
+ *     in the same order; cells show which value of the dimension is
+ *     active for that scenario.
  *
- * Hover or focus reveals a plain-English description (the cluster's
- * representative line). Click navigates to /scenario/[cluster_id] so
- * the user lands on the focused single-scenario view.
+ * Controls — recommendation selector, sort selector, dimension filters
+ * — live in a sticky right rail so the chart owns the central space.
+ * The legend stays beneath the chart. Clicking a scenario column
+ * opens its scenario panel below the chart.
  */
 
 import Link from 'next/link';
-import { ArrowRight } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { ArrowRight, Filter, ListChecks, MessageCircle } from 'lucide-react';
 import { FocusCard, StudyShell } from '@/components/study/study-shell';
 import { useStudyData, withStudy } from '@/components/study/use-study';
+import { Badge } from '@/components/ui/badge';
+import {
+  ChartLegend,
+  SpecCurveChart,
+  buildScenarios,
+  sortScenarios,
+  type ScenarioDatum,
+  type SortMode,
+} from '@/components/study/spec-curve-chart';
 import { cn } from '@/lib/utils';
-import type { SpecCurveRow } from '@/components/workbench/types';
+import type { SpecCurve, SpecCurveRow } from '@/components/workbench/types';
+
+const SORT_LABEL: Record<SortMode, string> = {
+  effect: 'effect (holds → flips)',
+  agreement: 'scenario agreement across all findings',
+  index: 'scenario index (original order)',
+};
 
 export default function RobustnessPage() {
   const data = useStudyData();
   const { curve, loadingCurve, studyId } = data;
+  const [activeClusterId, setActiveClusterId] = useState<number | null>(null);
+  const [sortMode, setSortMode] = useState<SortMode>('effect');
+  const [hiddenValues, setHiddenValues] = useState<
+    Record<string, Set<string>>
+  >({});
+  const [selectedCellId, setSelectedCellId] = useState<string | null>(null);
+
+  const leadCluster = curve?.rows[0]?.cluster_id ?? null;
+  const currentClusterId =
+    activeClusterId != null && curve?.rows.some((r) => r.cluster_id === activeClusterId)
+      ? activeClusterId
+      : leadCluster;
+  const currentRow = useMemo<SpecCurveRow | null>(() => {
+    if (!curve || currentClusterId == null) return null;
+    return curve.rows.find((r) => r.cluster_id === currentClusterId) ?? null;
+  }, [curve, currentClusterId]);
+
+  const dimensions = useMemo(() => collectDimensions(curve), [curve]);
+  const agreementByCell = useMemo(
+    () => agreementIndex(curve, currentRow),
+    [curve, currentRow],
+  );
+
+  const filteredCells = useMemo(() => {
+    if (!curve) return [];
+    return curve.cells.filter((cell) =>
+      dimensions.every((dim) => !hiddenValues[dim]?.has(cell.axes[dim] ?? '')),
+    );
+  }, [curve, dimensions, hiddenValues]);
+
+  const scenarios = useMemo<ScenarioDatum[]>(() => {
+    const all = buildScenarios(currentRow, filteredCells);
+    return sortScenarios(all, sortMode, agreementByCell);
+  }, [currentRow, filteredCells, sortMode, agreementByCell]);
+
+  const selectedScenario =
+    scenarios.find((s) => s.cellId === selectedCellId) ?? null;
+
+  const ready = Boolean(studyId && !loadingCurve && curve && curve.rows.length > 0);
 
   return (
     <StudyShell
       data={data}
-      eyebrow="Robustness grid"
-      title="Does the answer hold across every defensible framing?"
-      intro="Each square below is one defensible way to look at the question. Hover or click a square to read its plain-language summary."
-    >
-      {!studyId ? null : loadingCurve || !curve ? (
-        <FocusCard tone="muted">
-          <SkeletonGrid />
-        </FocusCard>
-      ) : curve.rows.length === 0 ? (
-        <FocusCard>
-          <p className="text-sm text-slate-600">
-            No scenarios are ready yet — the briefs have not produced
-            recommendation-shaped sentences. Check{' '}
-            <Link
-              href={withStudy('/setup', studyId)}
-              className="font-medium text-slate-900 underline-offset-4 hover:underline"
-            >
-              Setup
-            </Link>{' '}
-            for run status.
-          </p>
-        </FocusCard>
-      ) : (
-        <FocusCard>
-          <StopLightGrid rows={curve.rows} studyId={studyId} />
-          <Legend />
-        </FocusCard>
-      )}
-    </StudyShell>
+      eyebrow="Sensitivity view"
+      title="Robustness curve"
+      intro="Each scenario tries the same question with a different defensible framing — the chart shows holds, weakens, and flips per scenario."
+      contentClassName="max-w-[1500px]"
+      mainLabel="Robustness chart"
+      rightLabel="Controls"
+      main={
+        !studyId ? null : loadingCurve || !curve ? (
+          <FocusCard tone="muted">
+            <div className="grid gap-3">
+              <div className="h-44 animate-pulse rounded-2xl bg-slate-200/70" />
+              <div className="h-24 animate-pulse rounded-2xl bg-slate-200/70" />
+            </div>
+          </FocusCard>
+        ) : curve.rows.length === 0 ? (
+          <FocusCard>
+            <p className="text-sm text-slate-600">
+              No scenarios are ready yet — the briefs have not produced
+              recommendation-shaped sentences. Check{' '}
+              <Link
+                href={withStudy('/setup', studyId)}
+                className="font-medium text-slate-900 underline-offset-4 hover:underline"
+              >
+                Setup
+              </Link>{' '}
+              for run status.
+            </p>
+          </FocusCard>
+        ) : (
+          <div className="grid gap-4">
+            <ChartCard
+              scenarios={scenarios}
+              dimensions={dimensions}
+              selectedCellId={selectedCellId}
+              onSelectCell={setSelectedCellId}
+              currentRow={currentRow}
+            />
+            <DetailPanel
+              scenario={selectedScenario}
+              studyId={studyId}
+              currentRow={currentRow}
+              dimensions={dimensions}
+              scenarioIndex={
+                selectedScenario
+                  ? scenarios.findIndex(
+                      (s) => s.cellId === selectedScenario.cellId,
+                    ) + 1
+                  : null
+              }
+              onClose={() => setSelectedCellId(null)}
+            />
+            <EdgeStateNotice scenarios={scenarios} />
+          </div>
+        )
+      }
+      right={
+        !ready ? null : (
+          <ControlsRail
+            curve={curve!}
+            currentClusterId={currentClusterId}
+            onPickCluster={setActiveClusterId}
+            sortMode={sortMode}
+            onChangeSort={setSortMode}
+            dimensions={dimensions}
+            hiddenValues={hiddenValues}
+            onToggleValue={(dim, value) =>
+              setHiddenValues((prev) => {
+                const next = { ...prev };
+                const existing = new Set(next[dim] ?? []);
+                if (existing.has(value)) existing.delete(value);
+                else existing.add(value);
+                next[dim] = existing;
+                return next;
+              })
+            }
+            onClearFilters={() => setHiddenValues({})}
+          />
+        )
+      }
+    />
   );
 }
 
-function StopLightGrid({
-  rows,
-  studyId,
+function ControlsRail({
+  curve,
+  currentClusterId,
+  onPickCluster,
+  sortMode,
+  onChangeSort,
+  dimensions,
+  hiddenValues,
+  onToggleValue,
+  onClearFilters,
 }: {
-  rows: SpecCurveRow[];
-  studyId: string | null;
+  curve: SpecCurve;
+  currentClusterId: number | null;
+  onPickCluster: (id: number) => void;
+  sortMode: SortMode;
+  onChangeSort: (mode: SortMode) => void;
+  dimensions: string[];
+  hiddenValues: Record<string, Set<string>>;
+  onToggleValue: (dimension: string, value: string) => void;
+  onClearFilters: () => void;
+}) {
+  const totalHidden = dimensions.reduce(
+    (acc, dim) => acc + (hiddenValues[dim]?.size ?? 0),
+    0,
+  );
+  return (
+    <FocusCard>
+      <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+        Controls
+      </h3>
+      <div className="mt-3 grid gap-3">
+        <div className="grid gap-1.5">
+          <label
+            htmlFor="recommendation-picker"
+            className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500"
+          >
+            Recommendation
+          </label>
+          <select
+            id="recommendation-picker"
+            value={currentClusterId ?? ''}
+            onChange={(e) => onPickCluster(Number(e.target.value))}
+            className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-medium text-slate-700 shadow-inner focus-visible:ring-2 focus-visible:ring-slate-200"
+          >
+            {curve.rows.map((row, idx) => (
+              <option key={row.cluster_id} value={row.cluster_id}>
+                {idx === 0 ? 'Lead · ' : `Alt #${idx} · `}
+                {truncateSentence(cleanRepresentative(row.representative), 80)}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="grid gap-1.5">
+          <label
+            htmlFor="sort-picker"
+            className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500"
+          >
+            Sort scenarios by
+          </label>
+          <select
+            id="sort-picker"
+            value={sortMode}
+            onChange={(e) => onChangeSort(e.target.value as SortMode)}
+            className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-medium text-slate-700 shadow-inner focus-visible:ring-2 focus-visible:ring-slate-200"
+          >
+            {(['effect', 'agreement', 'index'] as SortMode[]).map((mode) => (
+              <option key={mode} value={mode}>
+                {SORT_LABEL[mode]}
+              </option>
+            ))}
+          </select>
+        </div>
+        {dimensions.length > 0 ? (
+          <div className="grid gap-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                <Filter className="h-3 w-3" />
+                Dimension filters
+              </span>
+              {totalHidden > 0 ? (
+                <button
+                  type="button"
+                  onClick={onClearFilters}
+                  className="text-[11px] font-medium text-slate-600 underline-offset-4 hover:underline"
+                >
+                  Reset ({totalHidden})
+                </button>
+              ) : null}
+            </div>
+            <p className="text-[11px] leading-snug text-slate-500">
+              Click a value to hide that subset from the chart.
+            </p>
+            <div className="grid gap-2">
+              {dimensions.map((dim) => (
+                <DimensionFilterRow
+                  key={dim}
+                  dimension={dim}
+                  values={uniqueValues(curve, dim)}
+                  hidden={hiddenValues[dim] ?? new Set<string>()}
+                  onToggle={(value) => onToggleValue(dim, value)}
+                />
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </FocusCard>
+  );
+}
+
+function DimensionFilterRow({
+  dimension,
+  values,
+  hidden,
+  onToggle,
+}: {
+  dimension: string;
+  values: string[];
+  hidden: Set<string>;
+  onToggle: (value: string) => void;
 }) {
   return (
-    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
-      {rows.map((row) => (
-        <ScenarioSquare key={row.cluster_id} row={row} studyId={studyId} />
-      ))}
+    <div className="grid gap-1">
+      <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+        {humaniseDimension(dimension)}
+      </span>
+      <div className="flex flex-wrap gap-1">
+        {values.map((value) => {
+          const isHidden = hidden.has(value);
+          return (
+            <button
+              key={value}
+              type="button"
+              onClick={() => onToggle(value)}
+              className={cn(
+                'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium shadow-sm transition-colors',
+                isHidden
+                  ? 'border-slate-200 bg-white text-slate-400 line-through hover:border-slate-300'
+                  : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50',
+              )}
+              aria-pressed={isHidden}
+              title={isHidden ? `Show ${value}` : `Hide ${value}`}
+            >
+              {value}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
 
-function ScenarioSquare({
-  row,
-  studyId,
+function ChartCard({
+  scenarios,
+  dimensions,
+  selectedCellId,
+  onSelectCell,
+  currentRow,
 }: {
-  row: SpecCurveRow;
-  studyId: string | null;
+  scenarios: ScenarioDatum[];
+  dimensions: string[];
+  selectedCellId: string | null;
+  onSelectCell: (cellId: string | null) => void;
+  currentRow: SpecCurveRow | null;
 }) {
-  const tone = toneFor(row.robustness);
-  const pct = Math.round(row.robustness * 100);
-  const total = row.n_agree + row.n_weaker + row.n_flips + row.n_missing;
-  const summary = describeRow(row);
+  const summary = useMemo(() => summarise(scenarios), [scenarios]);
   return (
-    <Link
-      href={withStudy(`/scenario/${row.cluster_id}`, studyId)}
-      className="group relative aspect-square"
-      title={summary}
-      aria-label={`Scenario ${row.cluster_id}: ${summary}`}
-    >
-      <div
-        className={cn(
-          'flex h-full w-full flex-col items-center justify-center gap-1 rounded-2xl border p-2 text-center shadow-sm transition-all',
-          'group-hover:-translate-y-0.5 group-hover:shadow-md',
-          tone.cls,
-        )}
-      >
-        <span className="text-[10px] font-semibold uppercase tracking-wider opacity-70">
-          Scenario {row.cluster_id}
-        </span>
-        <span className="text-2xl font-bold leading-none tabular-nums">
-          {pct}%
-        </span>
-        <span className="text-[9px] font-semibold uppercase tracking-wider opacity-70">
-          {tone.label}
-        </span>
-      </div>
-      <div
-        role="tooltip"
-        className="pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-64 max-w-[80vw] -translate-x-1/2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-[11px] leading-snug text-slate-700 opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus:opacity-100"
-      >
-        <p className="line-clamp-4">{summary}</p>
-        <p className="mt-1 inline-flex items-center gap-1 text-[10px] text-slate-500">
-          Holds in {row.n_agree} of {total} framings
-          <ArrowRight className="h-2.5 w-2.5" />
+    <FocusCard>
+      <header className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold tracking-tight text-slate-950">
+            {currentRow
+              ? truncateSentence(cleanRepresentative(currentRow.representative), 140)
+              : 'Pick a recommendation'}
+          </h3>
+          <p className="mt-1 text-[12px] leading-snug text-slate-600">
+            {scenarios.length === 0
+              ? 'No scenarios match the current filter.'
+              : `${summary.holds} hold · ${summary.weakens} weaken · ${summary.flips} flip${summary.missing > 0 ? ` · ${summary.missing} no read` : ''}.`}
+          </p>
+        </div>
+        {currentRow ? (
+          <Badge
+            variant="outline"
+            className="border-slate-200 bg-white text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600"
+          >
+            Robustness {(currentRow.robustness * 100).toFixed(0)}%
+          </Badge>
+        ) : null}
+      </header>
+      <SpecCurveChart
+        scenarios={scenarios}
+        dimensions={dimensions}
+        selectedCellId={selectedCellId}
+        onSelectCell={onSelectCell}
+        ariaLabel="Robustness curve: scenarios on x, effect on y, dimensions in the matrix below."
+      />
+      <div className="mt-3 grid gap-2">
+        <ChartLegend />
+        <p className="text-[11px] leading-snug text-slate-500">
+          “Holds” means the framing supports the recommendation. “Weakens”
+          softens or hedges it. “Flips” reverses it. Click a column to see
+          its assumptions and open the scenario.
         </p>
       </div>
-    </Link>
+    </FocusCard>
   );
 }
 
-function describeRow(row: SpecCurveRow): string {
-  return row.representative.trim();
-}
-
-function toneFor(robustness: number): { cls: string; label: string } {
-  if (robustness >= 0.7) {
-    return {
-      cls: 'border-emerald-200 bg-emerald-100 text-emerald-900',
-      label: 'holds',
-    };
+function DetailPanel({
+  scenario,
+  studyId,
+  currentRow,
+  dimensions,
+  scenarioIndex,
+  onClose,
+}: {
+  scenario: ScenarioDatum | null;
+  studyId: string | null;
+  currentRow: SpecCurveRow | null;
+  dimensions: string[];
+  scenarioIndex: number | null;
+  onClose: () => void;
+}) {
+  if (!scenario || !currentRow) {
+    return (
+      <FocusCard tone="muted" className="border-dashed">
+        <p className="text-[12px] leading-snug text-slate-600">
+          Click any column to see that scenario&apos;s assumptions, the
+          recommendation&apos;s status for it, and a link to its detail
+          page.
+        </p>
+      </FocusCard>
+    );
   }
-  if (robustness >= 0.4) {
-    return {
-      cls: 'border-yellow-200 bg-yellow-100 text-yellow-900',
-      label: 'mixed',
-    };
+  return (
+    <FocusCard>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+            Scenario {scenarioIndex ?? '?'}
+          </span>
+          <h3 className="mt-1 text-sm font-semibold tracking-tight text-slate-950">
+            {humaniseScenarioTitle(scenario)}
+          </h3>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-[11px] font-medium text-slate-500 underline-offset-4 hover:underline"
+          aria-label="Close scenario panel"
+        >
+          Close
+        </button>
+      </div>
+      <div className="mt-3 grid gap-3">
+        <div className="grid gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            Recommendation in this scenario
+          </span>
+          <span
+            className={cn(
+              'inline-flex w-fit items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold',
+              statusToneClass(scenario.status),
+            )}
+          >
+            {effectSentence(scenario)}
+          </span>
+          <p className="text-[12px] leading-snug text-slate-700">
+            {truncateSentence(cleanRepresentative(currentRow.representative), 220)}
+          </p>
+        </div>
+        <div className="grid gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            Assumptions in this framing
+          </span>
+          <ul className="grid gap-1">
+            {dimensions.map((dim) => (
+              <li
+                key={dim}
+                className="flex flex-wrap items-baseline gap-1.5 text-[12px] text-slate-700"
+              >
+                <span className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
+                  {humaniseDimension(dim)}
+                </span>
+                <span className="font-medium text-slate-900">
+                  {scenario.cell.axes[dim] ?? '—'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {studyId ? (
+            <Link
+              href={withStudy(`/scenario/${currentRow.cluster_id}`, studyId)}
+              className="inline-flex h-8 items-center gap-1.5 rounded-full bg-slate-950 px-3 text-[12px] font-semibold text-white shadow-sm hover:bg-slate-800"
+            >
+              Open scenario
+              <ArrowRight className="h-3 w-3" />
+            </Link>
+          ) : null}
+          {studyId ? (
+            <Link
+              href={withStudy('/ask', studyId, { scenario: scenario.cellId })}
+              className="inline-flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-[12px] font-medium text-slate-700 shadow-sm hover:border-slate-300 hover:bg-slate-50"
+            >
+              <MessageCircle className="h-3 w-3" />
+              Ask about this framing
+            </Link>
+          ) : null}
+        </div>
+      </div>
+    </FocusCard>
+  );
+}
+
+function EdgeStateNotice({ scenarios }: { scenarios: ScenarioDatum[] }) {
+  if (scenarios.length === 0) return null;
+  if (scenarios.length === 1) {
+    return (
+      <FocusCard tone="muted" className="border-dashed">
+        <p className="text-[12px] leading-snug text-slate-600">
+          <ListChecks className="mr-1 inline h-3.5 w-3.5 -translate-y-0.5 text-slate-500" />
+          Only one defensible framing has voted so far. Robustness is
+          undefined with a single scenario — add a dimension or run more
+          framings before treating the answer as robust.
+        </p>
+      </FocusCard>
+    );
   }
-  return {
-    cls: 'border-orange-200 bg-orange-100 text-orange-900',
-    label: 'flips',
-  };
+  const allSame = scenarios.every((s) => s.status === scenarios[0].status);
+  if (allSame) {
+    return (
+      <FocusCard tone="muted" className="border-dashed">
+        <p className="text-[12px] leading-snug text-slate-600">
+          Every scenario landed on the same verdict ({scenarios[0].effectLabel}).
+          That&apos;s either a strong signal or a sign the dimensions we
+          tried are too narrow — add a dimension that could plausibly flip
+          the answer to strengthen the test.
+        </p>
+      </FocusCard>
+    );
+  }
+  return null;
 }
 
-function Legend() {
-  return (
-    <p className="mt-4 text-[11px] leading-snug text-slate-500">
-      <span className="font-semibold text-slate-700">Read the grid:</span>{' '}
-      <span className="inline-block h-2.5 w-2.5 rounded-[3px] bg-emerald-300 align-middle" />{' '}
-      green holds (the answer survives ≥ 70% of framings),{' '}
-      <span className="inline-block h-2.5 w-2.5 rounded-[3px] bg-yellow-300 align-middle" />{' '}
-      amber is mixed (40–70%), and{' '}
-      <span className="inline-block h-2.5 w-2.5 rounded-[3px] bg-orange-300 align-middle" />{' '}
-      orange flips (&lt; 40%).
-    </p>
-  );
+function summarise(scenarios: ScenarioDatum[]) {
+  let holds = 0;
+  let weakens = 0;
+  let flips = 0;
+  let missing = 0;
+  for (const s of scenarios) {
+    if (s.status === 'agree') holds += 1;
+    else if (s.status === 'weaker') weakens += 1;
+    else if (s.status === 'flips') flips += 1;
+    else missing += 1;
+  }
+  return { holds, weakens, flips, missing };
 }
 
-function SkeletonGrid() {
-  return (
-    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
-      {Array.from({ length: 12 }).map((_, i) => (
-        <div
-          key={i}
-          className="aspect-square animate-pulse rounded-2xl bg-slate-200/70"
-        />
-      ))}
-    </div>
+function statusToneClass(status: ScenarioDatum['status']): string {
+  if (status === 'agree') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  if (status === 'weaker') return 'border-yellow-200 bg-yellow-50 text-yellow-700';
+  if (status === 'flips') return 'border-orange-200 bg-orange-50 text-orange-700';
+  return 'border-slate-200 bg-slate-50 text-slate-600';
+}
+
+function effectSentence(scenario: ScenarioDatum): string {
+  switch (scenario.status) {
+    case 'agree':
+      return 'Holds in this framing';
+    case 'weaker':
+      return 'Weakens in this framing';
+    case 'flips':
+      return 'Flips in this framing';
+    case 'missing':
+    default:
+      return 'No directive from this framing yet';
+  }
+}
+
+function humaniseScenarioTitle(scenario: ScenarioDatum): string {
+  const parts = Object.entries(scenario.cell.axes).map(
+    ([dim, value]) => `${humaniseDimension(dim)} · ${value}`,
   );
+  if (parts.length === 0) return scenario.cellId;
+  return parts.join('  /  ');
+}
+
+function humaniseDimension(d: string): string {
+  return d.replace(/_/g, ' ');
+}
+
+function uniqueValues(curve: SpecCurve, dim: string): string[] {
+  const seen = new Set<string>();
+  for (const cell of curve.cells) {
+    const v = cell.axes[dim];
+    if (v) seen.add(v);
+  }
+  return Array.from(seen);
+}
+
+function collectDimensions(curve: SpecCurve | null): string[] {
+  if (!curve) return [];
+  const seen = new Set<string>();
+  for (const cell of curve.cells) {
+    for (const k of Object.keys(cell.axes)) seen.add(k);
+  }
+  return Array.from(seen);
+}
+
+function agreementIndex(
+  curve: SpecCurve | null,
+  currentRow: SpecCurveRow | null,
+): Map<string, number> {
+  if (!curve || !currentRow) return new Map();
+  const out = new Map<string, number>();
+  for (const cell of curve.cells) {
+    let count = 0;
+    for (const row of curve.rows) {
+      if (row.statuses[cell.id] === 'agree') count += 1;
+    }
+    out.set(cell.id, count);
+  }
+  return out;
+}
+
+function cleanRepresentative(raw: string): string {
+  if (!raw) return '';
+  const trimmed = raw.trim();
+  const cutMatch = trimmed.search(/##\s*Pre-?registration|##\s+/i);
+  const sliced = cutMatch >= 0 ? trimmed.slice(0, cutMatch) : trimmed;
+  return sliced
+    .replace(/\*\*/g, '')
+    .replace(/_+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function truncateSentence(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const slice = text.slice(0, max);
+  const lastSpace = slice.lastIndexOf(' ');
+  return (lastSpace > 40 ? slice.slice(0, lastSpace) : slice) + '…';
 }
