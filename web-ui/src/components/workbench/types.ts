@@ -207,6 +207,32 @@ export type MaterializationsResponse = {
   materializations: Materialization[];
 };
 
+// Mirror of the on-disk manifest.json a research cell writes. Lighter
+// than the dagster materializations payload but always present, so it
+// is the reliable source for per-stage model_id on older runs that
+// pre-date the dagster materialization receipts.
+export type ManifestStage = {
+  stage: string;
+  elapsed_s?: number;
+  input_hash?: string;
+  prompt_hash?: string;
+  code_hash?: string;
+  model_id?: string;
+  output_hash?: string;
+  extras?: Record<string, unknown>;
+  signed_at?: string;
+};
+
+export type RunManifest = {
+  run_id: string;
+  question_hash?: string;
+  settings_hash?: string;
+  code_hash?: string;
+  started_at?: string;
+  finished_at?: string;
+  stages: ManifestStage[];
+};
+
 // Mirrors the ``Citation`` model in ``src/diageo_research/models.py``.
 // Each citation is one row in the brief's reference list — either a web
 // document fetched by the browser tool, or a DuckDB query the analyst
@@ -647,6 +673,7 @@ export const wb = {
   assetGraph: () => wbFetch<AssetGraph>('/assets/graph'),
   materializations: (runId: string) =>
     wbFetch<MaterializationsResponse>(`/runs/${runId}/materializations`),
+  manifest: (runId: string) => wbFetch<RunManifest>(`/runs/${runId}/manifest`),
   runFinal: (runId: string) => wbFetch<RunFinal>(`/runs/${runId}/final`),
   runTools: (runId: string) =>
     wbFetch<RunToolsResponse>(`/runs/${runId}/tools`),

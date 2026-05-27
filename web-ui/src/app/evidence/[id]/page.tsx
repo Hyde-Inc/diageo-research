@@ -28,7 +28,7 @@
  */
 
 import Link from 'next/link';
-import { use, useEffect, useMemo, useState } from 'react';
+import { Fragment, use, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDown,
   ArrowLeft,
@@ -48,6 +48,7 @@ import {
   wb,
   type CellSummary,
   type Materialization,
+  type ManifestStage,
   type RunCitation,
   type RunFinal,
   type SpecCurveRow,
@@ -55,11 +56,13 @@ import {
 import {
   agreementToneClass,
   cellDimensionLabel,
+  cleanRepresentative,
   describeStage,
   extractCiteIds,
   extractClaimTitle,
   findClaimParagraph,
   formatSourceSummary,
+  humanizeSpecKey,
   summarizeAgreement,
   summarizeCitations,
   unlabeledSourceFallback,
@@ -121,6 +124,13 @@ export default function EvidencePage({
     error: string | null;
   } | null>(null);
 
+  // Manifest is the reliable source for per-stage model_id; the
+  // dagster materializations endpoint can be empty for older runs.
+  const [manifestFetch, setManifestFetch] = useState<{
+    runId: string;
+    stages: ManifestStage[] | null;
+  } | null>(null);
+
   useEffect(() => {
     if (!sourceCell) return;
     let cancelled = false;
@@ -142,6 +152,15 @@ export default function EvidencePage({
           error: err instanceof Error ? err.message : String(err),
         });
       });
+    wb.manifest(runId)
+      .then((res) => {
+        if (cancelled) return;
+        setManifestFetch({ runId, stages: res.stages ?? [] });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setManifestFetch({ runId, stages: null });
+      });
     wb.runFinal(runId)
       .then((res) => {
         if (cancelled) return;
@@ -159,6 +178,42 @@ export default function EvidencePage({
       cancelled = true;
     };
   }, [sourceCell]);
+
+  // Pick a representative model_id for the ProvenanceLine. Prefer
+  // dagster materializations (when present); fall back to manifest
+  // stages. Within either source pick the stage that did the bulk of
+  // the work, i.e. highest n_calls or spent_usd, with the personas /
+  // interview / synthesis stages preferred over question_analysis.
+  const leadModelId = useMemo<string | null>(() => {
+    const stages: Array<Pick<Materialization, 'stage' | 'model_id' | 'n_calls' | 'spent_usd'>> =
+      (matsFetch?.value ?? []).length > 0
+        ? (matsFetch?.value ?? [])
+        : (manifestFetch?.stages ?? []).map((s) => ({
+            stage: s.stage,
+            model_id: s.model_id,
+            n_calls: undefined,
+            spent_usd: s.elapsed_s, // proxy when n_calls/spent_usd missing
+          }));
+    if (stages.length === 0) return null;
+    const PREFERRED = new Set([
+      'interviews',
+      'synthesis',
+      'subreports',
+      'perspective',
+    ]);
+    const score = (s: { stage: string; n_calls?: number | null; spent_usd?: number | null }) => {
+      const base =
+        (s.spent_usd ?? 0) > 0
+          ? s.spent_usd ?? 0
+          : (s.n_calls ?? 0);
+      return PREFERRED.has(s.stage) ? base + 1e6 : base;
+    };
+    let best = stages[0];
+    for (const s of stages.slice(1)) {
+      if (score(s) > score(best)) best = s;
+    }
+    return best.model_id ?? null;
+  }, [matsFetch, manifestFetch]);
 
   const currentRunId = sourceCell?.run_id ?? null;
   const mats: Loadable<Materialization[]> = useMemo(() => {
@@ -324,6 +379,13 @@ export default function EvidencePage({
               paragraph={paragraphMatch?.paragraph ?? null}
               loading={finalLoad.loading}
               error={finalLoad.error}
+            />
+            <ProvenanceLine
+              agreeingCells={agreeingCells}
+              totalCellCount={cells.length}
+              cells={cells}
+              sourceCell={sourceCell}
+              leadModelId={leadModelId}
             />
           </Step>
 
@@ -514,7 +576,7 @@ function ClaimBody({
   loading: boolean;
   error: string | null;
 }) {
-  const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   // Reuse extractClaimTitle's cleaner for the quote so the blockquote
   // doesn't render the raw "- **Lead recommendation:** …" prefix that
   // some persona sub-reports use before their key sentence.
@@ -522,7 +584,12 @@ function ClaimBody({
     () => extractClaimTitle(row.representative, 9999),
     [row],
   );
-  const showToggle = paragraph != null && paragraph.length > cleanedRep.length + 80;
+  const claimSentence = useMemo(
+    () => cleanRepresentative(row.representative),
+    [row],
+  );
+  const hasParagraph =
+    paragraph != null && paragraph.length > cleanedRep.length + 30;
   return (
     <div className="grid gap-2">
       <blockquote className="rounded-2xl border-l-4 border-emerald-200 bg-emerald-50/40 px-4 py-3 text-[14px] leading-relaxed text-slate-800">
@@ -542,27 +609,264 @@ function ClaimBody({
           Couldn&apos;t locate the surrounding paragraph in the brief.
           The claim above is the verbatim cluster representative.
         </p>
-      ) : showToggle ? (
-        <details
-          open={open}
-          onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-          className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
-        >
-          <summary className="cursor-pointer text-[12px] font-medium text-slate-700">
-            {open ? 'Hide full paragraph' : 'See full paragraph'}
-          </summary>
-          <p className="mt-2 whitespace-pre-wrap text-[12px] leading-relaxed text-slate-700">
-            {paragraph}
-          </p>
-        </details>
       ) : (
-        <p className="text-[12px] leading-relaxed text-slate-600">
-          The claim sentence is shown verbatim above; it&apos;s the full
-          paragraph in the brief.
-        </p>
+        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+          <p
+            className={cn(
+              'whitespace-pre-wrap text-[12px] leading-relaxed text-slate-700',
+              !expanded && hasParagraph && 'line-clamp-3',
+            )}
+          >
+            {renderParagraph(paragraph, claimSentence)}
+          </p>
+          {hasParagraph ? (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="mt-2 text-[11px] font-medium text-slate-700 underline-offset-2 hover:underline"
+            >
+              {expanded ? 'Show less' : 'Show full paragraph'}
+            </button>
+          ) : null}
+        </div>
       )}
     </div>
   );
+}
+
+// Render a brief paragraph with the cluster's representative sentence
+// wrapped in <mark> for subtle highlighting, and every [Sn] / [Bn] /
+// [Qn] citation marker bolded so the reader can scan what's cited.
+function renderParagraph(
+  paragraph: string,
+  sentence: string,
+): React.ReactNode {
+  const sentenceIdx = sentence ? locateSentence(paragraph, sentence) : -1;
+  if (sentenceIdx === -1) {
+    return boldCiteMarkers(paragraph);
+  }
+  const before = paragraph.slice(0, sentenceIdx);
+  // Walk to the end of the matched sentence (after first '.' / '!' / '?'
+  // following the probe). This captures the cite markers that often
+  // sit at the tail of the sentence.
+  let end = sentenceIdx;
+  while (end < paragraph.length) {
+    const ch = paragraph.charCodeAt(end);
+    if (ch === 46 || ch === 33 || ch === 63) {
+      end += 1;
+      break;
+    }
+    end += 1;
+  }
+  // Include any immediately trailing cite markers like " [S3]".
+  while (end < paragraph.length && /[\s\[]/.test(paragraph[end])) {
+    if (paragraph[end] === '[') {
+      const close = paragraph.indexOf(']', end);
+      if (close === -1) break;
+      end = close + 1;
+    } else {
+      end += 1;
+    }
+  }
+  const matched = paragraph.slice(sentenceIdx, end);
+  const after = paragraph.slice(end);
+  return (
+    <>
+      {boldCiteMarkers(before)}
+      <mark className="bg-emerald-100/80 px-0.5 text-slate-900">
+        {boldCiteMarkers(matched)}
+      </mark>
+      {boldCiteMarkers(after)}
+    </>
+  );
+}
+
+function locateSentence(paragraph: string, sentence: string): number {
+  const probe = sentence
+    .replace(/\s*\[(S|B|Q)\d+\](\s*\[(S|B|Q)\d+\])*/g, '')
+    .slice(0, 60)
+    .trim();
+  if (probe.length < 24) return -1;
+  return paragraph.indexOf(probe);
+}
+
+const CITE_TOKEN_RE = /(\[(?:S|B|Q)\d+\])/g;
+const CITE_TOKEN_TEST = /^\[(?:S|B|Q)\d+\]$/;
+
+function boldCiteMarkers(text: string): React.ReactNode {
+  if (!text) return text;
+  const parts = text.split(CITE_TOKEN_RE);
+  return parts.map((part, i) =>
+    CITE_TOKEN_TEST.test(part) ? (
+      <strong key={i} className="font-semibold text-slate-900">
+        {part}
+      </strong>
+    ) : (
+      <Fragment key={i}>{part}</Fragment>
+    ),
+  );
+}
+
+// ── ProvenanceLine ─────────────────────────────────────────────────
+
+type BriefSummary = {
+  runId: string;
+  loading: boolean;
+  sentence: string | null;
+  error: string | null;
+};
+
+function ProvenanceLine({
+  agreeingCells,
+  totalCellCount,
+  cells,
+  sourceCell,
+  leadModelId,
+}: {
+  agreeingCells: CellSummary[];
+  totalCellCount: number;
+  cells: CellSummary[];
+  sourceCell: CellSummary | null;
+  leadModelId: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [briefs, setBriefs] = useState<Record<string, BriefSummary>>({});
+  const inFlight = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    const pending = inFlight.current;
+    for (const cell of agreeingCells) {
+      if (briefs[cell.run_id] || pending.has(cell.run_id)) continue;
+      pending.add(cell.run_id);
+      setBriefs((b) => ({
+        ...b,
+        [cell.run_id]: {
+          runId: cell.run_id,
+          loading: true,
+          sentence: null,
+          error: null,
+        },
+      }));
+      wb.runFinal(cell.run_id)
+        .then((res) => {
+          if (cancelled) return;
+          const sentence = extractLeadSentence(res);
+          setBriefs((b) => ({
+            ...b,
+            [cell.run_id]: {
+              runId: cell.run_id,
+              loading: false,
+              sentence,
+              error: null,
+            },
+          }));
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          setBriefs((b) => ({
+            ...b,
+            [cell.run_id]: {
+              runId: cell.run_id,
+              loading: false,
+              sentence: null,
+              error: err instanceof Error ? err.message : String(err),
+            },
+          }));
+        })
+        .finally(() => {
+          pending.delete(cell.run_id);
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [open, agreeingCells, briefs]);
+
+  const agreeingCount = agreeingCells.length;
+  const dimensionLabel = sourceCell
+    ? humanizeSpecKey(sourceCell.id, cells)
+    : '';
+
+  if (agreeingCount === 0 && !sourceCell) return null;
+
+  return (
+    <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50/70 px-3 py-2 text-[12px] leading-snug text-slate-700">
+      <p>
+        Synthesized from{' '}
+        <strong className="font-semibold text-slate-900">
+          {agreeingCount} of {totalCellCount}
+        </strong>{' '}
+        agreeing scenario briefs. Cluster representative chosen by{' '}
+        <strong className="font-semibold text-slate-900">
+          highest spec-curve agreement
+        </strong>
+        . Lead brief produced by{' '}
+        <code className="rounded bg-white px-1 py-0.5 font-mono text-[11px] text-slate-800">
+          {leadModelId ?? 'an LLM (model id unavailable for this run)'}
+        </code>
+        {dimensionLabel ? (
+          <>
+            {' '}under{' '}
+            <em className="font-medium not-italic text-slate-800">
+              {dimensionLabel}
+            </em>
+          </>
+        ) : null}
+        .{' '}
+        {agreeingCount > 0 ? (
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="font-semibold text-slate-900 underline-offset-2 hover:underline"
+          >
+            {open
+              ? 'Hide agreeing briefs'
+              : `Show all ${agreeingCount} agreeing briefs →`}
+          </button>
+        ) : null}
+      </p>
+      {open && agreeingCount > 0 ? (
+        <ul className="mt-2 grid gap-1.5">
+          {agreeingCells.map((cell) => {
+            const brief = briefs[cell.run_id];
+            const label = humanizeSpecKey(cell.id, cells);
+            return (
+              <li
+                key={cell.id}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2"
+              >
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  {label}
+                </p>
+                <p className="mt-0.5 text-[12px] text-slate-700">
+                  {brief?.loading
+                    ? 'Loading…'
+                    : brief?.error
+                      ? `Could not load brief: ${brief.error}`
+                      : (brief?.sentence ??
+                        'No lead sentence available in this brief.')}
+                </p>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+function extractLeadSentence(res: RunFinal): string | null {
+  // Prefer the first directive sentence from final.json's outline /
+  // headline; fall back to the first non-heading line of markdown.
+  const md = res.markdown ?? res.json?.markdown ?? '';
+  if (!md) return null;
+  const cleaned = cleanRepresentative(md);
+  const sentence = cleaned.split(/(?<=[.!?])\s+/)[0] ?? cleaned;
+  const trimmed = sentence.trim();
+  if (!trimmed) return null;
+  return trimmed.length > 320 ? `${trimmed.slice(0, 317)}…` : trimmed;
 }
 
 // ── Step 2: Sources body ───────────────────────────────────────────
