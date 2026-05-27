@@ -46,9 +46,6 @@ import {
   type TopRiskCard,
 } from '@/components/workbench/types';
 
-const RISK_PATTERNS =
-  /\b(risk|risks|at risk|exposed|exposure|threat|threats|danger|downside|loss|losses|wrong|compress|erosion|erode|attrit|cannibal|decline|declines|declining)\b/i;
-
 type Finding = {
   id: string;
   rank: number;
@@ -109,7 +106,6 @@ export default function ResearchPage() {
   const loading = loadingDetail || loadingCurve;
 
   const question = detail?.question?.trim() || summary?.question?.trim() || '';
-  const framing = useMemo(() => detectFraming(question), [question]);
 
   const findings = useMemo<Finding[]>(
     () => buildFindings(curve?.rows ?? [], summary?.top_risks ?? []),
@@ -150,7 +146,6 @@ export default function ResearchPage() {
         ) : findings.length === 0 ? null : (
           <FindingsRail
             findings={findings}
-            framing={framing}
             selectedIndex={selectedIndex}
             onSelect={selectFinding}
             illustrative={Boolean(summary?.brief_illustrative)}
@@ -213,6 +208,8 @@ export default function ResearchPage() {
           <ActionRail
             studyId={studyId}
             hasFindings={findings.length > 0}
+            selectedFinding={selected}
+            selectedIndex={selectedIndex}
             counterScenarioParams={buildCounterScenarioParams(
               selected,
               selectedIndex,
@@ -227,18 +224,16 @@ export default function ResearchPage() {
 
 function FindingsRail({
   findings,
-  framing,
   selectedIndex,
   onSelect,
   illustrative,
 }: {
   findings: Finding[];
-  framing: 'risk' | 'findings';
   selectedIndex: number;
   onSelect: (idx: number) => void;
   illustrative: boolean;
 }) {
-  const sectionTitle = framing === 'risk' ? 'Top risks' : 'Top findings';
+  const sectionTitle = 'Findings, ranked by agreement.';
   const dimmed = findings.length <= 1;
   return (
     <FocusCard>
@@ -247,9 +242,6 @@ function FindingsRail({
           <h2 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
             {sectionTitle}
           </h2>
-          <p className="mt-1 text-[11px] leading-snug text-slate-500">
-            Ranked by support and agreement across framings.
-          </p>
         </div>
         {illustrative ? (
           <Badge
@@ -312,17 +304,11 @@ function FindingsRail({
                     robustness={f.robustness}
                     onDark={active}
                   />
-                  <span
-                    className={cn(
-                      'text-[10px]',
-                      active ? 'text-slate-300' : 'text-slate-500',
-                    )}
-                  >
-                    {f.evidence.length > 0
-                      ? `${f.evidence.length} evidence ${f.evidence.length === 1 ? 'chip' : 'chips'}`
-                      : 'no linked evidence'}
-                  </span>
                 </div>
+                <SourceLabelsLine
+                  labels={f.evidence}
+                  onDark={active}
+                />
               </button>
             </li>
           );
@@ -439,30 +425,50 @@ function FindingDetail({
 function ActionRail({
   studyId,
   hasFindings,
+  selectedFinding,
+  selectedIndex,
   counterScenarioParams,
 }: {
   studyId: string | null;
   hasFindings: boolean;
+  selectedFinding: Finding | null;
+  selectedIndex: number;
   counterScenarioParams: Record<string, string>;
 }) {
   if (!studyId) return null;
+  const findingScope: Record<string, string> | undefined =
+    selectedFinding != null
+      ? { finding: String(selectedIndex >= 0 ? selectedIndex : 0) }
+      : undefined;
+  const clusterScope: Record<string, string> | undefined =
+    selectedFinding != null
+      ? { cluster: String(selectedFinding.clusterId) }
+      : undefined;
   return (
     <FocusCard>
       <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
         What&apos;s next
       </h3>
+      {selectedFinding ? (
+        <p className="mt-1 text-[11px] leading-snug text-slate-600">
+          Acting on:{' '}
+          <em className="font-semibold not-italic text-slate-900">
+            {selectedFinding.title}
+          </em>
+        </p>
+      ) : null}
       <div className="mt-3 grid gap-2">
         <ActionPrimary
-          href={withStudy('/growth-driver', studyId)}
+          href={withStudy('/growth-driver', studyId, findingScope)}
           icon={<TrendingUp className="h-3.5 w-3.5" />}
           label="Take to MBP"
-          detail="Move the lead recommendation into the growth-driver planner."
+          detail="Move this finding into the growth-driver planner."
         />
         <ActionSecondary
-          href={withStudy('/robustness', studyId)}
+          href={withStudy('/robustness', studyId, clusterScope)}
           icon={<Compass className="h-3.5 w-3.5" />}
           label="Stress-test"
-          detail="See which framings hold, weaken, or flip the answer."
+          detail="See which framings hold, weaken, or flip this finding."
         />
         <ActionSecondary
           href={withStudy('/simulation', studyId, counterScenarioParams)}
@@ -670,9 +676,30 @@ function ConfidenceLine({ finding }: { finding: Finding }) {
   );
 }
 
-function detectFraming(question: string): 'risk' | 'findings' {
-  if (!question) return 'findings';
-  return RISK_PATTERNS.test(question) ? 'risk' : 'findings';
+function SourceLabelsLine({
+  labels,
+  onDark,
+}: {
+  labels: string[];
+  onDark: boolean;
+}) {
+  const visible = labels.slice(0, 2);
+  const overflow = labels.length - visible.length;
+  const text =
+    labels.length === 0
+      ? 'no linked sources'
+      : `Backed by: ${visible.join(' · ')}${overflow > 0 ? ` · +${overflow} more` : ''}`;
+  return (
+    <span
+      className={cn(
+        'block truncate text-[10px] leading-snug',
+        onDark ? 'text-slate-300' : 'text-slate-500',
+      )}
+      title={labels.length > visible.length ? labels.join(' · ') : undefined}
+    >
+      {text}
+    </span>
+  );
 }
 
 // Build the param bag for the "Run counter-scenario" CTA. The plan
