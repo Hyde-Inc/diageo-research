@@ -627,6 +627,23 @@ export type QuickStudyResponse = {
   n_cells_planned: number;
 };
 
+// ─── Counter-scenario brainstorm ───────────────────────────────────
+
+export type CounterScenarioCandidate = {
+  id: string;
+  title: string;
+  swap: string;
+  expected_effect: string;
+  suggested_prompt: string;
+  suggested_simulation_params: Record<string, string>;
+};
+
+export type BrainstormCounterScenariosResponse = {
+  candidates: CounterScenarioCandidate[];
+  cached: boolean;
+  cache_path: string | null;
+};
+
 // ─── Fetch helpers ─────────────────────────────────────────────────
 
 const BASE = '/api/workbench';
@@ -685,6 +702,21 @@ export const wb = {
     }),
   research: (studyId: string) =>
     wbFetch<ResearchSummary>(`/studies/${studyId}/research`),
+  brainstormCounterScenarios: (
+    studyId: string,
+    clusterId: number,
+    opts?: { refresh?: boolean },
+  ) => {
+    const q = opts?.refresh ? '?refresh=1' : '';
+    return wbFetch<BrainstormCounterScenariosResponse>(
+      `/studies/${studyId}/findings/${clusterId}/brainstorm-counter-scenarios${q}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      },
+    );
+  },
   planRevise: (studyId: string, body: PlanReviseRequest) =>
     wbFetch<PlanReviseResponse>(`/studies/${studyId}/plan/revise`, {
       method: 'POST',

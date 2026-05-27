@@ -67,6 +67,7 @@ import {
   summarizeCitations,
   unlabeledSourceFallback,
 } from '@/components/evidence/claim-utils';
+import { CounterScenarioPicker } from '@/components/evidence/counter-scenario-picker';
 import { SourceCard } from '@/components/evidence/source-card';
 import {
   extractVerifierFlags,
@@ -100,6 +101,15 @@ export default function EvidencePage({
     if (!curve) return null;
     return curve.rows.find((r) => String(r.cluster_id) === id) ?? null;
   }, [curve, id]);
+
+  // 1-based position of this finding in the ranked spec curve (matches
+  // /research's ordering, so the simulation page can deep-link as
+  // ?finding=N).
+  const findingIndex = useMemo<number | null>(() => {
+    if (!curve || !row) return null;
+    const idx = curve.rows.findIndex((r) => r.cluster_id === row.cluster_id);
+    return idx < 0 ? null : idx + 1;
+  }, [curve, row]);
 
   const cells = useMemo(() => curve?.cells ?? [], [curve]);
   const agreeingCells: CellSummary[] = useMemo(() => {
@@ -290,12 +300,11 @@ export default function EvidencePage({
   );
   const claimParagraph = paragraphMatch?.paragraph ?? null;
 
-  // The "Spawn a counter-scenario" CTA links to /plan today. A
-  // follow-up will prefill the textarea with the dimension-swap
-  // instruction, once the plan page settles (it is being rewritten by
-  // a sibling change). Hint the dimension to the user in the link
-  // text instead, so they can still type the swap themselves.
-  const counterfactualHref = withStudy('/plan', studyId);
+  // The one-shot "Spawn a counter-scenario" CTA used to deep-link to
+  // /plan. It is replaced by <CounterScenarioPicker>, which calls the
+  // brainstorm endpoint and renders selectable cards. We still surface
+  // the dimension hint so the user can scan the swap space at a
+  // glance before the brainstorm returns.
   const counterfactualHint = useMemo(() => {
     if (!cells.length) return null;
     const dimensions = new Map<string, Set<string>>();
@@ -436,8 +445,10 @@ export default function EvidencePage({
           >
             <RobustnessBody
               row={row}
-              counterfactualHref={counterfactualHref}
               counterfactualHint={counterfactualHint}
+              studyId={studyId}
+              clusterId={row.cluster_id}
+              findingIndex={findingIndex}
             />
           </Step>
 
@@ -1184,12 +1195,16 @@ function TransformationBody({
 
 function RobustnessBody({
   row,
-  counterfactualHref,
   counterfactualHint,
+  studyId,
+  clusterId,
+  findingIndex,
 }: {
   row: SpecCurveRow;
-  counterfactualHref: string;
   counterfactualHint: string | null;
+  studyId: string | null;
+  clusterId: number;
+  findingIndex: number | null;
 }) {
   const agree = summarizeAgreement(row);
   const total = agree.total;
@@ -1247,13 +1262,11 @@ function RobustnessBody({
         </p>
       ) : null}
       <div className="grid gap-1.5">
-        <Link
-          href={counterfactualHref}
-          className="inline-flex w-fit items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[12px] font-medium text-slate-800 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50"
-        >
-          <Sparkles className="h-3.5 w-3.5" />
-          Spawn a counter-scenario
-        </Link>
+        <CounterScenarioPicker
+          studyId={studyId}
+          clusterId={clusterId}
+          findingIndex={findingIndex}
+        />
         {counterfactualHint ? (
           <p className="text-[11px] text-slate-500">
             Suggestion: swap the{' '}

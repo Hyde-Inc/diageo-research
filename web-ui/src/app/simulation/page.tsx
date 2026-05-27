@@ -80,6 +80,10 @@ type FindingScope = {
   promptLabel: string;
   occasion: string | null;
   brand: string | null;
+  // Free-text hint from a brainstormed counter-scenario. When the LLM
+  // returns a prompt outside the supported set we still deep-link, but
+  // surface its swap sentence here so the analyst sees the intent.
+  note: string | null;
 };
 
 type EmptyScope = { kind: 'empty' };
@@ -203,6 +207,7 @@ function SimulationBody() {
   const promptParam = search.get('prompt');
   const occasionParam = search.get('occasion');
   const brandParam = search.get('brand');
+  const noteParam = search.get('note');
 
   const scope = useMemo<Scope>(
     () =>
@@ -213,6 +218,7 @@ function SimulationBody() {
         prompt: promptParam,
         occasion: occasionParam,
         brand: brandParam,
+        note: noteParam,
       }),
     [
       driverParam,
@@ -221,6 +227,7 @@ function SimulationBody() {
       promptParam,
       occasionParam,
       brandParam,
+      noteParam,
     ],
   );
 
@@ -415,8 +422,9 @@ function deriveScope(args: {
   prompt: string | null;
   occasion: string | null;
   brand: string | null;
+  note: string | null;
 }): Scope {
-  const { driver, mustDo, finding, prompt, occasion, brand } = args;
+  const { driver, mustDo, finding, prompt, occasion, brand, note } = args;
   if (driver) {
     return {
       kind: 'driver',
@@ -438,6 +446,7 @@ function deriveScope(args: {
       promptLabel: prettify(promptSlug),
       occasion: occasion?.trim() ? prettify(occasion.trim()) : null,
       brand: brand?.trim() ? prettify(brand.trim()) : null,
+      note: note?.trim() ? note.trim() : null,
     };
   }
   return { kind: 'empty' };
@@ -484,6 +493,8 @@ function prettify(slug: string): string {
   return words
     .map((w, i) => {
       const lower = w.toLowerCase();
+      // Render "A&P" instead of "Ap" for cut-ap-30, alternative-ap, etc.
+      if (lower === 'ap') return 'A&P';
       if (i > 0 && i < words.length - 1 && SMALL.has(lower)) return lower;
       return lower[0].toUpperCase() + lower.slice(1);
     })
@@ -1159,6 +1170,12 @@ function ScopeCard({
               </span>
             </span>
           </div>
+          {scope.note ? (
+            <p className="rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2 text-[12px] leading-snug text-amber-900">
+              <span className="font-semibold">Brainstormed swap:</span>{' '}
+              {scope.note}
+            </p>
+          ) : null}
         </div>
       </FocusCard>
     );

@@ -40,6 +40,7 @@ from pydantic import BaseModel, Field, ValidationError
 from sse_starlette.sse import EventSourceResponse
 
 from ..ask import AskAnswer, ask_study
+from ..counter_brainstorm import brainstorm_counter_scenarios
 from ..evidence_trace import build_evidence_trace
 from ..research_view import build_research_summary
 from ..study_plan import (
@@ -181,6 +182,23 @@ class PlanReviseRequest(BaseModel):
     instruction: str = Field(..., min_length=1)
     apply: bool = False
     rerun: bool = False
+
+
+class CounterScenarioCandidateModel(BaseModel):
+    """One brainstormed counter-scenario candidate (FE picker shape)."""
+
+    id: str
+    title: str
+    swap: str
+    expected_effect: str
+    suggested_prompt: str
+    suggested_simulation_params: dict[str, str] = Field(default_factory=dict)
+
+
+class BrainstormCounterScenariosResponse(BaseModel):
+    candidates: list[CounterScenarioCandidateModel] = Field(default_factory=list)
+    cached: bool = False
+    cache_path: str | None = None
 
 
 class PlanReviseResponse(BaseModel):
@@ -1383,6 +1401,55 @@ def get_study_research(study_id: str) -> dict[str, Any]:
         "brief_illustrative": summary.brief_illustrative,
         "lead_cluster_id": summary.lead_cluster_id,
     }
+
+
+@app.post(
+    "/studies/{study_id}/findings/{cluster_id}/brainstorm-counter-scenarios",
+    response_model=BrainstormCounterScenariosResponse,
+)
+async def post_brainstorm_counter_scenarios(
+    study_id: str,
+    cluster_id: int,
+    refresh: int = 0,
+) -> BrainstormCounterScenariosResponse:
+    """Brainstorm 3–5 MECE counter-scenarios for one cluster (finding).
+
+    Pass ``?refresh=1`` to bypass the on-disk cache. Caching key is the
+    cluster id; cache file lives next to the first agreeing run.
+
+    Returns HTTP 503 with an explanatory body when the LLM call fails.
+    """
+    study = read_study(study_id)
+    if study is None:
+        raise HTTPException(status_code=404, detail="No such study")
+    try:
+        candidates, cache_path = await brainstorm_counter_scenarios(
+            study_id, cluster_id, refresh=bool(refresh)
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        logger.exception(
+            "brainstorm: study=%s cluster=%s failed", study_id, cluster_id
+        )
+        raise HTTPException(status_code=503, detail=str(e))
+    return BrainstormCounterScenariosResponse(
+        candidates=[
+            CounterScenarioCandidateModel(
+                id=c.id,
+                title=c.title,
+                swap=c.swap,
+                expected_effect=c.expected_effect,
+                suggested_prompt=c.suggested_prompt,
+                suggested_simulation_params=c.suggested_simulation_params,
+            )
+            for c in candidates
+        ],
+        cached=not bool(refresh) and cache_path is not None,
+        cache_path=cache_path,
+    )
 
 
 @app.post("/studies/{study_id}/plan/revise", response_model=PlanReviseResponse)
