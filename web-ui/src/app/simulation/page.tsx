@@ -27,7 +27,7 @@
 
 import Link from 'next/link';
 import { Suspense, useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   AlertTriangle,
   ArrowRight,
@@ -46,7 +46,13 @@ import { FocusCard, StudyShell } from '@/components/study/study-shell';
 import { useStudyData, withStudy } from '@/components/study/use-study';
 import { PaneCard } from '@/components/workbench/pane-layout';
 import { cn } from '@/lib/utils';
-import { wb, type ResearchSummary } from '@/components/workbench/types';
+import {
+  wb,
+  type CounterfactualScopeBody,
+  type DecisionScopeBody,
+  type ResearchSummary,
+  type TaskScopeBody,
+} from '@/components/workbench/types';
 
 type DriverScope = {
   kind: 'driver';
@@ -89,9 +95,25 @@ type Variant = {
   illustrative: boolean;
 };
 
+type CommitState =
+  | { kind: 'idle' }
+  | { kind: 'pending'; stage: 'counterfactual' | 'decision' }
+  | { kind: 'error'; message: string };
+
+type ValidateState =
+  | { kind: 'idle' }
+  | { kind: 'pending' }
+  | {
+      kind: 'success';
+      taskId: string;
+      assetKeyEncoded: string;
+    }
+  | { kind: 'error'; message: string };
+
 function SimulationBody() {
   const data = useStudyData();
   const { studyId, curve, detail } = data;
+  const router = useRouter();
   const search = useSearchParams();
   const [summary, setSummary] = useState<ResearchSummary | null>(null);
   const [toast, setToast] = useState<{
@@ -99,6 +121,10 @@ function SimulationBody() {
     title: string;
     body: string;
   } | null>(null);
+  const [validateState, setValidateState] = useState<ValidateState>({
+    kind: 'idle',
+  });
+  const [commitState, setCommitState] = useState<CommitState>({ kind: 'idle' });
 
   useEffect(() => {
     if (!studyId) return;
@@ -168,32 +194,77 @@ function SimulationBody() {
   const headingTitle = buildTitle(scope, findingTitle);
   const headingIntro = buildIntro(scope);
 
-  // FR-SM-4: stubbed for Worker D. Backend wiring should hit
-  // POST /tasks with body {kind: 'validate-promo', study_id,
-  // scope: {driver|finding+prompt+occasion+brand}, due_date} and
-  // confirm a task asset id in the response so we can deep-link to it.
-  // TODO(worker-d, FR-SM-4): swap toast for a real POST /tasks call.
-  const onValidatePromo = () => {
-    const id = Date.now();
-    setToast({
-      id,
-      title: 'Will create a validation task',
-      body: 'Pending API wiring (FR-SM-4). The task will land in /assets once Worker D ships POST /tasks.',
-    });
+  // FR-SM-4: POST /tasks(kind='validate-promo') and surface the resulting
+  // task asset id inline so a planner can deep-link to it. Scope carries
+  // study_id plus driver_id or a synthetic finding_id derived from the
+  // finding index (the backend's TaskScope accepts both).
+  const onValidatePromo = async () => {
+    if (!studyId || variants.length === 0 || scope.kind === 'empty') return;
+    setValidateState({ kind: 'pending' });
+    try {
+      const res = await wb.postTask({
+        kind: 'validate-promo',
+        scope: buildTaskScope(studyId, scope),
+        due_date: null,
+        description: buildValidateDescription(scope, findingTitle),
+      });
+      setValidateState({
+        kind: 'success',
+        taskId: res.task_id,
+        assetKeyEncoded: res.asset_key_encoded,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setValidateState({ kind: 'error', message });
+    }
   };
 
-  // FR-SM-5: stubbed for Worker D. Backend wiring should hit
-  // POST /decisions with the scope, the selected counterfactual_ref
-  // (variant id), inputs_used, owner, and the captured assumes-list,
-  // then redirect to /decision/[id] (worker D ships that route too).
-  // TODO(worker-d, FR-SM-5): swap toast for POST /decisions + redirect.
-  const onCommitDecision = () => {
-    const id = Date.now();
-    setToast({
-      id,
-      title: 'Will commit decision',
-      body: 'Pending API wiring (FR-SM-5). Worker D ships POST /decisions and the /decision/[id] read page.',
-    });
+  // FR-SM-5: POST /counterfactuals to persist the chosen variant, then
+  // POST /decisions referencing the resulting cf_id, then redirect to
+  // /decision/[id]. We commit the "winning" variant (highest effect on
+  // spend retention) because the readout already names it as the
+  // recommendation — keeps the action consistent with what the user
+  // sees. owner is hardcoded 'tim' for now; wire to auth later.
+  const onCommitDecision = async () => {
+    if (!studyId || variants.length === 0 || scope.kind === 'empty') return;
+    const winner = pickWinner(variants);
+    if (!winner) return;
+    setCommitState({ kind: 'pending', stage: 'counterfactual' });
+    try {
+      const cfScope = buildCounterfactualScope(studyId, scope);
+      const cfRes = await wb.postCounterfactual({
+        study_id: studyId,
+        scope: cfScope,
+        prompt: buildCounterfactualPrompt(scope, findingTitle, winner),
+        variants: [variantToBody(winner)],
+        inputs: winner.inputs.map((i) => ({
+          label: i.label,
+          source: i.source,
+        })),
+        confidence_per_variant: [
+          { variant_id: winner.id, confidence_pill: winner.confidence },
+        ],
+        assumes: winner.assumes,
+        does_not_assume: winner.doesNotAssume,
+      });
+
+      setCommitState({ kind: 'pending', stage: 'decision' });
+      const decRes = await wb.postDecision({
+        scope: buildDecisionScope(studyId, scope),
+        recommendation: buildRecommendation(scope, winner),
+        confidence: deriveConfidenceBlock(winner),
+        fragile_assumption: deriveFragileAssumption(scope, winner),
+        counterfactual_refs: [cfRes.cf_id],
+        inputs_used: winner.inputs.map((i) => i.source),
+        // TODO: derive owner from auth when it lands.
+        owner: 'tim',
+      });
+      // Redirect to the decision detail page (M4 / FR-DC-1).
+      router.push(`/decision/${decRes.decision_id}?study=${studyId}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setCommitState({ kind: 'error', message });
+    }
   };
 
   return (
@@ -222,6 +293,8 @@ function SimulationBody() {
                 onValidatePromo={onValidatePromo}
                 onCommitDecision={onCommitDecision}
                 disabled={variants.length === 0}
+                validateState={validateState}
+                commitState={commitState}
               />
             </div>
           )
@@ -923,11 +996,18 @@ function ActionBar({
   onValidatePromo,
   onCommitDecision,
   disabled,
+  validateState,
+  commitState,
 }: {
   onValidatePromo: () => void;
   onCommitDecision: () => void;
   disabled: boolean;
+  validateState: ValidateState;
+  commitState: CommitState;
 }) {
+  const validatePending = validateState.kind === 'pending';
+  const commitPending = commitState.kind === 'pending';
+  const submitting = validatePending || commitPending;
   return (
     <div className="rounded-3xl border border-slate-900 bg-slate-950 p-5 text-slate-50 shadow-sm">
       <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
@@ -940,33 +1020,64 @@ function ActionBar({
             commit it as a decision so the in-year query can later say what
             changed.
           </p>
-          <p className="mt-1 text-[10px] uppercase tracking-wider text-slate-500">
-            Buttons are scaffolded — backend wiring lands with Worker D.
-          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           <button
             type="button"
             onClick={onValidatePromo}
-            disabled={disabled}
+            disabled={disabled || submitting}
             aria-label="Validate the chosen counterfactual variant against connected promo data"
             className="inline-flex h-10 items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 text-[12px] font-semibold text-white shadow-sm transition-colors hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Send className="h-3.5 w-3.5" />
-            Validate against promo data
+            {validatePending
+              ? 'Sending validation task…'
+              : 'Validate against promo data'}
           </button>
           <button
             type="button"
             onClick={onCommitDecision}
-            disabled={disabled}
+            disabled={disabled || submitting}
             aria-label="Commit the chosen counterfactual variant as a decision"
             className="inline-flex h-10 items-center gap-2 rounded-full bg-blue-500 px-4 text-[12px] font-semibold text-white shadow-sm transition-colors hover:bg-blue-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <CheckCircle2 className="h-3.5 w-3.5" />
-            Commit as decision
+            {commitState.kind === 'pending' && commitState.stage === 'counterfactual'
+              ? 'Saving counterfactual…'
+              : commitState.kind === 'pending'
+                ? 'Committing decision…'
+                : 'Commit as decision'}
           </button>
         </div>
       </div>
+      {validateState.kind === 'success' ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-[12px] text-emerald-100">
+          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" />
+          <span>
+            Created validation task{' '}
+            <span className="font-mono text-emerald-200">
+              {validateState.taskId.slice(0, 16)}…
+            </span>
+          </span>
+          <Link
+            href={`/assets/${validateState.assetKeyEncoded}`}
+            className="ml-auto inline-flex items-center gap-1 rounded-full bg-emerald-400/20 px-2 py-0.5 text-[11px] font-semibold text-emerald-100 hover:bg-emerald-400/30"
+          >
+            Open task asset
+            <ArrowRight className="h-3 w-3" />
+          </Link>
+        </div>
+      ) : null}
+      {validateState.kind === 'error' ? (
+        <p className="mt-3 rounded-2xl border border-orange-500/40 bg-orange-500/10 px-3 py-2 text-[12px] text-orange-100">
+          Validation task failed: {validateState.message}
+        </p>
+      ) : null}
+      {commitState.kind === 'error' ? (
+        <p className="mt-3 rounded-2xl border border-orange-500/40 bg-orange-500/10 px-3 py-2 text-[12px] text-orange-100">
+          Commit failed: {commitState.message}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -1091,6 +1202,146 @@ function effectMagnitude(variant: Variant): number {
   if (!match) return 0;
   const v = Number(match[1]);
   return Number.isFinite(v) ? v : 0;
+}
+
+function pickWinner(variants: Variant[]): Variant | null {
+  if (variants.length === 0) return null;
+  return variants.reduce<Variant>((best, v) => bestEffect(v, best), variants[0]);
+}
+
+function variantToBody(v: Variant): Record<string, unknown> {
+  return {
+    id: v.id,
+    title: v.title,
+    subtitle: v.subtitle,
+    directional: v.directional,
+    effect_value: v.effectValue,
+    effect_kind: v.effectKind,
+    confidence: v.confidence,
+    confidence_reason: v.confidenceReason,
+    math: v.math,
+    illustrative: v.illustrative,
+    inputs: v.inputs,
+    assumes: v.assumes,
+    does_not_assume: v.doesNotAssume,
+  };
+}
+
+// Scope is intentionally minimal — the backend models accept study_id
+// plus driver_id or finding_id. Empty scopes are gated upstream by the
+// onCommit/onValidate guards.
+function buildCounterfactualScope(
+  studyId: string,
+  scope: Scope,
+): CounterfactualScopeBody {
+  if (scope.kind === 'driver') {
+    return { study_id: studyId, driver_id: scope.driverSlug };
+  }
+  if (scope.kind === 'finding') {
+    return {
+      study_id: studyId,
+      finding_id: `finding-${scope.findingIndex}`,
+    };
+  }
+  return { study_id: studyId };
+}
+
+function buildDecisionScope(studyId: string, scope: Scope): DecisionScopeBody {
+  return buildCounterfactualScope(studyId, scope) as DecisionScopeBody;
+}
+
+function buildTaskScope(studyId: string, scope: Scope): TaskScopeBody {
+  if (scope.kind === 'driver') {
+    return { study_id: studyId, driver_id: scope.driverSlug };
+  }
+  if (scope.kind === 'finding') {
+    return { study_id: studyId, finding_id: `finding-${scope.findingIndex}` };
+  }
+  return { study_id: studyId };
+}
+
+function buildCounterfactualPrompt(
+  scope: Scope,
+  findingTitle: string | null,
+  winner: Variant,
+): string {
+  if (scope.kind === 'driver') {
+    return `Stress-test ${scope.driverLabel}${
+      scope.mustDoLabel ? ` for ${scope.mustDoLabel}` : ''
+    } — ${winner.title}`;
+  }
+  if (scope.kind === 'finding') {
+    const subject = findingTitle?.trim() || `Finding #${scope.findingIndex + 1}`;
+    return `Counter-scenario (${scope.promptLabel}) on "${subject}" — ${winner.title}`;
+  }
+  return winner.title;
+}
+
+function buildRecommendation(scope: Scope, winner: Variant): string {
+  // Compose a single recommendation sentence from the variant's title +
+  // the directional effect sentence — the two carry the directional
+  // commitment and the "why" we want preserved in the decision asset.
+  const scopeNote =
+    scope.kind === 'driver'
+      ? ` for ${scope.driverLabel}${
+          scope.mustDoLabel ? ` (${scope.mustDoLabel})` : ''
+        }`
+      : scope.kind === 'finding'
+        ? ` for ${scope.promptLabel}${
+            scope.brand && scope.occasion
+              ? ` on ${scope.brand} in ${scope.occasion}`
+              : scope.occasion
+                ? ` in ${scope.occasion}`
+                : ''
+          }`
+        : '';
+  return `${winner.title}${scopeNote}. ${winner.directional}`;
+}
+
+function deriveConfidenceBlock(winner: Variant) {
+  // Until we wire real holdout data, we collapse the variant's pill to a
+  // 3-bucket holds_in / of so the decision asset still carries the same
+  // honesty contract that /research findings use (e.g. "3 of 4
+  // scenarios agree"). High → 3/3, Medium → 2/3, Low → 1/3.
+  const ofTotal = 3;
+  const holdsIn =
+    winner.confidence === 'High'
+      ? 3
+      : winner.confidence === 'Medium'
+        ? 2
+        : 1;
+  const sentence = winner.confidenceReason;
+  return {
+    sentence,
+    holds_in: holdsIn,
+    of: ofTotal,
+    label: winner.confidence,
+  };
+}
+
+function deriveFragileAssumption(scope: Scope, winner: Variant): string {
+  if (winner.assumes.length === 0) return '';
+  if (scope.kind === 'driver') {
+    return `Holds only if: ${winner.assumes[0]}`;
+  }
+  return winner.assumes[0];
+}
+
+function buildValidateDescription(
+  scope: Scope,
+  findingTitle: string | null,
+): string {
+  if (scope.kind === 'driver') {
+    const must = scope.mustDoLabel ? ` (${scope.mustDoLabel})` : '';
+    return `Validate the ${scope.driverLabel}${must} stress-test against connected promo data before any spend moves.`;
+  }
+  if (scope.kind === 'finding') {
+    const subject =
+      findingTitle?.trim() || `finding #${scope.findingIndex + 1}`;
+    const where = scope.occasion ? ` in ${scope.occasion}` : '';
+    return `Validate the ${scope.promptLabel} counter-scenario for ${subject}${where} against connected promo data.`;
+  }
+  return 'Validate the active counterfactual against connected promo data.';
 }
 
 function effectToneClass(kind: Variant['effectKind']): string {

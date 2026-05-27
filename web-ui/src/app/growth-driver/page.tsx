@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import type { ReactNode } from 'react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
   CalendarDays,
@@ -19,6 +19,12 @@ import { FocusCard, StudyShell } from '@/components/study/study-shell';
 import { useStudyData, withStudy } from '@/components/study/use-study';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import {
+  wb,
+  type GrowthDriverDTO,
+  type GrowthDriversResponse,
+  type MustDoDTO,
+} from '@/components/workbench/types';
 
 type Quarter = 'Q1' | 'Q2' | 'Q3' | 'Q4';
 
@@ -41,6 +47,8 @@ type GrowthDriver = {
   whatWouldChangeOurMind: string;
   validateNext: string[];
   simulationPrompt: string;
+  illustrative: boolean;
+  assetKeyEncoded: string | null;
 };
 
 type MustDo = {
@@ -113,6 +121,8 @@ const GROWTH_DRIVERS: GrowthDriver[] = [
     ],
     simulationPrompt:
       'Stress-test whether suite spend should stay in tier-1 NFL cities or extend into playoff host markets.',
+    illustrative: true,
+    assetKeyEncoded: null,
   },
   {
     id: 'sports-bar-takeover',
@@ -144,6 +154,8 @@ const GROWTH_DRIVERS: GrowthDriver[] = [
     ],
     simulationPrompt:
       'Stress-test whether sports-bar staff training holds its lift past the first month of the season.',
+    illustrative: true,
+    assetKeyEncoded: null,
   },
   {
     id: 'crown-peach-tailgate',
@@ -175,6 +187,8 @@ const GROWTH_DRIVERS: GrowthDriver[] = [
     ],
     simulationPrompt:
       'Stress-test whether tailgate spend should weight to Crown Peach or stay split with flagship Crown.',
+    illustrative: false,
+    assetKeyEncoded: null,
   },
   {
     id: 'grill-sauce-partnerships',
@@ -206,6 +220,8 @@ const GROWTH_DRIVERS: GrowthDriver[] = [
     ],
     simulationPrompt:
       'Stress-test whether co-branded grill partners should anchor mass retail or premium grocery first.',
+    illustrative: true,
+    assetKeyEncoded: null,
   },
   {
     id: 'sunday-funday-recipes',
@@ -237,6 +253,8 @@ const GROWTH_DRIVERS: GrowthDriver[] = [
     ],
     simulationPrompt:
       'Stress-test whether Sunday hosting spend should follow the NFL calendar or extend through bowl season.',
+    illustrative: true,
+    assetKeyEncoded: null,
   },
   {
     id: 'q4-retail-display-kits',
@@ -268,6 +286,8 @@ const GROWTH_DRIVERS: GrowthDriver[] = [
     ],
     simulationPrompt:
       'Stress-test whether Q4 display spend should focus on big-box, grocery, or club channels first.',
+    illustrative: true,
+    assetKeyEncoded: null,
   },
 ];
 
@@ -298,21 +318,88 @@ const QUARTER_STYLES: Record<
   },
 };
 
+type LoadState = 'pending' | 'live' | 'fallback';
+
+type DriverFetch = {
+  studyId: string;
+  mustDos: MustDo[] | null;
+  drivers: GrowthDriver[] | null;
+};
+
 export default function GrowthDriverPage() {
   const data = useStudyData();
-  const [selectedId, setSelectedId] = useState('crown-peach-tailgate');
+  const { studyId } = data;
+
+  // FR-GD-1: read from GET /studies/{id}/growth-drivers when a study is
+  // active; fall back to the TSX fixture (with a visible chip) when the
+  // endpoint errors or returns zero drivers. The fixture render shape is
+  // the source of truth — backend rows are hydrated into it so the
+  // existing renderers don't change. State is keyed by studyId so we can
+  // derive loadState during render without any synchronous setState in
+  // the effect body.
+  const [fetched, setFetched] = useState<DriverFetch | null>(null);
+  const [requestedId, setRequestedId] = useState('crown-peach-tailgate');
+
+  useEffect(() => {
+    if (!studyId) return;
+    let cancelled = false;
+    wb.growthDrivers(studyId)
+      .then((res) => {
+        if (cancelled) return;
+        const hydrated = hydrateFromBackend(res);
+        if (hydrated.drivers.length === 0) {
+          setFetched({ studyId, mustDos: null, drivers: null });
+          return;
+        }
+        setFetched({
+          studyId,
+          mustDos: hydrated.mustDos,
+          drivers: hydrated.drivers,
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setFetched({ studyId, mustDos: null, drivers: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [studyId]);
+
+  const isFetchedForStudy = Boolean(studyId) && fetched?.studyId === studyId;
+  const hasLiveData =
+    isFetchedForStudy &&
+    fetched?.drivers != null &&
+    fetched?.drivers.length > 0;
+
+  const mustDos: MustDo[] = hasLiveData ? fetched!.mustDos! : MUST_DOS;
+  const drivers: GrowthDriver[] = hasLiveData ? fetched!.drivers! : GROWTH_DRIVERS;
+
+  const loadState: LoadState = !studyId
+    ? 'fallback'
+    : !isFetchedForStudy
+      ? 'pending'
+      : hasLiveData
+        ? 'live'
+        : 'fallback';
+
+  // Derive the selected driver: prefer the explicitly requested id, then
+  // crown-peach-tailgate, then the first driver. No effect needed.
   const selected =
-    GROWTH_DRIVERS.find((driver) => driver.id === selectedId) ??
-    GROWTH_DRIVERS[0];
+    drivers.find((d) => d.id === requestedId) ??
+    drivers.find((d) => d.id === 'crown-peach-tailgate') ??
+    drivers[0];
 
   const selectedMustDo = useMemo(
-    () => MUST_DOS.find((mustDo) => mustDo.id === selected.mustDoId),
-    [selected.mustDoId],
+    () => mustDos.find((mustDo) => mustDo.id === selected?.mustDoId),
+    [mustDos, selected?.mustDoId],
   );
 
   const handleStressTest = (driverId: string) => {
-    setSelectedId(driverId);
+    setRequestedId(driverId);
   };
+
+  const setSelectedId = (id: string) => setRequestedId(id);
 
   return (
     <StudyShell
@@ -322,6 +409,19 @@ export default function GrowthDriverPage() {
       intro="Demo planner inspired by a Crown Royal NFL-season MBP. Each Must-Do and Growth Driver carries a confidence pill, an evidence chip, and a stress-test action so the plan stays honest before any spend moves."
       contentClassName="max-w-[1420px]"
     >
+      {loadState === 'fallback' && studyId ? (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2 text-[12px] text-amber-800">
+          <Badge
+            variant="outline"
+            className="border-amber-300 bg-white text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-800"
+          >
+            Illustrative
+          </Badge>
+          <span>
+            Showing illustrative fixture; live growth-driver data not available.
+          </span>
+        </div>
+      ) : null}
       <FocusCard className="overflow-hidden p-0 sm:p-0">
         <section className="border-b border-slate-200 bg-white px-4 py-4 sm:px-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -362,9 +462,9 @@ export default function GrowthDriverPage() {
               Must-Dos
             </div>
             <div className="mt-3 grid gap-3">
-              {MUST_DOS.map((mustDo) => {
-                const active = mustDo.id === selected.mustDoId;
-                const firstDriver = GROWTH_DRIVERS.find(
+              {mustDos.map((mustDo) => {
+                const active = mustDo.id === selected?.mustDoId;
+                const firstDriver = drivers.find(
                   (driver) => driver.mustDoId === mustDo.id,
                 );
                 return (
@@ -476,12 +576,12 @@ export default function GrowthDriverPage() {
                 </div>
 
                 <div className="mt-2 grid gap-2">
-                  {GROWTH_DRIVERS.map((driver) => (
+                  {drivers.map((driver) => (
                     <DriverRow
                       key={driver.id}
                       driver={driver}
-                      active={driver.id === selected.id}
-                      mustDo={MUST_DOS.find((mustDo) => mustDo.id === driver.mustDoId)}
+                      active={driver.id === selected?.id}
+                      mustDo={mustDos.find((mustDo) => mustDo.id === driver.mustDoId)}
                       onSelect={() => setSelectedId(driver.id)}
                       onStressTest={() => handleStressTest(driver.id)}
                     />
@@ -491,15 +591,76 @@ export default function GrowthDriverPage() {
             </div>
           </main>
 
-          <DriverDetail
-            driver={selected}
-            mustDo={selectedMustDo}
-            studyId={data.studyId}
-          />
+          {selected ? (
+            <DriverDetail
+              driver={selected}
+              mustDo={selectedMustDo}
+              studyId={data.studyId}
+            />
+          ) : null}
         </section>
       </FocusCard>
     </StudyShell>
   );
+}
+
+function hydrateFromBackend(res: GrowthDriversResponse): {
+  mustDos: MustDo[];
+  drivers: GrowthDriver[];
+} {
+  const mustDos: MustDo[] = (res.must_dos || []).map(hydrateMustDo);
+  const drivers: GrowthDriver[] = (res.drivers || []).map(hydrateDriver);
+  return { mustDos, drivers };
+}
+
+function hydrateMustDo(m: MustDoDTO): MustDo {
+  return {
+    id: String(m.id ?? ''),
+    title: String(m.title ?? ''),
+    summary: String(m.summary ?? ''),
+    apSplit: Number(m.ap_split ?? 0),
+    confidence: Number(m.confidence ?? 0),
+    focusMarkets: Array.isArray(m.focus_markets) ? m.focus_markets : [],
+  };
+}
+
+function hydrateDriver(d: GrowthDriverDTO): GrowthDriver {
+  return {
+    id: String(d.driver_id ?? ''),
+    mustDoId: String(d.must_do ?? ''),
+    title: String(d.driver_name ?? ''),
+    oneLine: String(d.one_line ?? ''),
+    hypotheses: Array.isArray(d.hypotheses) ? d.hypotheses : [],
+    activities: Array.isArray(d.activities)
+      ? d.activities.map((a) => ({
+          quarter: a.quarter,
+          label: String(a.label ?? ''),
+          emphasis: a.emphasis,
+        }))
+      : [],
+    focusMarkets: Array.isArray(d.markets) ? d.markets : [],
+    confidence: Number(
+      d.confidence_value ??
+        parseConfidenceFromPill(d.confidence_pill) ??
+        0,
+    ),
+    evidence: Array.isArray(d.evidence_pointers) ? d.evidence_pointers : [],
+    whatWouldChangeOurMind: String(d.fragile_assumption ?? ''),
+    validateNext: Array.isArray(d.validate_next) ? d.validate_next : [],
+    simulationPrompt: String(d.simulation_prompt ?? ''),
+    illustrative: Boolean(d.illustrative),
+    assetKeyEncoded: d.asset_key_encoded || null,
+  };
+}
+
+// Confidence_pill is a string like "Medium (71%)" — pull the number out
+// when confidence_value isn't set.
+function parseConfidenceFromPill(pill: string | null | undefined): number | null {
+  if (!pill) return null;
+  const m = String(pill).match(/(\d{1,3})\s*%/);
+  if (!m) return null;
+  const v = Number(m[1]);
+  return Number.isFinite(v) ? v : null;
 }
 
 function DriverRow({
@@ -529,8 +690,18 @@ function DriverRow({
         onClick={onSelect}
         className="grid gap-1.5 rounded-xl bg-white px-3 py-2 text-left shadow-sm ring-1 ring-slate-200"
       >
-        <div className="text-sm font-semibold leading-snug text-slate-950">
-          {driver.title}
+        <div className="flex items-start justify-between gap-2">
+          <div className="text-sm font-semibold leading-snug text-slate-950">
+            {driver.title}
+          </div>
+          {driver.illustrative ? (
+            <Badge
+              variant="outline"
+              className="border-amber-300 bg-amber-50 text-[9px] font-semibold uppercase tracking-[0.16em] text-amber-800"
+            >
+              Illustrative
+            </Badge>
+          ) : null}
         </div>
         <div className="text-[11px] leading-snug text-slate-500">
           {mustDo?.title ?? 'Must-Do'}
@@ -608,6 +779,14 @@ function DriverDetail({
             >
               Selected driver
             </Badge>
+            {driver.illustrative ? (
+              <Badge
+                variant="outline"
+                className="border-amber-300 bg-amber-50 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-800"
+              >
+                Illustrative
+              </Badge>
+            ) : null}
             {mustDo ? (
               <span className="text-[11px] font-medium text-slate-500">
                 {mustDo.title}
@@ -653,14 +832,29 @@ function DriverDetail({
           </ul>
         </DetailBlock>
 
-        <DetailBlock title="Evidence placeholders" icon={<HelpCircle className="h-3.5 w-3.5" />}>
-          <ul className="grid gap-2">
-            {driver.evidence.map((item) => (
-              <li key={item} className="text-sm leading-snug text-slate-700">
-                {item}
-              </li>
-            ))}
-          </ul>
+        <DetailBlock
+          title={driver.illustrative ? 'Evidence placeholders' : 'Evidence pointers'}
+          icon={<HelpCircle className="h-3.5 w-3.5" />}
+        >
+          {driver.evidence.length === 0 ? (
+            <p className="text-sm leading-snug text-slate-500">
+              No evidence pointers attached to this driver yet.
+            </p>
+          ) : (
+            <ul className="grid gap-2">
+              {driver.evidence.map((item) => (
+                <li key={item}>
+                  <Link
+                    href={withStudy('/evidence', studyId)}
+                    className="inline-flex items-start gap-2 text-sm leading-snug text-slate-700 underline-offset-2 hover:text-slate-950 hover:underline"
+                  >
+                    <FileSearch className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-500" />
+                    <span>{item}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
         </DetailBlock>
 
         <DetailBlock title="What would change our mind">
@@ -711,13 +905,19 @@ function DriverDetail({
               Ask
             </ActionLink>
             <ActionLink
-              href={withStudy('/evidence', studyId, {
-                driver: driver.id,
-                source: 'growth-driver-demo',
-              })}
+              href={
+                driver.assetKeyEncoded
+                  ? `/assets/${driver.assetKeyEncoded}`
+                  : withStudy('/evidence', studyId, {
+                      driver: driver.id,
+                      source: 'growth-driver-demo',
+                    })
+              }
               icon={<HelpCircle className="h-3.5 w-3.5" />}
             >
-              Open evidence
+              {driver.assetKeyEncoded
+                ? 'Open driver asset'
+                : 'Open evidence'}
             </ActionLink>
           </div>
         </div>

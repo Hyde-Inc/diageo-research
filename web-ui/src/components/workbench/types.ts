@@ -383,6 +383,193 @@ export type TraceResponse = {
   illustrative: boolean;
 };
 
+// ─── MBP loop shapes ───────────────────────────────────────────────
+//
+// Mirrors the request / response models in
+// src/diageo_research/web/api.py for GET /studies/{id}/growth-drivers,
+// POST /counterfactuals, POST /decisions, GET /decisions/{id},
+// GET /decisions/{id}/in-year, POST /tasks. Hand-written deliberately —
+// these endpoints are stable and shared with the FE worker contracts.
+
+export type GrowthDriverActivity = {
+  quarter: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+  label: string;
+  emphasis: 'launch' | 'sustain' | 'pulse';
+};
+
+export type GrowthDriverDTO = {
+  driver_id: string;
+  study_id: string;
+  must_do: string;
+  driver_name: string;
+  one_line: string;
+  hypotheses: string[];
+  fragile_assumption: string;
+  evidence_pointers: string[];
+  markets: string[];
+  confidence_pill: string;
+  confidence_value: number | null;
+  illustrative: boolean;
+  activities: GrowthDriverActivity[];
+  must_do_title: string | null;
+  must_do_summary: string | null;
+  must_do_ap_split: number | null;
+  must_do_confidence: number | null;
+  must_do_focus_markets: string[];
+  validate_next: string[];
+  simulation_prompt: string;
+  asset_key_path: string[];
+  asset_key_encoded: string;
+};
+
+export type MustDoDTO = {
+  id: string;
+  title: string;
+  summary: string;
+  ap_split: number;
+  confidence: number;
+  focus_markets: string[];
+};
+
+export type GrowthDriversResponse = {
+  study_id: string;
+  seed: string;
+  must_dos: MustDoDTO[];
+  drivers: GrowthDriverDTO[];
+};
+
+export type CounterfactualScopeBody = {
+  study_id: string;
+  driver_id?: string | null;
+  finding_id?: string | null;
+};
+
+export type CounterfactualRequest = {
+  study_id: string;
+  scope: CounterfactualScopeBody;
+  prompt: string;
+  variants: unknown[];
+  inputs: unknown[];
+  confidence_per_variant: unknown[];
+  assumes: string[];
+  does_not_assume: string[];
+};
+
+export type CounterfactualResponse = {
+  cf_id: string;
+  asset_key: string[];
+  asset_key_encoded: string;
+  scope: CounterfactualScopeBody;
+  created_at: string;
+};
+
+export type DecisionConfidenceBody = {
+  sentence: string;
+  holds_in: number;
+  of: number;
+  label: string;
+};
+
+export type DecisionScopeBody = {
+  study_id: string;
+  driver_id?: string | null;
+  finding_id?: string | null;
+};
+
+export type DecisionRequest = {
+  scope: DecisionScopeBody;
+  recommendation: string;
+  confidence: DecisionConfidenceBody;
+  fragile_assumption?: string;
+  counterfactual_refs?: string[];
+  inputs_used?: string[];
+  owner: string;
+};
+
+export type DecisionSnapshot = {
+  evidence_hash: string;
+  claims_hash: string;
+  curve_hash: string;
+  evidence_pointers: string[];
+  claim_ids: string[];
+};
+
+export type DecisionResponse = {
+  decision_id: string;
+  asset_key: string[];
+  asset_key_encoded: string;
+  scope: DecisionScopeBody;
+  committed_at: string;
+  snapshot: DecisionSnapshot;
+};
+
+export type DecisionRecord = {
+  kind: 'decision';
+  decision_id: string;
+  scope: DecisionScopeBody;
+  recommendation: string;
+  confidence: DecisionConfidenceBody;
+  fragile_assumption: string;
+  counterfactual_refs: string[];
+  inputs_used: string[];
+  owner: string;
+  committed_at: string;
+  snapshot: DecisionSnapshot;
+  asset_key_path: string[];
+  asset_key_encoded: string;
+};
+
+export type DecisionInYearDiff = {
+  evidence_added: string[];
+  evidence_changed: string[];
+  evidence_invalidated: string[];
+};
+
+export type DecisionInYearResponse = {
+  decision_id: string;
+  query_id: string;
+  asset_key: string[];
+  asset_key_encoded: string;
+  asked_at: string;
+  diff: DecisionInYearDiff;
+  snapshot_hashes: {
+    evidence_hash: string | null;
+    claims_hash: string | null;
+    curve_hash: string | null;
+  };
+  current_hashes: {
+    evidence_hash: string | null;
+    claims_hash: string | null;
+    curve_hash: string | null;
+  };
+  answer: string;
+};
+
+export type TaskScopeBody = {
+  study_id?: string | null;
+  driver_id?: string | null;
+  finding_id?: string | null;
+  decision_id?: string | null;
+};
+
+export type TaskRequest = {
+  kind: string;
+  scope: TaskScopeBody;
+  due_date?: string | null;
+  description: string;
+};
+
+export type TaskResponse = {
+  task_id: string;
+  asset_key: string[];
+  asset_key_encoded: string;
+  kind: string;
+  scope: TaskScopeBody;
+  due_date: string | null;
+  created_at: string;
+  status: 'open' | 'in_progress' | 'done';
+};
+
 // ─── Fetch helpers ─────────────────────────────────────────────────
 
 const BASE = '/api/workbench';
@@ -408,7 +595,13 @@ export const wb = {
   specCurve: (studyId: string) =>
     wbFetch<SpecCurve>(`/studies/${studyId}/spec_curve`),
   cost: (studyId: string) => wbFetch<StudyCost>(`/studies/${studyId}/cost`),
-  assets: () => wbFetch<AssetsListResponse>('/assets'),
+  assets: (params?: { kind?: string; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.kind) q.set('kind', params.kind);
+    if (params?.limit != null) q.set('limit', String(params.limit));
+    const qs = q.toString();
+    return wbFetch<AssetsListResponse>(qs ? `/assets?${qs}` : '/assets');
+  },
   asset: (key: string) => wbFetch<AssetDetailResponse>(`/assets/${key}`),
   assetHistory: (key: string) =>
     wbFetch<AssetHistoryResponse>(`/assets/${key}/history`),
@@ -457,4 +650,28 @@ export const wb = {
     if (params.metric) q.set('metric', params.metric);
     return wbFetch<TraceResponse>(`/studies/${studyId}/trace?${q}`);
   },
+  growthDrivers: (studyId: string) =>
+    wbFetch<GrowthDriversResponse>(`/studies/${studyId}/growth-drivers`),
+  postCounterfactual: (body: CounterfactualRequest) =>
+    wbFetch<CounterfactualResponse>('/counterfactuals', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  postDecision: (body: DecisionRequest) =>
+    wbFetch<DecisionResponse>('/decisions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  decision: (decisionId: string) =>
+    wbFetch<DecisionRecord>(`/decisions/${decisionId}`),
+  decisionInYear: (decisionId: string) =>
+    wbFetch<DecisionInYearResponse>(`/decisions/${decisionId}/in-year`),
+  postTask: (body: TaskRequest) =>
+    wbFetch<TaskResponse>('/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
 };
