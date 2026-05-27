@@ -33,16 +33,20 @@ continues to work without per-call config.
 """
 from __future__ import annotations
 
+import datetime as _dt
 import hashlib
+import json
 import logging
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 from dagster import AssetMaterialization, MetadataValue
 
 from . import keys as _keys
+from .config import get_settings
 from .models import Citation, DialogueTurn, FinalReport, Persona, SubReport
 
 logger = logging.getLogger(__name__)
@@ -56,12 +60,27 @@ TOOL_CALL_ASSET_PREFIX = "tool_call"
 CITATION_ASSET_PREFIX = "citation"
 CLAIM_ASSET_PREFIX = "claim"
 
+# Decision-loop asset prefixes (MBP loop: growth driver → counterfactual
+# → decision → in-year query, plus follow-up tasks). All five are
+# content-addressed on (scope + content) so the same decision committed
+# twice with the same inputs reuses the same asset key across studies.
+GROWTH_DRIVER_ASSET_PREFIX = "growth_driver"
+COUNTERFACTUAL_ASSET_PREFIX = "counterfactual"
+DECISION_ASSET_PREFIX = "decision"
+IN_YEAR_QUERY_ASSET_PREFIX = "in_year_query"
+TASK_ASSET_PREFIX = "task"
+
 GRANULAR_PREFIXES: tuple[str, ...] = (
     PERSONA_ASSET_PREFIX,
     TURN_ASSET_PREFIX,
     TOOL_CALL_ASSET_PREFIX,
     CITATION_ASSET_PREFIX,
     CLAIM_ASSET_PREFIX,
+    GROWTH_DRIVER_ASSET_PREFIX,
+    COUNTERFACTUAL_ASSET_PREFIX,
+    DECISION_ASSET_PREFIX,
+    IN_YEAR_QUERY_ASSET_PREFIX,
+    TASK_ASSET_PREFIX,
 )
 
 # Map an asset key prefix to the workbench-facing kind label that the
@@ -73,6 +92,11 @@ _PREFIX_TO_KIND: dict[str, str] = {
     TOOL_CALL_ASSET_PREFIX: "tool_call",
     CITATION_ASSET_PREFIX: "citation",
     CLAIM_ASSET_PREFIX: "claim",
+    GROWTH_DRIVER_ASSET_PREFIX: "growth_driver",
+    COUNTERFACTUAL_ASSET_PREFIX: "counterfactual",
+    DECISION_ASSET_PREFIX: "decision",
+    IN_YEAR_QUERY_ASSET_PREFIX: "in_year_query",
+    TASK_ASSET_PREFIX: "task",
 }
 
 
@@ -1130,30 +1154,823 @@ def fetch_claims_for_cell(
     return rows
 
 
+# ===================================================================== MBP
+# Decision-loop asset shapes: GrowthDriver, Counterfactual, Decision,
+# InYearQuery, Task. Each one is content-addressed on (scope + content)
+# so a re-commit of identical inputs collapses onto the same asset key
+# across studies (M2). Persistence is filesystem-backed under
+# ``runs/<plural>/<id>.json`` to match the existing run-artifact pattern
+# (M3+M5). Dagster materializations are runless events so every
+# committed decision shows up in Dagit and ``/assets`` (NFR-4).
+# ===================================================================== MBP
+
+
+# ----------------------------------------- Asset-key + id helpers (MBP)
+
+
+_SLUG_TAIL_RE = re.compile(r"[^a-z0-9_]+")
+
+
+def _slug_segment(value: str, *, max_len: int = 48) -> str:
+    """Slug a string for use inside an asset key segment.
+
+    Lowercases, replaces runs of non-[a-z0-9_] with ``-``, strips edge
+    hyphens, and bounds the length. Empty input falls back to ``x`` to
+    keep the segment non-empty.
+    """
+    s = _SLUG_TAIL_RE.sub("-", (value or "").lower()).strip("-")
+    if not s:
+        return "x"
+    if len(s) <= max_len:
+        return s
+    return s[:max_len].rstrip("-") or "x"
+
+
+def _scope_signature(scope: dict[str, Any] | None) -> str:
+    """Stable, readable signature for a scope dict.
+
+    Picks the most identifying field present (``study_id`` →
+    ``driver_id`` → ``finding_id`` → ``decision_id``) and slugs it. When
+    nothing matches we fall back to a short hash of the whole scope so
+    the asset key still segments cleanly.
+    """
+    scope = scope or {}
+    for key in ("study_id", "driver_id", "finding_id", "decision_id"):
+        v = scope.get(key)
+        if v:
+            return _slug_segment(str(v))
+    return _slug_segment(_keys.hash_payload(scope))
+
+
+def growth_driver_asset_key(
+    *, study_id: str, driver_id: str
+) -> list[str]:
+    """Asset key for one GrowthDriverAsset (content-addressed on
+    (study_id, driver_id)). ``study_id`` may be a literal study id or
+    any scope token — the same driver shared by multiple studies
+    therefore deduplicates onto the same key when callers pass the same
+    scope token."""
+    return [GROWTH_DRIVER_ASSET_PREFIX, _slug_segment(study_id), _slug_segment(driver_id)]
+
+
+def counterfactual_asset_key(
+    *, study_id: str, cf_id: str
+) -> list[str]:
+    return [COUNTERFACTUAL_ASSET_PREFIX, _slug_segment(study_id), cf_id]
+
+
+def decision_asset_key(
+    *, study_id: str, decision_id: str
+) -> list[str]:
+    return [DECISION_ASSET_PREFIX, _slug_segment(study_id), decision_id]
+
+
+def in_year_query_asset_key(
+    *, decision_id: str, query_id: str
+) -> list[str]:
+    return [IN_YEAR_QUERY_ASSET_PREFIX, _slug_segment(decision_id), query_id]
+
+
+def task_asset_key(*, scope_id: str, task_id: str) -> list[str]:
+    return [TASK_ASSET_PREFIX, _slug_segment(scope_id), task_id]
+
+
+def content_id_counterfactual(
+    *,
+    study_id: str,
+    scope: dict[str, Any],
+    prompt: str,
+    variants: list[Any],
+    inputs: list[Any],
+    confidence_per_variant: list[Any],
+    assumes: list[str],
+    does_not_assume: list[str],
+    n: int = 16,
+) -> str:
+    """Deterministic id for a counterfactual: hash(scope + content).
+
+    Length defaults to 16 hex chars so an asset id stays short in URLs
+    but still gives ~10^19 collision space. Same inputs → same id, so a
+    re-POST with identical content is idempotent.
+    """
+    payload = {
+        "study_id": str(study_id or ""),
+        "scope": scope or {},
+        "prompt": str(prompt or ""),
+        "variants": variants or [],
+        "inputs": inputs or [],
+        "confidence_per_variant": confidence_per_variant or [],
+        "assumes": sorted({str(a) for a in (assumes or [])}),
+        "does_not_assume": sorted({str(a) for a in (does_not_assume or [])}),
+    }
+    return _keys.hash_payload(payload, n=n)
+
+
+def content_id_decision(
+    *,
+    scope: dict[str, Any],
+    recommendation: str,
+    fragile_assumption: str,
+    counterfactual_refs: list[str],
+    inputs_used: list[str],
+    owner: str,
+    committed_at: str,
+    n: int = 16,
+) -> str:
+    """Deterministic id for a decision commit.
+
+    ``committed_at`` is part of the content hash because every commit is
+    a distinct snapshot — a re-commit of the same recommendation at a
+    later time should produce a fresh decision id with its own snapshot
+    block.
+    """
+    payload = {
+        "scope": scope or {},
+        "recommendation": str(recommendation or ""),
+        "fragile_assumption": str(fragile_assumption or ""),
+        "counterfactual_refs": sorted({str(r) for r in (counterfactual_refs or [])}),
+        "inputs_used": sorted({str(r) for r in (inputs_used or [])}),
+        "owner": str(owner or ""),
+        "committed_at": str(committed_at or ""),
+    }
+    return _keys.hash_payload(payload, n=n)
+
+
+def content_id_in_year_query(
+    *,
+    decision_id: str,
+    asked_at: str,
+    question: str,
+    n: int = 16,
+) -> str:
+    """Deterministic id for an in-year query asking 'what changed since commit'."""
+    payload = {
+        "decision_id": str(decision_id or ""),
+        "asked_at": str(asked_at or ""),
+        "question": str(question or ""),
+    }
+    return _keys.hash_payload(payload, n=n)
+
+
+def content_id_task(
+    *,
+    kind: str,
+    scope: dict[str, Any],
+    description: str,
+    due_date: str | None,
+    created_at: str,
+    n: int = 16,
+) -> str:
+    payload = {
+        "kind": str(kind or ""),
+        "scope": scope or {},
+        "description": str(description or ""),
+        "due_date": str(due_date or ""),
+        "created_at": str(created_at or ""),
+    }
+    return _keys.hash_payload(payload, n=n)
+
+
+# ----------------------------------------- Filesystem persistence (MBP)
+
+
+_ASSET_DIR_NAME: dict[str, str] = {
+    GROWTH_DRIVER_ASSET_PREFIX: "growth_drivers",
+    COUNTERFACTUAL_ASSET_PREFIX: "counterfactuals",
+    DECISION_ASSET_PREFIX: "decisions",
+    IN_YEAR_QUERY_ASSET_PREFIX: "inyearqueries",
+    TASK_ASSET_PREFIX: "tasks",
+}
+
+
+def asset_storage_dir(prefix: str) -> Path:
+    """Resolve and create the on-disk directory for one decision-loop asset kind.
+
+    Layout::
+
+        runs/growth_drivers/<driver_id>.json
+        runs/counterfactuals/<cf_id>.json
+        runs/decisions/<decision_id>.json
+        runs/inyearqueries/<query_id>.json
+        runs/tasks/<task_id>.json
+    """
+    sub = _ASSET_DIR_NAME.get(prefix)
+    if not sub:
+        raise ValueError(f"no storage directory mapped for asset prefix {prefix!r}")
+    d = get_settings().runs_dir / sub
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    """Write ``payload`` to ``path`` atomically (tmp + replace).
+
+    Atomic so a concurrent reader never sees a half-flushed JSON file.
+    ``default=str`` is permissive enough for datetimes and Path values
+    that callers may have wrapped into the payload.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(
+        json.dumps(payload, indent=2, default=str, sort_keys=False),
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+
+
+def persist_decision_asset(prefix: str, *, id_value: str, payload: dict[str, Any]) -> Path:
+    """Persist one decision-loop asset payload to disk and return its path."""
+    d = asset_storage_dir(prefix)
+    path = d / f"{id_value}.json"
+    _write_json_atomic(path, payload)
+    return path
+
+
+def load_decision_asset(prefix: str, id_value: str) -> dict[str, Any] | None:
+    """Load one decision-loop asset payload by id; ``None`` if missing or unreadable."""
+    path = asset_storage_dir(prefix) / f"{id_value}.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def list_persisted_assets(prefix: str) -> list[dict[str, Any]]:
+    """List all persisted assets of a given kind, sorted by file mtime desc."""
+    d = asset_storage_dir(prefix)
+    if not d.exists():
+        return []
+    rows: list[tuple[float, dict[str, Any]]] = []
+    for p in d.glob("*.json"):
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        rows.append((p.stat().st_mtime, data))
+    rows.sort(key=lambda pair: pair[0], reverse=True)
+    return [data for _, data in rows]
+
+
+# ----------------------------------------- Generic emit helper (MBP)
+
+
+def emit_disk_asset_materialization(
+    instance: Any,
+    *,
+    asset_key_path: list[str],
+    description: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Emit a runless ``AssetMaterialization`` for a disk-backed decision asset.
+
+    Generic counterpart of :func:`emit_persona_materialization` etc.
+    Stamps the asset key path + b64 handle into the payload so callers
+    can return them to the FE without re-encoding. Swallows infra
+    failures via :func:`_safe_report`; never raises.
+    """
+    enriched = dict(payload)
+    enriched.setdefault("asset_key_path", asset_key_path)
+    enriched.setdefault("asset_key_encoded", _keys.encode_asset_key(asset_key_path))
+    _safe_report(
+        instance,
+        AssetMaterialization(
+            asset_key=asset_key_path,
+            description=description,
+            metadata=_metadata_wrap(enriched),
+        ),
+    )
+    return enriched
+
+
+# ----------------------------------------- GrowthDriverAsset (MBP)
+
+
+@dataclass
+class GrowthDriverAsset:
+    """One Must-Do → Growth Driver card for the planner.
+
+    Mirrors the TSX fixture in ``web-ui/src/app/growth-driver/page.tsx``
+    so the FE can stop hardcoding the Crown Royal × NFL data. Marked
+    ``illustrative=True`` by default; explicitly flip to ``False`` only
+    for entries wired to real evidence (e.g. ``crown_peach_tailgate``
+    against BLS/TTB pointers).
+    """
+
+    driver_id: str
+    study_id: str
+    must_do: str
+    driver_name: str
+    hypotheses: list[str]
+    fragile_assumption: str
+    evidence_pointers: list[str]
+    markets: list[str]
+    confidence_pill: str
+    illustrative: bool = True
+    one_line: str = ""
+    confidence_value: int | None = None
+    activities: list[dict[str, Any]] = field(default_factory=list)
+    must_do_title: str | None = None
+    must_do_summary: str | None = None
+    must_do_ap_split: int | None = None
+    must_do_confidence: int | None = None
+    must_do_focus_markets: list[str] = field(default_factory=list)
+    validate_next: list[str] = field(default_factory=list)
+    simulation_prompt: str = ""
+
+    def asset_key_path(self) -> list[str]:
+        return growth_driver_asset_key(
+            study_id=self.study_id, driver_id=self.driver_id
+        )
+
+    def asset_key_encoded(self) -> str:
+        return _keys.encode_asset_key(self.asset_key_path())
+
+    def to_dict(self) -> dict[str, Any]:
+        d = {
+            "kind": "growth_driver",
+            "driver_id": self.driver_id,
+            "study_id": self.study_id,
+            "must_do": self.must_do,
+            "driver_name": self.driver_name,
+            "one_line": self.one_line,
+            "hypotheses": list(self.hypotheses or []),
+            "fragile_assumption": self.fragile_assumption,
+            "evidence_pointers": list(self.evidence_pointers or []),
+            "markets": list(self.markets or []),
+            "confidence_pill": self.confidence_pill,
+            "confidence_value": self.confidence_value,
+            "illustrative": bool(self.illustrative),
+            "activities": list(self.activities or []),
+            "must_do_title": self.must_do_title,
+            "must_do_summary": self.must_do_summary,
+            "must_do_ap_split": self.must_do_ap_split,
+            "must_do_confidence": self.must_do_confidence,
+            "must_do_focus_markets": list(self.must_do_focus_markets or []),
+            "validate_next": list(self.validate_next or []),
+            "simulation_prompt": self.simulation_prompt,
+            "asset_key_path": self.asset_key_path(),
+            "asset_key_encoded": self.asset_key_encoded(),
+        }
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "GrowthDriverAsset":
+        return cls(
+            driver_id=str(data["driver_id"]),
+            study_id=str(data["study_id"]),
+            must_do=str(data.get("must_do") or ""),
+            driver_name=str(data.get("driver_name") or ""),
+            hypotheses=list(data.get("hypotheses") or []),
+            fragile_assumption=str(data.get("fragile_assumption") or ""),
+            evidence_pointers=list(data.get("evidence_pointers") or []),
+            markets=list(data.get("markets") or []),
+            confidence_pill=str(data.get("confidence_pill") or ""),
+            illustrative=bool(data.get("illustrative", True)),
+            one_line=str(data.get("one_line") or ""),
+            confidence_value=(
+                int(data["confidence_value"])
+                if data.get("confidence_value") is not None
+                else None
+            ),
+            activities=list(data.get("activities") or []),
+            must_do_title=data.get("must_do_title"),
+            must_do_summary=data.get("must_do_summary"),
+            must_do_ap_split=(
+                int(data["must_do_ap_split"])
+                if data.get("must_do_ap_split") is not None
+                else None
+            ),
+            must_do_confidence=(
+                int(data["must_do_confidence"])
+                if data.get("must_do_confidence") is not None
+                else None
+            ),
+            must_do_focus_markets=list(data.get("must_do_focus_markets") or []),
+            validate_next=list(data.get("validate_next") or []),
+            simulation_prompt=str(data.get("simulation_prompt") or ""),
+        )
+
+
+def emit_growth_driver_materialization(
+    instance: Any, *, asset: GrowthDriverAsset
+) -> dict[str, Any]:
+    """Persist + emit one GrowthDriverAsset.
+
+    The asset is written to ``runs/growth_drivers/<driver_id>.json``
+    first so the file-based read path always has the latest payload,
+    then a runless Dagster materialization is emitted so Dagit and
+    ``/assets`` index it under the content-addressed key.
+    """
+    payload = asset.to_dict()
+    persist_decision_asset(
+        GROWTH_DRIVER_ASSET_PREFIX,
+        id_value=asset.driver_id,
+        payload=payload,
+    )
+    key = asset.asset_key_path()
+    return emit_disk_asset_materialization(
+        instance,
+        asset_key_path=key,
+        description=(
+            f"Growth driver — {asset.driver_name or asset.driver_id}"
+            f" ({'illustrative' if asset.illustrative else 'real'})"
+        ),
+        payload=payload,
+    )
+
+
+# ----------------------------------------- CounterfactualAsset (MBP)
+
+
+@dataclass
+class CounterfactualAsset:
+    """One named counterfactual scenario.
+
+    ``scope`` should at minimum carry ``study_id`` plus either
+    ``driver_id`` or ``finding_id`` so the counterfactual stays tied to
+    the question it was raised against.
+    """
+
+    cf_id: str
+    scope: dict[str, Any]
+    prompt: str
+    variants: list[Any]
+    inputs: list[Any]
+    confidence_per_variant: list[Any]
+    assumes: list[str]
+    does_not_assume: list[str]
+    study_id: str = ""
+    created_at: str = ""
+
+    def asset_key_path(self) -> list[str]:
+        return counterfactual_asset_key(
+            study_id=self.study_id or self.scope.get("study_id") or "",
+            cf_id=self.cf_id,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": "counterfactual",
+            "cf_id": self.cf_id,
+            "scope": dict(self.scope or {}),
+            "prompt": self.prompt,
+            "variants": list(self.variants or []),
+            "inputs": list(self.inputs or []),
+            "confidence_per_variant": list(self.confidence_per_variant or []),
+            "assumes": list(self.assumes or []),
+            "does_not_assume": list(self.does_not_assume or []),
+            "study_id": self.study_id or self.scope.get("study_id") or "",
+            "created_at": self.created_at or _now_iso(),
+            "asset_key_path": self.asset_key_path(),
+            "asset_key_encoded": _keys.encode_asset_key(self.asset_key_path()),
+        }
+
+
+def emit_counterfactual_materialization(
+    instance: Any, *, asset: CounterfactualAsset
+) -> dict[str, Any]:
+    payload = asset.to_dict()
+    persist_decision_asset(
+        COUNTERFACTUAL_ASSET_PREFIX,
+        id_value=asset.cf_id,
+        payload=payload,
+    )
+    return emit_disk_asset_materialization(
+        instance,
+        asset_key_path=asset.asset_key_path(),
+        description=(
+            f"Counterfactual — {_truncate(asset.prompt or '', 120)}"
+        ),
+        payload=payload,
+    )
+
+
+# ----------------------------------------- DecisionAsset (MBP)
+
+
+@dataclass
+class DecisionAsset:
+    """One committed decision with its snapshot block.
+
+    ``snapshot`` is the (evidence_hash, claims_hash, curve_hash) tuple
+    plus the lists those hashes summarise — the list copies let
+    :func:`compute_decision_in_year_diff` produce per-pointer adds /
+    removes without re-reading the graph.
+    """
+
+    decision_id: str
+    scope: dict[str, Any]
+    recommendation: str
+    confidence: dict[str, Any]
+    fragile_assumption: str
+    counterfactual_refs: list[str]
+    inputs_used: list[str]
+    owner: str
+    committed_at: str
+    snapshot: dict[str, Any]
+
+    def asset_key_path(self) -> list[str]:
+        return decision_asset_key(
+            study_id=self.scope.get("study_id") or "",
+            decision_id=self.decision_id,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": "decision",
+            "decision_id": self.decision_id,
+            "scope": dict(self.scope or {}),
+            "recommendation": self.recommendation,
+            "confidence": dict(self.confidence or {}),
+            "fragile_assumption": self.fragile_assumption,
+            "counterfactual_refs": list(self.counterfactual_refs or []),
+            "inputs_used": list(self.inputs_used or []),
+            "owner": self.owner,
+            "committed_at": self.committed_at,
+            "snapshot": dict(self.snapshot or {}),
+            "asset_key_path": self.asset_key_path(),
+            "asset_key_encoded": _keys.encode_asset_key(self.asset_key_path()),
+        }
+
+
+def emit_decision_materialization(
+    instance: Any, *, asset: DecisionAsset
+) -> dict[str, Any]:
+    payload = asset.to_dict()
+    persist_decision_asset(
+        DECISION_ASSET_PREFIX,
+        id_value=asset.decision_id,
+        payload=payload,
+    )
+    return emit_disk_asset_materialization(
+        instance,
+        asset_key_path=asset.asset_key_path(),
+        description=(
+            f"Decision — {_truncate(asset.recommendation or '', 120)}"
+            f" by {asset.owner or 'unknown'}"
+        ),
+        payload=payload,
+    )
+
+
+# ----------------------------------------- InYearQueryAsset (MBP)
+
+
+@dataclass
+class InYearQueryAsset:
+    """One re-open of a committed decision asking 'what changed?'."""
+
+    query_id: str
+    bound_to: str
+    asked_at: str
+    question: str
+    diff: dict[str, Any]
+    answer: str = ""
+
+    def asset_key_path(self) -> list[str]:
+        return in_year_query_asset_key(
+            decision_id=self.bound_to, query_id=self.query_id
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": "in_year_query",
+            "query_id": self.query_id,
+            "bound_to": self.bound_to,
+            "asked_at": self.asked_at,
+            "question": self.question,
+            "diff": dict(self.diff or {}),
+            "answer": self.answer or "",
+            "asset_key_path": self.asset_key_path(),
+            "asset_key_encoded": _keys.encode_asset_key(self.asset_key_path()),
+        }
+
+
+def emit_in_year_query_materialization(
+    instance: Any, *, asset: InYearQueryAsset
+) -> dict[str, Any]:
+    payload = asset.to_dict()
+    persist_decision_asset(
+        IN_YEAR_QUERY_ASSET_PREFIX,
+        id_value=asset.query_id,
+        payload=payload,
+    )
+    return emit_disk_asset_materialization(
+        instance,
+        asset_key_path=asset.asset_key_path(),
+        description=(
+            f"In-year query — decision {asset.bound_to} "
+            f"({len((payload.get('diff') or {}).get('evidence_added') or [])} added, "
+            f"{len((payload.get('diff') or {}).get('evidence_invalidated') or [])} removed)"
+        ),
+        payload=payload,
+    )
+
+
+# ----------------------------------------- TaskAsset (MBP)
+
+
+@dataclass
+class TaskAsset:
+    """One follow-up task spawned from the loop (e.g. validate-promo).
+
+    ``status`` defaults to ``open``; the FE bumps it through
+    ``in_progress`` and ``done`` via subsequent PATCHes (out of scope
+    for the M2 deliverable).
+    """
+
+    task_id: str
+    kind: str
+    scope: dict[str, Any]
+    description: str
+    created_at: str
+    due_date: str | None = None
+    status: str = "open"
+
+    def asset_key_path(self) -> list[str]:
+        scope_id = (
+            self.scope.get("study_id")
+            or self.scope.get("driver_id")
+            or self.scope.get("decision_id")
+            or "global"
+        )
+        return task_asset_key(scope_id=str(scope_id), task_id=self.task_id)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": "task",
+            "task_id": self.task_id,
+            "task_kind": self.kind,
+            "scope": dict(self.scope or {}),
+            "description": self.description,
+            "due_date": self.due_date,
+            "status": self.status,
+            "created_at": self.created_at,
+            "asset_key_path": self.asset_key_path(),
+            "asset_key_encoded": _keys.encode_asset_key(self.asset_key_path()),
+        }
+
+
+def emit_task_materialization(
+    instance: Any, *, asset: TaskAsset
+) -> dict[str, Any]:
+    payload = asset.to_dict()
+    persist_decision_asset(
+        TASK_ASSET_PREFIX, id_value=asset.task_id, payload=payload
+    )
+    return emit_disk_asset_materialization(
+        instance,
+        asset_key_path=asset.asset_key_path(),
+        description=(
+            f"Task ({asset.kind}) — {_truncate(asset.description or '', 120)}"
+        ),
+        payload=payload,
+    )
+
+
+# ----------------------------------------- Decision snapshot + diff (MBP)
+
+
+def compute_decision_snapshot(
+    *,
+    study_id: str,
+    evidence_pointers: list[str],
+    claim_ids: list[str] | None = None,
+    curve_bytes: bytes | None = None,
+) -> dict[str, Any]:
+    """Compute the (evidence_hash, claims_hash, curve_hash) snapshot block.
+
+    Inputs:
+
+    * ``evidence_pointers`` — the canonical evidence-pointer list
+      backing this decision's scope at commit time. Deduped + sorted
+      before hashing.
+    * ``claim_ids`` — list of stable identifiers for claims in scope
+      (typically encoded asset keys). When ``None`` callers can pass
+      ``[]`` to mean 'no claim-level snapshot'.
+    * ``curve_bytes`` — raw bytes of the study's spec-curve JSON file.
+      The caller passes the bytes directly so this helper stays pure;
+      the API layer is responsible for reading the file (or passing
+      ``b""`` when none exists).
+
+    All hashes go through :func:`diageo_research.keys.sha256_hex` — we
+    deliberately don't invent any new hash schemes.
+    """
+    sorted_evidence = sorted({str(p) for p in (evidence_pointers or [])})
+    sorted_claims = sorted({str(c) for c in (claim_ids or [])})
+    evidence_hash = _keys.sha256_hex(sorted_evidence)
+    claims_hash = _keys.sha256_hex(sorted_claims)
+    curve_hash = _keys.sha256_hex(curve_bytes if curve_bytes is not None else b"")
+    return {
+        "evidence_hash": evidence_hash,
+        "claims_hash": claims_hash,
+        "curve_hash": curve_hash,
+        "evidence_pointers": sorted_evidence,
+        "claim_ids": sorted_claims,
+    }
+
+
+def compute_decision_in_year_diff(
+    *,
+    snapshot: dict[str, Any],
+    current: dict[str, Any],
+) -> dict[str, list[str]]:
+    """Compare two snapshot blocks and emit the in-year diff.
+
+    Shape::
+
+        {
+          "evidence_added":       [...],  # in current, not in snapshot
+          "evidence_invalidated": [...],  # in snapshot, not in current
+          "evidence_changed":     [...],  # present in both but underlying
+                                          # claim/curve hash has shifted
+        }
+
+    ``evidence_changed`` is a coarse signal today — we mark every
+    common pointer as 'changed' iff ``claims_hash`` or ``curve_hash``
+    has shifted since commit. Per-pointer change detection requires a
+    real evidence resolver (TODO for a follow-up; FE worker can keep
+    the field opaque until then).
+    """
+    snap_ev = set(snapshot.get("evidence_pointers") or [])
+    cur_ev = set(current.get("evidence_pointers") or [])
+    added = sorted(cur_ev - snap_ev)
+    invalidated = sorted(snap_ev - cur_ev)
+    common = snap_ev & cur_ev
+    claims_shifted = (
+        snapshot.get("claims_hash") != current.get("claims_hash")
+    )
+    curve_shifted = (
+        snapshot.get("curve_hash") != current.get("curve_hash")
+    )
+    if (claims_shifted or curve_shifted) and common:
+        changed = sorted(common)
+    else:
+        changed = []
+    return {
+        "evidence_added": added,
+        "evidence_changed": changed,
+        "evidence_invalidated": invalidated,
+    }
+
+
 __all__ = [
     "CITATION_ASSET_PREFIX",
     "CLAIM_ASSET_PREFIX",
+    "COUNTERFACTUAL_ASSET_PREFIX",
+    "CounterfactualAsset",
+    "DECISION_ASSET_PREFIX",
+    "DecisionAsset",
     "GRANULAR_PREFIXES",
+    "GROWTH_DRIVER_ASSET_PREFIX",
+    "GrowthDriverAsset",
+    "IN_YEAR_QUERY_ASSET_PREFIX",
+    "InYearQueryAsset",
     "PERSONA_ASSET_PREFIX",
     "ParsedClaim",
+    "TASK_ASSET_PREFIX",
     "TOOL_CALL_ASSET_PREFIX",
     "TURN_ASSET_PREFIX",
+    "TaskAsset",
+    "asset_storage_dir",
     "citation_asset_key",
     "claim_asset_key",
+    "compute_decision_in_year_diff",
+    "compute_decision_snapshot",
+    "content_id_counterfactual",
+    "content_id_decision",
+    "content_id_in_year_query",
+    "content_id_task",
+    "counterfactual_asset_key",
+    "decision_asset_key",
     "emit_citation_materialization",
     "emit_claim_materialization",
+    "emit_counterfactual_materialization",
+    "emit_decision_materialization",
+    "emit_disk_asset_materialization",
+    "emit_growth_driver_materialization",
+    "emit_in_year_query_materialization",
     "emit_interview_granular",
     "emit_persona_materialization",
     "emit_synthesis_granular",
+    "emit_task_materialization",
     "emit_tool_call_materialization",
     "emit_turn_materialization",
     "fetch_claims_for_cell",
     "granular_asset_lineage",
+    "growth_driver_asset_key",
     "human_source_label",
+    "in_year_query_asset_key",
     "kind_for_asset_key",
     "list_granular_assets",
+    "list_persisted_assets",
+    "load_decision_asset",
     "parse_brief_claims",
+    "persist_decision_asset",
     "persona_asset_key",
+    "task_asset_key",
     "tool_call_asset_key",
     "turn_asset_key",
 ]

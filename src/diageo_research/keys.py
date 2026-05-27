@@ -54,6 +54,43 @@ def _short(h: str, n: int = 12) -> str:
     return h[:n]
 
 
+def canonical_json(payload: Any) -> str:
+    """Canonical (sorted, compact) JSON of any JSON-safe payload.
+
+    Used as the input to :func:`sha256_hex` whenever the caller wants a
+    content hash over a structured object — e.g. a decision snapshot, a
+    counterfactual scope, or a sorted set of evidence pointers. The
+    serializer is forgiving (``default=str``) so datetimes and ``Path``
+    objects round-trip without callers needing to pre-coerce them.
+    """
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def sha256_hex(payload: Any) -> str:
+    """Full hex sha256 of any payload.
+
+    ``bytes`` and ``str`` are hashed directly. Any other type is first
+    serialised through :func:`canonical_json`, so two callers that build
+    the same dict in different orders still produce the same hash.
+    """
+    if isinstance(payload, (bytes, bytearray)):
+        return hashlib.sha256(bytes(payload)).hexdigest()
+    if isinstance(payload, str):
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def hash_payload(payload: Any, *, n: int = 12) -> str:
+    """Short, deterministic content hash of a JSON-safe payload.
+
+    Same rules as :func:`sha256_hex`. The default ``n=12`` matches the
+    short hash length used elsewhere in this module (``hash_question``,
+    ``hash_axes``) so content-addressed asset ids stay visually
+    consistent with the existing cell signatures.
+    """
+    return _short(sha256_hex(payload), n)
+
+
 def _normalize_question(question: str) -> str:
     """Strip leading/trailing whitespace and collapse internal whitespace
     so a re-formatted question (extra newlines, tabs) hashes the same.
@@ -298,13 +335,16 @@ def metadata_summary(
 __all__ = [
     "CELL_ASSET_KEY_PREFIX",
     "axes_signature",
+    "canonical_json",
     "cell_asset_key_path",
     "cell_signature",
     "code_version",
     "decode_asset_key",
     "encode_asset_key",
     "hash_axes",
+    "hash_payload",
     "hash_question",
     "metadata_summary",
     "prompt_version",
+    "sha256_hex",
 ]

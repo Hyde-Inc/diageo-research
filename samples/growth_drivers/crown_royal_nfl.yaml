@@ -1,0 +1,278 @@
+# Crown Royal × NFL — growth-driver seed.
+#
+# Mirrors the TSX fixture in web-ui/src/app/growth-driver/page.tsx so the
+# FE can stop hardcoding the data. Every driver is `illustrative: true`
+# (and renders an ILLUSTRATIVE chip) EXCEPT `crown_peach_tailgate`,
+# which is wired to real BLS / TTB pointers from prior pricing-pressure
+# runs. The pointer keys are intentionally human-readable identifiers;
+# the resolver returns "missing-asset" gracefully when a study hasn't
+# materialised the underlying citations yet (preferred over the
+# placeholder TODO route).
+name: crown_royal_nfl
+description: |
+  Crown Royal NFL-season MBP demo seed. Three Must-Dos × six Growth
+  Drivers, mirroring the planner workbench fixture.
+
+must_dos:
+  - id: gameday
+    title: "Own NFL Gameday"
+    summary: >-
+      Reinforce Crown Royal as the Whisky of the NFL across stadium,
+      sports-bar, and home gameday occasions.
+    ap_split: 44
+    confidence: 73
+    focus_markets:
+      - Dallas
+      - Pittsburgh
+      - Buffalo
+      - Kansas City
+
+  - id: tailgating
+    title: "Win Football Tailgating"
+    summary: >-
+      Make Crown Royal Peach the default tailgate pour through signature
+      serves and grill/sauce partnerships in NFL-heavy markets.
+    ap_split: 33
+    confidence: 68
+    focus_markets:
+      - Green Bay
+      - Nashville
+      - Tampa
+      - Atlanta
+
+  - id: hosting
+    title: "Build Sunday Hosting Rituals"
+    summary: >-
+      Stake the Sunday couch as a Crown Royal moment via recipe and
+      serving content and Q4 retail display kits.
+    ap_split: 23
+    confidence: 61
+    focus_markets:
+      - New York
+      - Chicago
+      - Philadelphia
+      - Phoenix
+
+drivers:
+  - driver_id: stadium-suite-ritual
+    must_do: gameday
+    driver_name: "Stadium suite ritual"
+    one_line: >-
+      Anchor Crown Royal as the premium pour inside NFL stadium suites
+      and clubs, with hospitality cues fans actively notice.
+    hypotheses:
+      - "Premium suite occasions still reward whisky on prestige cues, so Crown Royal earns presence where the moment warrants it."
+      - "A recognizable suite ritual — signature serve plus branded glassware — carries from gameday into year-round venue use."
+    fragile_assumption: >-
+      If suite operators cannot land the signature serve consistently,
+      or if guests read the hospitality as background rather than a
+      brand moment.
+    evidence_pointers:
+      - "demo-placeholder:nfl-suite-premium-spirit-index"
+      - "demo-placeholder:branded-glassware-recall-uplift"
+    markets:
+      - Dallas
+      - Pittsburgh
+      - Buffalo
+      - Kansas City
+    confidence_pill: "High (74%)"
+    confidence_value: 74
+    illustrative: true
+    activities:
+      - { quarter: Q3, label: "Suite menu refresh",           emphasis: launch }
+      - { quarter: Q4, label: "Premium hospitality launch",   emphasis: sustain }
+      - { quarter: Q1, label: "Playoff luxury packages",      emphasis: pulse }
+      - { quarter: Q2, label: "Draft-night clubroom",         emphasis: sustain }
+    validate_next:
+      - "Walk the proposed suite serve past three venue operators for execution risk."
+      - "Check whether suite recall translates into household reach beyond ticket holders."
+    simulation_prompt: >-
+      Stress-test whether suite spend should stay in tier-1 NFL cities
+      or extend into playoff host markets.
+
+  - driver_id: sports-bar-takeover
+    must_do: gameday
+    driver_name: "Sports-bar takeover"
+    one_line: >-
+      Become the default Sunday whisky pour at NFL-loud sports bars
+      through staff training, gameday menus, and at-home watch-party
+      kits.
+    hypotheses:
+      - "Bartender recommendations move whisky choice in sports-bar settings, so staff training has outsized return on spend."
+      - "A travel-ready watch-party kit lets the bar moment carry into home hosting without reshooting creative."
+    fragile_assumption: >-
+      If staff training does not hold past kickoff weekend, or if LTO
+      menus get displaced by competitor placements once the season is
+      on.
+    evidence_pointers:
+      - "demo-placeholder:sports-bar-staff-rec-vs-menu-position"
+      - "demo-placeholder:watch-party-kit-bar-to-home"
+    markets:
+      - Dallas
+      - Pittsburgh
+      - Buffalo
+      - Kansas City
+    confidence_pill: "Medium (70%)"
+    confidence_value: 70
+    illustrative: true
+    activities:
+      - { quarter: Q3, label: "Bar staff training",              emphasis: launch }
+      - { quarter: Q4, label: "Gameday LTO menus",               emphasis: sustain }
+      - { quarter: Q1, label: "Watch-party kits",                emphasis: pulse }
+      - { quarter: Q2, label: "Off-season cocktail rotation",    emphasis: sustain }
+    validate_next:
+      - "Audit how many trained bars still feature Crown Royal in week 8."
+      - "Compare watch-party kit redemption against a simple coupon offer."
+    simulation_prompt: >-
+      Stress-test whether sports-bar staff training holds its lift past
+      the first month of the season.
+
+  # The ONLY non-illustrative driver in the seed — wired to real BLS /
+  # TTB evidence we already plumbed in earlier pricing-pressure runs.
+  # The pointer keys deliberately encode the source + series so the
+  # FE / resolver can map them onto live citation assets without us
+  # having to hardcode an opaque base64 handle here.
+  - driver_id: crown-peach-tailgate
+    must_do: tailgating
+    driver_name: "Crown Peach tailgate"
+    one_line: >-
+      Make Crown Royal Peach the default tailgate pour, anchored by
+      signature-serve content and grill/sauce partnerships in NFL-heavy
+      markets.
+    hypotheses:
+      - "Tailgaters lean toward sweet-finish whiskies, so Crown Peach has a structural advantage over flagship Crown."
+      - "Pairing with a grill/sauce partner gives the tailgate occasion a built-in co-promo footprint without inflating paid media."
+    fragile_assumption: >-
+      If Crown Peach trial in tailgate occasions cannibalizes flagship
+      Crown more than it recruits new buyers.
+    evidence_pointers:
+      - "citation:bls:CUUR0000SA0:headline-cpi"
+      - "citation:bls:CUUR0000SEFW01:distilled-spirits-cpi"
+      - "citation:ttb:monthly-statistical-release:distilled-spirits-q3-2025"
+      - "claim:internal-sql:tailgate-occasion-volume-q3-2025"
+    markets:
+      - Green Bay
+      - Nashville
+      - Tampa
+      - Atlanta
+    confidence_pill: "Medium (71%)"
+    confidence_value: 71
+    illustrative: false
+    activities:
+      - { quarter: Q3, label: "Tailgate kit launch",          emphasis: launch }
+      - { quarter: Q4, label: "Grill-partner co-promo",       emphasis: sustain }
+      - { quarter: Q1, label: "Playoff parking-lot push",     emphasis: pulse }
+      - { quarter: Q2, label: "Recipe library refresh",       emphasis: sustain }
+    validate_next:
+      - "Compare Crown Peach trial lift across markets with and without a grill partner."
+      - "Validate which serve format — cocktail, shot, or mixer — carries the highest at-event repeat."
+    simulation_prompt: >-
+      Stress-test whether tailgate spend should weight to Crown Peach or
+      stay split with flagship Crown.
+
+  - driver_id: grill-sauce-partnerships
+    must_do: tailgating
+    driver_name: "Grill & sauce partnerships"
+    one_line: >-
+      Lock Crown Royal into the gameday cookout through co-branded
+      grill, sauce, and rub partnerships that meet shoppers in the
+      aisle.
+    hypotheses:
+      - "A grill or sauce partner already owns the cookout cart, so the partnership delivers shelf reach we would otherwise pay to build."
+      - "Co-branded SKUs at peak season give retailers a real reason to feature Crown Royal in front-of-store displays."
+    fragile_assumption: >-
+      If chosen partners trade short-term volume for a brand fit Crown
+      Royal cannot live with year-round.
+    evidence_pointers:
+      - "demo-placeholder:cobranded-bbq-endcap-feature-rate"
+      - "demo-placeholder:playoff-bundle-grocery-sauce-attach"
+    markets:
+      - Green Bay
+      - Nashville
+      - Tampa
+      - Atlanta
+    confidence_pill: "Medium (66%)"
+    confidence_value: 66
+    illustrative: true
+    activities:
+      - { quarter: Q3, label: "Partner shortlisting",           emphasis: launch }
+      - { quarter: Q4, label: "Co-branded SKU drop",            emphasis: sustain }
+      - { quarter: Q1, label: "Playoff bundles",                emphasis: pulse }
+      - { quarter: Q2, label: "Learnings into next season",     emphasis: sustain }
+    validate_next:
+      - "Pressure-test the partner shortlist with retail account leads."
+      - "Measure whether co-branded SKUs hold price versus pure discount features."
+    simulation_prompt: >-
+      Stress-test whether co-branded grill partners should anchor mass
+      retail or premium grocery first.
+
+  - driver_id: sunday-funday-recipes
+    must_do: hosting
+    driver_name: "Sunday Funday recipes"
+    one_line: >-
+      Stake the Sunday couch as a Crown Royal moment with recipe
+      content, hosting cues, and serve ideas that travel from social to
+      the kitchen.
+    hypotheses:
+      - "Sunday hosts borrow recipes more than they borrow ads, so recipe-led content is the durable hook for the occasion."
+      - "Holiday and football overlap in Q4 compresses hosting demand into the same weeks we already plan against."
+    fragile_assumption: >-
+      If hosts treat the recipes as content to scroll past rather than
+      save and serve at the next Sunday gathering.
+    evidence_pointers:
+      - "demo-placeholder:recipe-led-reach-vs-oneoff-creative"
+      - "demo-placeholder:nfl-holiday-hosting-overlap-volume"
+    markets:
+      - New York
+      - Chicago
+      - Philadelphia
+      - Phoenix
+    confidence_pill: "Medium (67%)"
+    confidence_value: 67
+    illustrative: true
+    activities:
+      - { quarter: Q3, label: "Recipe content drop",          emphasis: launch }
+      - { quarter: Q4, label: "Holiday + football overlap",   emphasis: sustain }
+      - { quarter: Q1, label: "Playoff hosting kits",         emphasis: pulse }
+      - { quarter: Q2, label: "Carry-over to NCAA",           emphasis: sustain }
+    validate_next:
+      - "Track save and share rates on Sunday Funday recipe posts versus standard creative."
+      - "Pilot a small NCAA-season carry-over to see if the ritual holds outside the NFL window."
+    simulation_prompt: >-
+      Stress-test whether Sunday hosting spend should follow the NFL
+      calendar or extend through bowl season.
+
+  - driver_id: q4-retail-display-kits
+    must_do: hosting
+    driver_name: "Q4 retail display kits"
+    one_line: >-
+      Lock in big-box and grocery Q4 display kits that turn Crown Royal
+      into the visible Sunday hosting cue at point of purchase.
+    hypotheses:
+      - "Q4 display real estate gets crowded fast, so design and approval need to land before the season starts to win shelf."
+      - "Reusing display assets into a playoff reset lets the same investment work twice without new creative cost."
+    fragile_assumption: >-
+      If retail buyers cannot commit to enough Q4 end-cap placements to
+      justify the display investment.
+    evidence_pointers:
+      - "demo-placeholder:q4-display-lock-vs-late-cycle-endcaps"
+      - "demo-placeholder:playoff-reset-display-roi-extension"
+    markets:
+      - New York
+      - Chicago
+      - Philadelphia
+      - Phoenix
+    confidence_pill: "Medium (64%)"
+    confidence_value: 64
+    illustrative: true
+    activities:
+      - { quarter: Q3, label: "Display design lock",          emphasis: launch }
+      - { quarter: Q4, label: "Big-box rollout",              emphasis: sustain }
+      - { quarter: Q1, label: "Reset for playoffs",           emphasis: pulse }
+      - { quarter: Q2, label: "Learnings for next year",      emphasis: sustain }
+    validate_next:
+      - "Confirm end-cap commitments by retailer before locking the print run."
+      - "Test a small playoff-reset pilot in two markets before scaling."
+    simulation_prompt: >-
+      Stress-test whether Q4 display spend should focus on big-box,
+      grocery, or club channels first.

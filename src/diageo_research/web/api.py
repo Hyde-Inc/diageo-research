@@ -58,11 +58,34 @@ from ..dagster_assets import (
 )
 from ..events import EventBus, create_bus, get_bus
 from ..granular_assets import (
+    COUNTERFACTUAL_ASSET_PREFIX,
+    CounterfactualAsset,
+    DECISION_ASSET_PREFIX,
+    DecisionAsset,
     GRANULAR_PREFIXES,
+    GROWTH_DRIVER_ASSET_PREFIX,
+    GrowthDriverAsset,
+    IN_YEAR_QUERY_ASSET_PREFIX,
+    InYearQueryAsset,
+    TASK_ASSET_PREFIX,
+    TaskAsset,
+    compute_decision_in_year_diff,
+    compute_decision_snapshot,
+    content_id_counterfactual,
+    content_id_decision,
+    content_id_in_year_query,
+    content_id_task,
+    emit_counterfactual_materialization,
+    emit_decision_materialization,
+    emit_growth_driver_materialization,
+    emit_in_year_query_materialization,
+    emit_task_materialization,
     fetch_claims_for_cell,
     granular_asset_lineage,
     kind_for_asset_key,
     list_granular_assets,
+    list_persisted_assets,
+    load_decision_asset,
 )
 from ..manifest import read_manifest
 from ..models import RunState
@@ -259,6 +282,11 @@ ASSET_KIND_LABELS: dict[str, str] = {
     "tool_call": "Per-tool-call dispatch",
     "citation": "Per-citation evidence row",
     "claim": "Per-claim sentence in brief",
+    "growth_driver": "Growth driver card (planner)",
+    "counterfactual": "Counterfactual scenario",
+    "decision": "Committed decision",
+    "in_year_query": "In-year query (decision diff)",
+    "task": "Follow-up task (validate / track)",
 }
 ASSET_KINDS: tuple[str, ...] = (
     "declared",
@@ -269,6 +297,11 @@ ASSET_KINDS: tuple[str, ...] = (
     "tool_call",
     "citation",
     "claim",
+    "growth_driver",
+    "counterfactual",
+    "decision",
+    "in_year_query",
+    "task",
 )
 
 
@@ -364,7 +397,18 @@ def list_assets(
                 row["kind"] = "cell"
                 rows.append(row)
 
-        granular_kinds = ("persona", "turn", "tool_call", "citation", "claim")
+        granular_kinds = (
+            "persona",
+            "turn",
+            "tool_call",
+            "citation",
+            "claim",
+            "growth_driver",
+            "counterfactual",
+            "decision",
+            "in_year_query",
+            "task",
+        )
         for gk in granular_kinds:
             if kind_filter not in (None, gk):
                 continue
@@ -1378,6 +1422,648 @@ async def stream_study(study_id: str) -> EventSourceResponse:
                     f.cancel()
 
     return EventSourceResponse(gen())
+
+
+# =============================================================== MBP loop
+# Decision-loop endpoints: GrowthDriverAsset (study-scoped read), plus
+# POST/GET surfaces for Counterfactual / Decision / InYearQuery / Task.
+# Implements M2 (asset shapes + endpoints), the backend half of M3 (YAML
+# seed for growth drivers), and M5 (in-year diff). See the MBP plan at
+# /Users/timleers/.cursor/plans/mbp_loop_fully_working_adc30816.plan.md.
+# =============================================================== MBP loop
+
+
+GROWTH_DRIVERS_SAMPLES_DIR = SAMPLES_DIR / "growth_drivers"
+GROWTH_DRIVERS_DEFAULT_SAMPLE = "crown_royal_nfl.yaml"
+
+
+class CounterfactualScope(BaseModel):
+    """Scope tuple for a counterfactual.
+
+    At least one of ``driver_id`` / ``finding_id`` should be set so the
+    counterfactual stays attached to the question that raised it. The
+    model permits both being ``None`` because callers occasionally raise
+    a scenario directly off a study without a driver — we still need to
+    persist it.
+    """
+
+    study_id: str = Field(..., min_length=1)
+    driver_id: str | None = None
+    finding_id: str | None = None
+
+
+class CounterfactualRequest(BaseModel):
+    """Body for ``POST /counterfactuals``."""
+
+    study_id: str = Field(..., min_length=1)
+    scope: CounterfactualScope
+    prompt: str = Field(..., min_length=1)
+    variants: list[Any] = Field(default_factory=list)
+    inputs: list[Any] = Field(default_factory=list)
+    confidence_per_variant: list[Any] = Field(default_factory=list)
+    assumes: list[str] = Field(default_factory=list)
+    does_not_assume: list[str] = Field(default_factory=list)
+
+
+class DecisionScope(BaseModel):
+    """Scope tuple for a decision.
+
+    Must carry ``study_id`` plus exactly one of ``driver_id`` /
+    ``finding_id`` so the snapshot block knows where to read evidence
+    from. The validator allows ``finding_id`` to be ``None`` so a
+    decision can be committed directly off a study question.
+    """
+
+    study_id: str = Field(..., min_length=1)
+    driver_id: str | None = None
+    finding_id: str | None = None
+
+
+class DecisionConfidence(BaseModel):
+    """Honest-by-design confidence block.
+
+    Mirrors the FE's confidence sentence + holds_in / of /label tuple so
+    the decision asset preserves the exact phrasing that was committed.
+    """
+
+    sentence: str = Field(..., min_length=1)
+    holds_in: int = Field(..., ge=0)
+    of: int = Field(..., ge=0)
+    label: str = Field(..., min_length=1)
+
+
+class DecisionRequest(BaseModel):
+    """Body for ``POST /decisions``."""
+
+    scope: DecisionScope
+    recommendation: str = Field(..., min_length=1)
+    confidence: DecisionConfidence
+    fragile_assumption: str = ""
+    counterfactual_refs: list[str] = Field(default_factory=list)
+    inputs_used: list[str] = Field(default_factory=list)
+    owner: str = Field(..., min_length=1)
+
+
+class TaskScope(BaseModel):
+    """Scope tuple for a follow-up task.
+
+    Defaulted to permit a global scope (e.g. a portfolio-level
+    validation hook) but the FE's validate-against-promo CTA always
+    passes ``study_id`` + one of ``driver_id`` / ``decision_id``.
+    """
+
+    study_id: str | None = None
+    driver_id: str | None = None
+    finding_id: str | None = None
+    decision_id: str | None = None
+
+
+class TaskRequest(BaseModel):
+    """Body for ``POST /tasks``."""
+
+    kind: str = Field(..., min_length=1)
+    scope: TaskScope = Field(default_factory=TaskScope)
+    due_date: str | None = None
+    description: str = Field(..., min_length=1)
+
+
+# ----------------------------------------------------- Growth driver seed
+
+
+def _load_growth_driver_seed(
+    sample_filename: str = GROWTH_DRIVERS_DEFAULT_SAMPLE,
+) -> dict[str, Any]:
+    """Load the YAML seed at ``samples/growth_drivers/<filename>``.
+
+    Never raises — a missing or malformed file just yields an empty
+    payload so the endpoint can still return ``[]`` rather than 5xx.
+    """
+    path = GROWTH_DRIVERS_SAMPLES_DIR / sample_filename
+    if not path.exists():
+        logger.warning("growth-driver seed missing: %s", path)
+        return {"must_dos": [], "drivers": []}
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001
+        logger.exception("growth-driver seed parse failed: %s", path)
+        return {"must_dos": [], "drivers": []}
+    must_dos = list(raw.get("must_dos") or [])
+    drivers = list(raw.get("drivers") or [])
+    return {"must_dos": must_dos, "drivers": drivers}
+
+
+def _build_growth_driver_asset(
+    *,
+    study_id: str,
+    driver_raw: dict[str, Any],
+    must_do_by_id: dict[str, dict[str, Any]],
+) -> GrowthDriverAsset:
+    """Hydrate one driver row from YAML into a :class:`GrowthDriverAsset`.
+
+    ``must_do_by_id`` is the slug-keyed map of the seed's must_dos so
+    the driver carries the parent Must-Do's title / summary / split for
+    the FE without a second fetch.
+    """
+    must_do_id = str(driver_raw.get("must_do") or "")
+    must_do = must_do_by_id.get(must_do_id) or {}
+    return GrowthDriverAsset(
+        driver_id=str(driver_raw["driver_id"]),
+        study_id=study_id,
+        must_do=must_do_id,
+        driver_name=str(driver_raw.get("driver_name") or ""),
+        one_line=str(driver_raw.get("one_line") or ""),
+        hypotheses=list(driver_raw.get("hypotheses") or []),
+        fragile_assumption=str(driver_raw.get("fragile_assumption") or ""),
+        evidence_pointers=list(driver_raw.get("evidence_pointers") or []),
+        markets=list(driver_raw.get("markets") or []),
+        confidence_pill=str(driver_raw.get("confidence_pill") or ""),
+        confidence_value=(
+            int(driver_raw["confidence_value"])
+            if driver_raw.get("confidence_value") is not None
+            else None
+        ),
+        illustrative=bool(driver_raw.get("illustrative", True)),
+        activities=list(driver_raw.get("activities") or []),
+        must_do_title=must_do.get("title"),
+        must_do_summary=must_do.get("summary"),
+        must_do_ap_split=(
+            int(must_do["ap_split"]) if must_do.get("ap_split") is not None else None
+        ),
+        must_do_confidence=(
+            int(must_do["confidence"])
+            if must_do.get("confidence") is not None
+            else None
+        ),
+        must_do_focus_markets=list(must_do.get("focus_markets") or []),
+        validate_next=list(driver_raw.get("validate_next") or []),
+        simulation_prompt=str(driver_raw.get("simulation_prompt") or ""),
+    )
+
+
+@app.get("/studies/{study_id}/growth-drivers")
+def get_study_growth_drivers(study_id: str) -> dict[str, Any]:
+    """Return the GrowthDriverAssets seeded for this study.
+
+    Seeded from ``samples/growth_drivers/crown_royal_nfl.yaml`` (M3).
+    Per-driver overrides at ``runs/growth_drivers/<driver_id>.json``
+    merge on top so an edited driver stays edited across restarts.
+    Every entry carries ``illustrative`` so the FE can render an
+    explicit chip; only ``crown-peach-tailgate`` ships with
+    ``illustrative=false`` and points at real BLS/TTB pointers.
+
+    Materializing on read keeps Dagit + ``/assets`` in sync with the
+    backing YAML without requiring a manual migration step. The emit is
+    best-effort: a failed Dagster write still returns the drivers so
+    the FE never goes blank.
+    """
+    seed = _load_growth_driver_seed()
+    must_dos = list(seed.get("must_dos") or [])
+    must_do_by_id = {str(m.get("id")): m for m in must_dos if m.get("id")}
+
+    instance = _resolve_dagster_instance()
+    try:
+        drivers_out: list[dict[str, Any]] = []
+        for raw in seed.get("drivers") or []:
+            try:
+                asset = _build_growth_driver_asset(
+                    study_id=study_id,
+                    driver_raw=raw,
+                    must_do_by_id=must_do_by_id,
+                )
+            except KeyError as e:
+                logger.warning(
+                    "skipping malformed growth driver entry (missing %s): %r",
+                    e,
+                    raw,
+                )
+                continue
+            override = load_decision_asset(
+                GROWTH_DRIVER_ASSET_PREFIX, asset.driver_id
+            )
+            if override:
+                merged = {**asset.to_dict(), **override}
+                merged["study_id"] = study_id
+                asset = GrowthDriverAsset.from_dict(merged)
+            try:
+                emit_growth_driver_materialization(instance, asset=asset)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "emit_growth_driver_materialization failed for %s",
+                    asset.driver_id,
+                )
+            drivers_out.append(asset.to_dict())
+    finally:
+        try:
+            instance.dispose()
+        except Exception:  # noqa: BLE001
+            pass
+
+    return {
+        "study_id": study_id,
+        "must_dos": must_dos,
+        "drivers": drivers_out,
+        "seed": GROWTH_DRIVERS_DEFAULT_SAMPLE,
+    }
+
+
+# ----------------------------------------------------- Counterfactual POST
+
+
+@app.post("/counterfactuals")
+def post_counterfactual(req: CounterfactualRequest) -> dict[str, Any]:
+    """Persist + materialize one CounterfactualAsset.
+
+    Idempotent on content: same inputs → same ``cf_id`` (and same
+    asset_key), so a double-POST collapses onto one asset. Useful for
+    the FE's stress-test flow where a user can land on /simulation
+    twice with the same params.
+    """
+    scope_dict = req.scope.model_dump(exclude_none=False)
+    cf_id = content_id_counterfactual(
+        study_id=req.study_id,
+        scope=scope_dict,
+        prompt=req.prompt,
+        variants=req.variants,
+        inputs=req.inputs,
+        confidence_per_variant=req.confidence_per_variant,
+        assumes=req.assumes,
+        does_not_assume=req.does_not_assume,
+    )
+    asset = CounterfactualAsset(
+        cf_id=cf_id,
+        scope=scope_dict,
+        prompt=req.prompt,
+        variants=req.variants,
+        inputs=req.inputs,
+        confidence_per_variant=req.confidence_per_variant,
+        assumes=req.assumes,
+        does_not_assume=req.does_not_assume,
+        study_id=req.study_id,
+        created_at=_now_utc_iso(),
+    )
+    instance = _resolve_dagster_instance()
+    try:
+        payload = emit_counterfactual_materialization(instance, asset=asset)
+    finally:
+        try:
+            instance.dispose()
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "cf_id": cf_id,
+        "asset_key": payload["asset_key_path"],
+        "asset_key_encoded": payload["asset_key_encoded"],
+        "scope": scope_dict,
+        "created_at": payload["created_at"],
+    }
+
+
+# ----------------------------------------------------- Decision POST
+
+
+def _collect_decision_evidence_pointers(
+    *, study_id: str, scope: dict[str, Any], inputs_used: list[str]
+) -> list[str]:
+    """Best-effort evidence-pointer set for a decision scope.
+
+    When the scope names a ``driver_id`` we pull the driver's
+    ``evidence_pointers`` from the YAML seed (overlaid with any
+    persisted override). ``inputs_used`` is always folded in so a
+    caller-supplied pointer survives even when the driver lookup
+    yields nothing.
+    """
+    pointers: list[str] = list(inputs_used or [])
+    driver_id = scope.get("driver_id")
+    if driver_id:
+        # Prefer the persisted override (the FE may have stamped a new
+        # pointer onto the driver).
+        override = load_decision_asset(GROWTH_DRIVER_ASSET_PREFIX, str(driver_id))
+        if override and override.get("evidence_pointers"):
+            pointers.extend(override.get("evidence_pointers") or [])
+        else:
+            seed = _load_growth_driver_seed()
+            must_do_by_id = {
+                str(m.get("id")): m for m in (seed.get("must_dos") or []) if m.get("id")
+            }
+            for raw in seed.get("drivers") or []:
+                if str(raw.get("driver_id")) != str(driver_id):
+                    continue
+                try:
+                    asset = _build_growth_driver_asset(
+                        study_id=study_id,
+                        driver_raw=raw,
+                        must_do_by_id=must_do_by_id,
+                    )
+                except KeyError:
+                    continue
+                pointers.extend(asset.evidence_pointers or [])
+    # Dedup while preserving order then sort for canonical form.
+    seen: set[str] = set()
+    out: list[str] = []
+    for p in pointers:
+        s = str(p)
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return sorted(out)
+
+
+def _collect_decision_claim_ids(study_id: str) -> list[str]:
+    """Collect stable claim identifiers for every cell of a study.
+
+    Uses the existing :func:`fetch_claims_for_cell` reader so the
+    snapshot block is consistent with what ``/studies/{id}/claims``
+    surfaces to the FE. Returns the encoded asset keys of every
+    claim — encoded form is stable across processes and serialisation.
+    """
+    study = read_study(study_id)
+    if study is None:
+        return []
+    from ..multiverse import render_cell_question
+
+    instance = _resolve_dagster_instance()
+    try:
+        out: list[str] = []
+        for cell in study.cells:
+            template = study.cell_question_template or study.question
+            full_question = render_cell_question(template, cell.addenda or [])
+            qh = _keys.hash_question(full_question)
+            a_sig = _keys.axes_signature(cell.axes or None)
+            try:
+                rows = fetch_claims_for_cell(
+                    instance, question_hash=qh, axes_signature=a_sig
+                )
+            except Exception:  # noqa: BLE001
+                rows = []
+            for r in rows:
+                handle = r.get("asset_key_encoded") or ""
+                if handle:
+                    out.append(handle)
+        return out
+    finally:
+        try:
+            instance.dispose()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _read_spec_curve_bytes(study_id: str) -> bytes:
+    """Return the bytes of ``runs/<study_id>/spec_curve.json`` (or b"")."""
+    settings = get_settings()
+    path = settings.runs_dir / study_id / "spec_curve.json"
+    if not path.exists():
+        return b""
+    try:
+        return path.read_bytes()
+    except OSError:
+        return b""
+
+
+def _now_utc_iso() -> str:
+    """Tiny convenience so api.py never depends on the granular_assets
+    private ``_now_iso`` helper directly. Round-trips through ISO 8601
+    with a UTC offset."""
+    return datetime.now(tz=timezone.utc).isoformat()
+
+
+@app.post("/decisions")
+def post_decision(req: DecisionRequest) -> dict[str, Any]:
+    """Commit one DecisionAsset and stamp its snapshot block.
+
+    Snapshot hashing follows M5: evidence_hash + claims_hash + curve_hash
+    are all sha256 over canonicalised sorted inputs (see
+    :func:`compute_decision_snapshot`). Same hashing scheme as the rest
+    of :mod:`diageo_research.keys` — no new hash algorithm invented.
+
+    Returns ``{decision_id, asset_key, asset_key_encoded, committed_at,
+    snapshot}`` so the FE can redirect to ``/decision/<id>`` and render
+    the snapshot block immediately.
+    """
+    scope_dict = req.scope.model_dump(exclude_none=False)
+    if not scope_dict.get("study_id"):
+        raise HTTPException(
+            status_code=400, detail="decision scope requires study_id"
+        )
+    committed_at = _now_utc_iso()
+    evidence_pointers = _collect_decision_evidence_pointers(
+        study_id=scope_dict["study_id"],
+        scope=scope_dict,
+        inputs_used=req.inputs_used,
+    )
+    claim_ids = _collect_decision_claim_ids(scope_dict["study_id"])
+    curve_bytes = _read_spec_curve_bytes(scope_dict["study_id"])
+    snapshot = compute_decision_snapshot(
+        study_id=scope_dict["study_id"],
+        evidence_pointers=evidence_pointers,
+        claim_ids=claim_ids,
+        curve_bytes=curve_bytes,
+    )
+
+    decision_id = content_id_decision(
+        scope=scope_dict,
+        recommendation=req.recommendation,
+        fragile_assumption=req.fragile_assumption,
+        counterfactual_refs=req.counterfactual_refs,
+        inputs_used=req.inputs_used,
+        owner=req.owner,
+        committed_at=committed_at,
+    )
+    asset = DecisionAsset(
+        decision_id=decision_id,
+        scope=scope_dict,
+        recommendation=req.recommendation,
+        confidence=req.confidence.model_dump(),
+        fragile_assumption=req.fragile_assumption,
+        counterfactual_refs=list(req.counterfactual_refs or []),
+        inputs_used=list(req.inputs_used or []),
+        owner=req.owner,
+        committed_at=committed_at,
+        snapshot=snapshot,
+    )
+    instance = _resolve_dagster_instance()
+    try:
+        payload = emit_decision_materialization(instance, asset=asset)
+    finally:
+        try:
+            instance.dispose()
+        except Exception:  # noqa: BLE001
+            pass
+
+    return {
+        "decision_id": decision_id,
+        "asset_key": payload["asset_key_path"],
+        "asset_key_encoded": payload["asset_key_encoded"],
+        "scope": scope_dict,
+        "committed_at": committed_at,
+        "snapshot": snapshot,
+    }
+
+
+# ----------------------------------------------------- In-year query GET
+
+
+@app.get("/decisions/{decision_id}")
+def get_decision(decision_id: str) -> dict[str, Any]:
+    """Read one persisted decision back by id.
+
+    Helper for the FE's /decision/[id] page. The persistence file is
+    the source of truth — the Dagster event log just mirrors it.
+    """
+    payload = load_decision_asset(DECISION_ASSET_PREFIX, decision_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="no such decision")
+    return payload
+
+
+@app.get("/decisions/{decision_id}/in-year")
+def get_decision_in_year(decision_id: str) -> dict[str, Any]:
+    """Re-compute current snapshot and diff against the decision's snapshot.
+
+    Persists an :class:`InYearQueryAsset` on every call (so callers can
+    answer 'when did we ask?' from the audit trail later) and returns
+    ``{decision_id, asked_at, diff, current_hashes, snapshot_hashes,
+    query_id, asset_key, asset_key_encoded}``.
+
+    The diff covers evidence_added / evidence_changed /
+    evidence_invalidated. See
+    :func:`diageo_research.granular_assets.compute_decision_in_year_diff`
+    for the semantic — change detection is intentionally coarse today
+    and only fires when claims_hash or curve_hash has shifted (a more
+    granular per-pointer change detector is a future refinement).
+    """
+    decision_payload = load_decision_asset(DECISION_ASSET_PREFIX, decision_id)
+    if decision_payload is None:
+        raise HTTPException(status_code=404, detail="no such decision")
+
+    snapshot = decision_payload.get("snapshot") or {}
+    scope = decision_payload.get("scope") or {}
+    study_id = scope.get("study_id") or ""
+    if not study_id:
+        raise HTTPException(
+            status_code=500,
+            detail=f"decision {decision_id} is missing study_id in its scope",
+        )
+
+    current_evidence = _collect_decision_evidence_pointers(
+        study_id=study_id,
+        scope=scope,
+        inputs_used=list(decision_payload.get("inputs_used") or []),
+    )
+    current_claims = _collect_decision_claim_ids(study_id)
+    current_curve = _read_spec_curve_bytes(study_id)
+    current = compute_decision_snapshot(
+        study_id=study_id,
+        evidence_pointers=current_evidence,
+        claim_ids=current_claims,
+        curve_bytes=current_curve,
+    )
+    diff = compute_decision_in_year_diff(snapshot=snapshot, current=current)
+
+    asked_at = _now_utc_iso()
+    query_id = content_id_in_year_query(
+        decision_id=decision_id,
+        asked_at=asked_at,
+        question="what changed since commit?",
+    )
+    snapshot_hashes = {
+        "evidence_hash": snapshot.get("evidence_hash"),
+        "claims_hash": snapshot.get("claims_hash"),
+        "curve_hash": snapshot.get("curve_hash"),
+    }
+    current_hashes = {
+        "evidence_hash": current.get("evidence_hash"),
+        "claims_hash": current.get("claims_hash"),
+        "curve_hash": current.get("curve_hash"),
+    }
+
+    query_asset = InYearQueryAsset(
+        query_id=query_id,
+        bound_to=decision_id,
+        asked_at=asked_at,
+        question="what changed since commit?",
+        diff=diff,
+        answer=(
+            "no changes detected since commit"
+            if (
+                not diff["evidence_added"]
+                and not diff["evidence_changed"]
+                and not diff["evidence_invalidated"]
+                and snapshot_hashes == current_hashes
+            )
+            else "evidence delta detected — see diff"
+        ),
+    )
+    instance = _resolve_dagster_instance()
+    try:
+        payload = emit_in_year_query_materialization(instance, asset=query_asset)
+    finally:
+        try:
+            instance.dispose()
+        except Exception:  # noqa: BLE001
+            pass
+
+    return {
+        "decision_id": decision_id,
+        "query_id": query_id,
+        "asset_key": payload["asset_key_path"],
+        "asset_key_encoded": payload["asset_key_encoded"],
+        "asked_at": asked_at,
+        "diff": diff,
+        "snapshot_hashes": snapshot_hashes,
+        "current_hashes": current_hashes,
+        "answer": payload["answer"],
+    }
+
+
+# ----------------------------------------------------- Tasks POST
+
+
+@app.post("/tasks")
+def post_task(req: TaskRequest) -> dict[str, Any]:
+    """Persist + materialize one TaskAsset.
+
+    Used by the FE's 'Validate against promo data' CTA on /simulation,
+    plus any other follow-up validation hook the loop spawns. Status
+    starts at ``open``; the workbench will let users move it through
+    ``in_progress`` and ``done`` (out of scope for the M2 deliverable).
+    """
+    scope_dict = req.scope.model_dump(exclude_none=False)
+    created_at = _now_utc_iso()
+    task_id = content_id_task(
+        kind=req.kind,
+        scope=scope_dict,
+        description=req.description,
+        due_date=req.due_date,
+        created_at=created_at,
+    )
+    task = TaskAsset(
+        task_id=task_id,
+        kind=req.kind,
+        scope=scope_dict,
+        description=req.description,
+        created_at=created_at,
+        due_date=req.due_date,
+        status="open",
+    )
+    instance = _resolve_dagster_instance()
+    try:
+        payload = emit_task_materialization(instance, asset=task)
+    finally:
+        try:
+            instance.dispose()
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "task_id": task_id,
+        "asset_key": payload["asset_key_path"],
+        "asset_key_encoded": payload["asset_key_encoded"],
+        "kind": req.kind,
+        "scope": scope_dict,
+        "due_date": req.due_date,
+        "created_at": created_at,
+        "status": "open",
+    }
 
 
 # ----------------------------------------------------------- Internal helpers
