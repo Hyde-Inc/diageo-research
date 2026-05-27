@@ -140,7 +140,7 @@ function RecipeCard({
         </div>
         <div className="font-mono text-[10px] text-slate-500">
           {card.cellsComplete}/{card.cellsTotal} cells · {card.axesCount}{' '}
-          {card.axesCount === 1 ? 'axis' : 'axes'}
+          {card.axesCount === 1 ? 'dimension' : 'dimensions'}
         </div>
       </div>
       <div className="grid gap-1">

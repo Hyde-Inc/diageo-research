@@ -326,6 +326,12 @@ function CounterfactualsSection({
 
 function CounterfactualCard({ cfId, row }: { cfId: string; row: CfRow | undefined }) {
   const variant = pickFirstVariant(row?.variants ?? []);
+  const promptSlug = isPromptSlug(row?.prompt) ? row?.prompt ?? null : null;
+  const title = humaniseCfTitle({
+    variantTitle: variant?.title ?? null,
+    promptSlug,
+    fallback: row?.prompt ?? cfId,
+  });
   return (
     <article className="grid gap-3 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-950/[0.03]">
       <header className="flex flex-wrap items-start justify-between gap-2">
@@ -334,12 +340,12 @@ function CounterfactualCard({ cfId, row }: { cfId: string; row: CfRow | undefine
             Counterfactual
           </span>
           <h3 className="mt-1 text-sm font-semibold tracking-tight text-slate-950">
-            {variant?.title || row?.prompt || cfId}
+            {title}
           </h3>
-          {row?.prompt ? (
-            <p className="mt-1 text-[12px] leading-snug text-slate-600">
-              {row.prompt}
-            </p>
+          {promptSlug ? (
+            <span className="mt-1 inline-flex w-fit items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-slate-500">
+              {promptSlug}
+            </span>
           ) : null}
         </div>
         {row?.illustrative ? (
@@ -783,6 +789,45 @@ function humaniseSlug(slug: string): string {
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/\b([a-z])/g, (_, c: string) => c.toUpperCase());
+}
+
+// A "prompt slug" is the typed stress-test id from /growth-driver
+// (e.g. flip-fragile-assumption, cut-ap-30). Loose heuristic: kebab-
+// shaped, no whitespace, mostly lowercase, < 60 chars. Anything with
+// spaces is already a sentence.
+function isPromptSlug(value: string | null | undefined): boolean {
+  if (!value) return false;
+  if (value.length > 60) return false;
+  return /^[a-z0-9][a-z0-9-]*$/.test(value);
+}
+
+// Map known stress-test prompt slugs to a planner-readable sentence
+// suitable for a card heading. Falls through to the variant title or
+// the originally-stored prompt sentence when no slug match exists.
+const STRESS_TEST_HEADINGS: Record<string, string> = {
+  'flip-fragile-assumption': 'If the fragile assumption is wrong',
+  'cut-ap-30': 'If we cut A&P by 30%',
+  'add-competitor-response': 'If a competitor steps up in our focus markets',
+  'alternative-driver': 'If we backed a peer driver instead',
+  'in-year-since-last-quarter': "What changed in-year since last quarter",
+  'discount-vs-bundle': 'Discount vs bundle',
+};
+
+function humaniseCfTitle({
+  variantTitle,
+  promptSlug,
+  fallback,
+}: {
+  variantTitle: string | null;
+  promptSlug: string | null;
+  fallback: string;
+}): string {
+  if (variantTitle && variantTitle.trim()) return variantTitle;
+  if (promptSlug && STRESS_TEST_HEADINGS[promptSlug]) {
+    return STRESS_TEST_HEADINGS[promptSlug];
+  }
+  if (promptSlug) return humaniseSlug(promptSlug);
+  return fallback;
 }
 
 function findingIndexOf(findingId: string): string | undefined {

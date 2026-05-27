@@ -380,9 +380,9 @@ function deriveScope(args: {
     return {
       kind: 'driver',
       driverSlug: driver,
-      driverLabel: humaniseSlug(driver),
+      driverLabel: prettify(driver),
       mustDoSlug: mustDo,
-      mustDoLabel: mustDo ? humaniseSlug(mustDo) : null,
+      mustDoLabel: mustDo ? prettify(mustDo) : null,
       prompt: prompt?.trim() || null,
     };
   }
@@ -394,21 +394,35 @@ function deriveScope(args: {
       kind: 'finding',
       findingIndex,
       prompt: promptSlug,
-      promptLabel: humaniseSlug(promptSlug),
-      occasion: occasion?.trim() || null,
-      brand: brand?.trim() || null,
+      promptLabel: prettify(promptSlug),
+      occasion: occasion?.trim() ? prettify(occasion.trim()) : null,
+      brand: brand?.trim() ? prettify(brand.trim()) : null,
     };
   }
   return { kind: 'empty' };
 }
 
-function humaniseSlug(slug: string): string {
+// Title-case kebab/snake fragments, but keep small connectors lowercase
+// when they sit between two real words (e.g. "discount-vs-bundle" →
+// "Discount vs Bundle"). Used for brand/occasion/prompt labels coming
+// from URL params, so the H1 reads like prose instead of slugs.
+function prettify(slug: string): string {
   if (!slug) return '';
-  return slug
+  const words = slug
     .replace(/[_-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-    .replace(/\b([a-z])/g, (_, c: string) => c.toUpperCase());
+    .split(' ')
+    .filter(Boolean);
+  if (words.length === 0) return '';
+  const SMALL = new Set(['vs', 'and', 'or', 'of', 'the', 'a', 'an', 'in']);
+  return words
+    .map((w, i) => {
+      const lower = w.toLowerCase();
+      if (i > 0 && i < words.length - 1 && SMALL.has(lower)) return lower;
+      return lower[0].toUpperCase() + lower.slice(1);
+    })
+    .join(' ');
 }
 
 // Per-prompt title + intro copy for driver-scoped stress-tests. The
@@ -477,7 +491,9 @@ function buildIntro(scope: Scope): string {
     return 'Two defensible framings of the growth driver, with the math, the inputs, and the honest confidence each one earns. Use the actions at the bottom to validate against promo data or commit the chosen variant as a decision.';
   }
   if (scope.kind === 'finding') {
-    return 'Two counterfactual variants for the finding in scope. Every variant names its inputs, prints the projection math, and carries an honest confidence pill so the answer stays defensible.';
+    // The H1 already names the prompt + brand + occasion, so the
+    // intro line would just paraphrase it. Drop it.
+    return '';
   }
   return 'Open this page from a growth driver or a research finding to scope a counterfactual.';
 }
@@ -1082,16 +1098,28 @@ function VariantsGrid({ variants }: { variants: Variant[] }) {
       </FocusCard>
     );
   }
+  const baseline = variants[0];
   return (
     <div className="grid gap-3 md:grid-cols-2">
-      {variants.map((variant) => (
-        <VariantCard key={variant.id} variant={variant} />
+      {variants.map((variant, idx) => (
+        <VariantCard
+          key={variant.id}
+          variant={variant}
+          baseline={idx === 0 ? null : baseline}
+        />
       ))}
     </div>
   );
 }
 
-function VariantCard({ variant }: { variant: Variant }) {
+function VariantCard({
+  variant,
+  baseline,
+}: {
+  variant: Variant;
+  baseline: Variant | null;
+}) {
+  const deltaLabel = baseline ? formatDeltaVsBaseline(variant, baseline) : null;
   return (
     <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-950/[0.03]">
       <header className="flex flex-wrap items-start justify-between gap-2">
@@ -1116,6 +1144,18 @@ function VariantCard({ variant }: { variant: Variant }) {
           >
             {variant.effectValue}
           </Badge>
+          {deltaLabel ? (
+            <Badge
+              variant="outline"
+              className={cn(
+                'border text-[10px] font-semibold uppercase tracking-[0.16em]',
+                effectToneClass(variant.effectKind),
+              )}
+              title="Change versus the first variant on this page"
+            >
+              {deltaLabel}
+            </Badge>
+          ) : null}
           {variant.illustrative ? (
             <Badge
               variant="outline"
@@ -1612,6 +1652,27 @@ function effectMagnitude(variant: Variant): number {
   if (!match) return 0;
   const v = Number(match[1]);
   return Number.isFinite(v) ? v : 0;
+}
+
+// Compose a "−1.0 vs baseline" / "+0.5 vs baseline" badge for variants
+// after the first, using the same units that the absolute pill carries
+// (e.g. "pp spend retention").
+function formatDeltaVsBaseline(variant: Variant, baseline: Variant): string {
+  const a = effectMagnitude(baseline);
+  const b = effectMagnitude(variant);
+  const delta = b - a;
+  if (!Number.isFinite(delta)) return '';
+  // Pull the trailing units from the baseline's effectValue —
+  // everything after the leading number — so a delta on
+  // "+6.0 pp spend retention" reads "−1.0 pp vs baseline" (not just
+  // "−1.0").
+  const tail = baseline.effectValue.replace(/^[+\-]?\d+(\.\d+)?\s*/, '').trim();
+  const unit = tail.split(' ')[0] ?? '';
+  const sign = delta >= 0 ? '+' : '−';
+  const magnitude = Math.abs(delta).toFixed(1);
+  return unit
+    ? `${sign}${magnitude} ${unit} vs baseline`
+    : `${sign}${magnitude} vs baseline`;
 }
 
 function pickWinner(variants: Variant[]): Variant | null {

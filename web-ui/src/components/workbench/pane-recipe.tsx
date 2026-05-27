@@ -195,7 +195,7 @@ export function PaneRecipe({
 
       <Disclosure
         summary={`Inputs · ${Object.keys(axes).length} ${
-          Object.keys(axes).length === 1 ? 'axis' : 'axes'
+          Object.keys(axes).length === 1 ? 'dimension' : 'dimensions'
         } → ${totalSpecs} cells`}
         hint="The cartesian product that defines the multiverse. Each combination produces one cell."
       >
@@ -390,7 +390,9 @@ function FalsifiersList({
     if (
       lc.includes('not auto-evaluated') ||
       lc.includes('requires bespoke') ||
-      lc.includes('bespoke evaluation')
+      lc.includes('bespoke evaluation') ||
+      lc.includes('could not be evaluated') ||
+      lc.includes('no spec-curve rows')
     ) {
       return { status: 'unevaluated', note };
     }
@@ -441,7 +443,7 @@ function FalsifiersList({
           status === 'triggered'
             ? 'triggered'
             : status === 'unevaluated'
-              ? 'bespoke check'
+              ? 'un-evaluable'
               : 'not triggered';
         return (
           <div

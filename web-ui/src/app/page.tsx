@@ -19,21 +19,9 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
-  Compass,
-  DatabaseZap,
   FlaskConical,
-  Grid2X2,
-  HelpCircle,
-  Lightbulb,
-  ListChecks,
-  MessageCircle,
   PencilLine,
   Search,
-  Settings2,
-  ShieldAlert,
-  Telescope,
-  TrendingUp,
-  type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -52,21 +40,6 @@ const SEEDED_MBP = {
   mbpLabel: 'Crown Royal × NFL 2026-27 MBP',
   cycleWindow: 'Q3 2026 → Q2 2027',
 };
-
-const SHORTCUT_TILES: Array<{ href: string; Icon: LucideIcon; title: string }> = [
-  { href: '/research', Icon: Telescope, title: 'Research' },
-  { href: '/answer', Icon: Lightbulb, title: 'Answer' },
-  { href: '/robustness', Icon: Compass, title: 'Robustness' },
-  { href: '/why-it-could-be-wrong', Icon: ShieldAlert, title: 'Why wrong?' },
-  { href: '/scenario', Icon: ListChecks, title: 'Scenarios' },
-  { href: '/growth-driver', Icon: TrendingUp, title: 'Growth driver' },
-  { href: '/evidence', Icon: HelpCircle, title: 'Evidence' },
-  { href: '/assets', Icon: DatabaseZap, title: 'Assets' },
-  { href: '/setup', Icon: Settings2, title: 'Setup' },
-  { href: '/ask', Icon: MessageCircle, title: 'Ask' },
-  { href: '/plan', Icon: PencilLine, title: 'Plan' },
-  { href: '/workbench', Icon: Grid2X2, title: 'Workbench' },
-];
 
 type MbpRow = {
   studyId: string;
@@ -279,24 +252,6 @@ export default function HomePage() {
           ))}
         </SectionGroup>
 
-        <section className="grid gap-2 pt-4">
-          <h2 className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-            Jump to a job
-          </h2>
-          <div className="flex flex-wrap gap-1.5">
-            {SHORTCUT_TILES.map((tile) => (
-              <Link
-                key={tile.href}
-                href={tile.href}
-                className="inline-flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white/80 px-3 text-[12px] font-medium text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:bg-white"
-              >
-                <tile.Icon className="h-3.5 w-3.5 text-slate-500" />
-                {tile.title}
-              </Link>
-            ))}
-          </div>
-        </section>
-
         <details className="text-[11px] leading-relaxed text-slate-500">
           <summary className="cursor-pointer select-none text-slate-500 hover:text-slate-700">
             Analyst notes
@@ -355,16 +310,11 @@ function MbpRowCard({ row }: { row: MbpRow }) {
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="truncate text-sm font-semibold tracking-tight text-slate-950">
-              {row.brand}
-            </h3>
-            <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0 text-[10px] font-medium text-slate-600">
-              {row.mbpLabel}
-            </span>
-          </div>
+          <h3 className="truncate text-sm font-semibold tracking-tight text-slate-950">
+            {row.mbpLabel}
+          </h3>
           <p className="mt-1 text-[12px] leading-snug text-slate-600">
-            Cycle: {row.cycleWindow}
+            {row.brand} · {row.cycleWindow}
           </p>
         </div>
         <ArrowRight className="mt-1 h-4 w-4 text-slate-300 transition-colors group-hover:text-slate-700" />

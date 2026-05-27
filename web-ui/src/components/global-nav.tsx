@@ -339,15 +339,29 @@ function RecentDecisions({
           const href = decisionId
             ? `/decision/${decisionId}${studyParam ? `?study=${studyParam}` : ''}`
             : `/assets/${a.asset_key_encoded}`;
+          const shortLabel = truncate(
+            recentDecisionLabel(scope, recommendation),
+            60,
+          );
+          const committedAt =
+            typeof md.committed_at === 'string' ? md.committed_at : '';
+          const ago = relativeShort(committedAt);
           return (
             <li key={a.asset_key_encoded}>
               <Link
                 href={href}
                 onClick={onNavigate}
-                className="block rounded-md px-2 py-1.5 text-[11px] leading-snug text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+                className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] leading-snug text-slate-600 hover:bg-slate-100 hover:text-slate-950"
                 title={recommendation}
               >
-                <span className="line-clamp-2">{recommendation}</span>
+                <span className="min-w-0 flex-1 truncate line-clamp-1">
+                  {shortLabel}
+                </span>
+                {ago ? (
+                  <span className="shrink-0 font-mono text-[10px] tabular-nums text-slate-400">
+                    {ago}
+                  </span>
+                ) : null}
               </Link>
             </li>
           );
@@ -355,6 +369,36 @@ function RecentDecisions({
       </ul>
     </NavSection>
   );
+}
+
+function recentDecisionLabel(
+  scope: Record<string, unknown>,
+  recommendation: string,
+): string {
+  const driver = typeof scope.driver_id === 'string' ? scope.driver_id : '';
+  if (driver) return humaniseName(driver.replace(/-/g, '_'));
+  const finding = typeof scope.finding_id === 'string' ? scope.finding_id : '';
+  if (finding) return humaniseName(finding.replace(/-/g, '_'));
+  return recommendation;
+}
+
+function relativeShort(iso: string): string {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    const diffMs = Date.now() - d.getTime();
+    if (diffMs < 60_000) return 'now';
+    const m = Math.round(diffMs / 60_000);
+    if (m < 60) return `${m}m`;
+    const h = Math.round(diffMs / 3_600_000);
+    if (h < 48) return `${h}h`;
+    const day = Math.round(diffMs / 86_400_000);
+    if (day < 14) return `${day}d`;
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  } catch {
+    return '';
+  }
 }
 
 function StatusGlyph({ status }: { status: StudySummary['status'] }) {

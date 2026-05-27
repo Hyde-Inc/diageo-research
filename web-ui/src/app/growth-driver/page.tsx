@@ -65,7 +65,7 @@ type MustDo = {
 // rather than on the page so the chrome stays a single line of strings.
 const SEEDED_MBP = {
   brand: 'Crown Royal',
-  mbpLabel: 'Crown Royal · NFL 2026-27 MBP',
+  mbpLabel: 'Crown Royal × NFL 2026-27 MBP',
   cycleWindow: 'Q3 2026 → Q2 2027',
 };
 
@@ -464,10 +464,9 @@ function StrategyColumn({
     <aside className="border-b border-slate-200 bg-slate-50/70 p-4 xl:border-b-0 xl:border-r">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-sm font-semibold tracking-tight text-slate-950">
-            {SEEDED_MBP.brand}
-          </div>
-          <div className="text-[12px] text-slate-600">{SEEDED_MBP.mbpLabel}</div>
+          <h1 className="text-sm font-semibold leading-snug tracking-tight text-slate-950">
+            {SEEDED_MBP.mbpLabel}
+          </h1>
           <div className="text-[11px] text-slate-500">{SEEDED_MBP.cycleWindow}</div>
         </div>
         <span
@@ -740,12 +739,10 @@ function ArgumentColumn({
                 <Link
                   key={test.prompt}
                   href={href}
+                  title={test.prompt}
                   className="inline-flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-[12px] font-medium leading-snug text-slate-800 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50"
                 >
                   <span>{test.label}</span>
-                  <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400">
-                    {test.prompt}
-                  </span>
                 </Link>
               );
             })}
@@ -806,7 +803,7 @@ function EvidenceChip({
     : withStudy('/evidence', studyId);
   const label = isEncodedKey
     ? `Asset · ${pointer.slice(0, 10)}…`
-    : truncate(pointer, 80);
+    : humanizeAssetKey(pointer);
   return (
     <Link
       href={href}
@@ -816,6 +813,58 @@ function EvidenceChip({
       <span className="truncate">{label}</span>
     </Link>
   );
+}
+
+// Map raw evidence pointers (asset keys like
+// `citation:bls:CUUR0000SA0:headline-cpi` or
+// `claim:internal-sql:tailgate-occasion-volume-q3-2025`) to a planner-
+// readable label. Falls back to the trimmed pointer for unknown
+// families. Pure + side-effect free so it can be unit-tested.
+export function humanizeAssetKey(key: string): string {
+  if (!key) return key;
+  // Already prose? — leave it alone (truncated for chip width).
+  if (/\s/.test(key)) return truncate(key, 80);
+  const parts = key.split(/[:/]/).filter(Boolean);
+  if (parts.length < 2) return truncate(key, 80);
+  const family = parts[0].toLowerCase();
+  const FAMILY_LABELS: Record<string, string> = {
+    'citation:bls': 'BLS',
+    'citation:ttb': 'TTB',
+    'citation:fred': 'FRED',
+    'citation:internal-sql': 'Internal SQL',
+    'claim:internal-sql': 'Internal SQL',
+    'citation:nielsen': 'Nielsen',
+    'claim:nielsen': 'Nielsen',
+    'demo-placeholder': 'Illustrative',
+  };
+  const compoundKey =
+    parts.length >= 2 ? `${family}:${parts[1].toLowerCase()}` : family;
+  const compoundMatch = FAMILY_LABELS[compoundKey];
+  const familyMatch = FAMILY_LABELS[family];
+  const familyLabel =
+    compoundMatch ??
+    familyMatch ??
+    (family === 'citation'
+      ? 'Citation'
+      : family === 'claim'
+        ? 'Claim'
+        : capitalize(family));
+  const detailStart = compoundMatch ? 2 : 1;
+  const tail = parts.slice(-1)[0] ?? '';
+  const middle = parts
+    .slice(detailStart, -1)
+    .map((p) => p.replace(/[-_]+/g, ' ').trim())
+    .filter(Boolean)
+    .join(' · ');
+  const prettyTail = tail.replace(/[-_]+/g, ' ').trim();
+  const detail = [middle, prettyTail].filter(Boolean).join(' · ');
+  const label = detail ? `${familyLabel} · ${detail}` : familyLabel;
+  return truncate(label, 80);
+}
+
+function capitalize(value: string): string {
+  if (!value) return value;
+  return value[0].toUpperCase() + value.slice(1);
 }
 
 function ConfidencePill({ value }: { value: number }) {
