@@ -65,14 +65,14 @@ diageo dev --spec deploy.yaml
 Default local URLs from `deploy.yaml`:
 
 - Web UI: `http://127.0.0.1:3011/workbench`
-- API: `http://127.0.0.1:8766/`
+- API: `http://127.0.0.1:8765/`
 - Dagit: `http://127.0.0.1:3009/`
 
 If ports conflict, stop the launcher with `Ctrl-C`. If a stale process is still
 bound to a port, check and kill it:
 
 ```bash
-lsof -nP -iTCP:8766 -sTCP:LISTEN
+lsof -nP -iTCP:8765 -sTCP:LISTEN
 lsof -nP -iTCP:3009 -sTCP:LISTEN
 lsof -nP -iTCP:3011 -sTCP:LISTEN
 kill <pid>

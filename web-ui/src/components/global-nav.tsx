@@ -474,7 +474,7 @@ function ContextItem({
         {primary}
       </span>
       <span className="line-clamp-1 font-mono text-[10px] text-slate-500">
-        {secondary}
+        id: {secondary}
       </span>
       {hint ? (
         <span className="line-clamp-1 text-[11px] leading-snug text-slate-500">

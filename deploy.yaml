@@ -13,7 +13,7 @@ services:
   api:
     enabled: true
     host: 127.0.0.1
-    port: 8766
+    port: 8765
     env_file: .env.local   # loaded into the api child's env (ANTHROPIC_API_KEY, etc.)
 
   # Dagster UI (Dagit). Mirrors `diageo dagster-dev`: DAGSTER_HOME is
