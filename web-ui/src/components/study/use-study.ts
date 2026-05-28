@@ -127,14 +127,14 @@ export function useStudyData(): StudyData {
     };
   }, []);
 
-  // Resolve studyId: explicit ?study= wins; then a previously persisted
-  // selection (so the sidebar's "working on" choice survives navigation
-  // to a route without ?study=); finally the freshest study with a
+  // Resolve studyId: explicit ?study= wins unconditionally — the studies
+  // index is polled every 7s and a freshly-created study isn't in the
+  // first poll yet. We trust the URL and let the per-study detail fetch
+  // below confirm or fail. If `?study=` isn't present, fall back to a
+  // previously persisted selection, then the freshest study with a
   // completed cell, otherwise the first.
   const studyId = useMemo<string | null>(() => {
-    if (studyParam && studies.some((s) => s.id === studyParam)) {
-      return studyParam;
-    }
+    if (studyParam) return studyParam;
     if (studies.length === 0) return null;
     if (storedStudyId && studies.some((s) => s.id === storedStudyId)) {
       return storedStudyId;
@@ -198,10 +198,28 @@ export function useStudyData(): StudyData {
   const loadingCost = Boolean(studyId && costFetch?.key !== studyId);
   const loadingPrereg = Boolean(studyId && preregFetch?.key !== studyId);
 
-  const studySummary = useMemo(
-    () => studies.find((s) => s.id === studyId) ?? null,
-    [studies, studyId],
-  );
+  // When the URL points at a study the studies-list poll hasn't caught
+  // up to yet, synthesise a summary from the resolved detail so the
+  // sidebar picker label, /research H1, etc. paint correctly on first
+  // arrival instead of waiting up to 7s for the next index poll.
+  const studySummary = useMemo<StudySummary | null>(() => {
+    if (!studyId) return null;
+    const known = studies.find((s) => s.id === studyId);
+    if (known) return known;
+    if (detail && detail.id === studyId) {
+      return {
+        id: detail.id,
+        name: detail.name,
+        question: detail.question,
+        status: detail.status,
+        n_cells: detail.cells.length,
+        n_complete: detail.cells.filter((c) => c.status === 'complete').length,
+        n_error: detail.cells.filter((c) => c.status === 'error').length,
+        created_at: detail.created_at ?? '',
+      };
+    }
+    return null;
+  }, [studies, studyId, detail]);
 
   const setStudyId = (id: string) => {
     setStoredStudyId(id);
@@ -211,8 +229,17 @@ export function useStudyData(): StudyData {
     router.replace(qs ? `${pathname}?${qs}` : pathname);
   };
 
+  // Merge any optimistic summary on top of the polled list so the
+  // sidebar dropdown shows a freshly-created study before the next
+  // 7s index poll picks it up.
+  const mergedStudies = useMemo<StudySummary[]>(() => {
+    if (!studySummary) return studies;
+    if (studies.some((s) => s.id === studySummary.id)) return studies;
+    return [studySummary, ...studies];
+  }, [studies, studySummary]);
+
   return {
-    studies,
+    studies: mergedStudies,
     studyId,
     studySummary,
     detail,

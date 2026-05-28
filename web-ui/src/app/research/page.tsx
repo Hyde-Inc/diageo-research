@@ -136,7 +136,13 @@ export default function ResearchPage() {
     <StudyShell
       data={data}
       eyebrow="Research"
-      title={question || 'No study question registered yet'}
+      title={
+        question
+          ? question
+          : loadingDetail
+            ? 'Loading the study you just created…'
+            : 'No study question registered yet'
+      }
       contentClassName="max-w-[1500px]"
       leftLabel="Findings list"
       mainLabel="Selected finding detail"
