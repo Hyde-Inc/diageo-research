@@ -167,6 +167,38 @@ export function isTechnicalErrorText(text: string | null | undefined): boolean {
   return TECHNICAL_ERROR_PATTERN.test(text.trim());
 }
 
+/**
+ * Translate a raw verifier failure note (re-exec stack trace, DuckDB
+ * "Catalog Error: …", "0 rows but citation cites …", etc.) into one
+ * friendly stakeholder-facing sentence. The original note is still
+ * surfaced behind a disclosure on the SourceCard / VerifierFlags row
+ * for debugging.
+ */
+export function friendlyVerifierFailure(note: string | null | undefined): string {
+  const text = (note ?? '').trim();
+  if (!text) return 'Failed re-verification.';
+  const lc = text.toLowerCase();
+  if (/0 rows but citation cites/.test(lc)) {
+    return "Re-running the cited SQL returned 0 rows — the number the brief quoted couldn't be reproduced.";
+  }
+  if (/table\s+(?:with name\s+)?["'`]?\w+["'`]?\s+does not exist/.test(lc)) {
+    return 'The cited table is no longer registered in the dataset catalog.';
+  }
+  if (/catalog error/.test(lc)) {
+    return "Re-running the cited SQL hit a catalog error — the dataset shape it needs isn't available.";
+  }
+  if (/parser error|binder error/.test(lc)) {
+    return "Re-running the cited SQL failed at parse / bind — the query no longer compiles against the current schema.";
+  }
+  if (/^re-?exec error/.test(lc)) {
+    return "Re-running the cited SQL raised an error.";
+  }
+  if (/http\s+\d+/.test(lc) || /timeout|connection/.test(lc)) {
+    return 'Re-fetching the cited URL failed.';
+  }
+  return 'Failed re-verification.';
+}
+
 // ─── Verifier flags ─────────────────────────────────────────────────
 
 const VERIFIER_FAILURE_NOTE = /^re-exec error|catalog error|table.*does not exist|0 rows but citation cites/i;

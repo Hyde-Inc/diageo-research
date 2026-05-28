@@ -13,7 +13,7 @@
 
 import { AlertTriangle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import type { VerifierFlag } from './source-helpers';
+import { friendlyVerifierFailure, type VerifierFlag } from './source-helpers';
 
 export function VerifierFlags({ flags }: { flags: VerifierFlag[] }) {
   if (flags.length === 0) return null;
@@ -28,23 +28,36 @@ export function VerifierFlags({ flags }: { flags: VerifierFlag[] }) {
         </p>
       </header>
       <ul className="grid gap-1.5">
-        {flags.map((flag) => (
-          <li
-            key={flag.cite_id}
-            className="grid grid-cols-[auto_auto_minmax(0,1fr)] items-baseline gap-2 rounded-xl border border-amber-200/70 bg-white px-2.5 py-1.5 text-[11px] shadow-inner"
-          >
-            <span className="font-mono text-[10px] font-semibold text-amber-800">
-              [{flag.cite_id}]
-            </span>
-            <Badge
-              variant="outline"
-              className="border-amber-200 bg-amber-50 text-[9px] uppercase tracking-wider text-amber-700"
+        {flags.map((flag) => {
+          const friendly = friendlyVerifierFailure(flag.note);
+          return (
+            <li
+              key={flag.cite_id}
+              className="grid grid-cols-[auto_auto_minmax(0,1fr)] items-baseline gap-2 rounded-xl border border-amber-200/70 bg-white px-2.5 py-1.5 text-[11px] shadow-inner"
             >
-              {flag.kind === 'sql' ? 'SQL re-exec' : 'web re-fetch'}
-            </Badge>
-            <span className="text-slate-700">{flag.note}</span>
-          </li>
-        ))}
+              <span className="font-mono text-[10px] font-semibold text-amber-800">
+                [{flag.cite_id}]
+              </span>
+              <Badge
+                variant="outline"
+                className="border-amber-200 bg-amber-50 text-[9px] uppercase tracking-wider text-amber-700"
+              >
+                {flag.kind === 'sql' ? 'SQL re-exec' : 'web re-fetch'}
+              </Badge>
+              <span className="grid gap-1 text-slate-700">
+                <span>{friendly}</span>
+                <details className="text-[10px] text-slate-500">
+                  <summary className="cursor-pointer font-semibold uppercase tracking-wider text-slate-500 hover:text-slate-700">
+                    Show technical detail
+                  </summary>
+                  <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 font-mono text-[10px] leading-snug text-slate-600">
+                    {flag.note}
+                  </pre>
+                </details>
+              </span>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );
