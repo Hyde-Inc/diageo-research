@@ -12,6 +12,7 @@
  */
 
 import { Plus } from 'lucide-react';
+import { humaniseName } from '@/components/global-nav';
 import { cn } from '@/lib/utils';
 import type { StudyDetail, StudySummary } from './types';
 
@@ -42,7 +43,10 @@ export function RecipeCards({
     ? [
         {
           id: detail.id,
-          title: detail.name,
+          // detail.name is the study slug (e.g. `pricing_pressure_na`);
+          // humanise so the recipe card reads as a study name, not a
+          // raw id.
+          title: humaniseName(detail.name) || detail.question || detail.id,
           cellsComplete: summary?.n_complete ?? detail.cells.length,
           cellsTotal: summary?.n_cells ?? detail.cells.length,
           status: detail.status,

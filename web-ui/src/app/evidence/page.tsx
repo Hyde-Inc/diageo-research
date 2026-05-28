@@ -488,7 +488,13 @@ function ClaimRow({
   isLead: boolean;
   source: ClaimSourceState | undefined;
 }) {
-  const title = useMemo(() => extractClaimTitle(row.representative), [row]);
+  // The brief sometimes stitches a `## Pre-registration …` block onto
+  // the representative; cleanRepresentative trims it before we extract
+  // the title so list cards match the detail page (cf. fc54916).
+  const title = useMemo(
+    () => extractClaimTitle(cleanRepresentative(row.representative)),
+    [row],
+  );
   const agree = useMemo(() => summarizeAgreement(row), [row]);
   const summary = source?.summary ?? EMPTY_SUMMARY;
   const loadingSources = source?.loading ?? true;

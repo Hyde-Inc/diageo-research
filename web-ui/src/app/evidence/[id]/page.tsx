@@ -450,6 +450,7 @@ export default function EvidencePage({
           >
             <RobustnessBody
               row={row}
+              cells={cells}
               counterfactualHint={counterfactualHint}
               studyId={studyId}
               clusterId={row.cluster_id}
@@ -1205,12 +1206,14 @@ function TransformationBody({
 
 function RobustnessBody({
   row,
+  cells,
   counterfactualHint,
   studyId,
   clusterId,
   findingIndex,
 }: {
   row: SpecCurveRow;
+  cells: CellSummary[];
   counterfactualHint: string | null;
   studyId: string | null;
   clusterId: number;
@@ -1265,7 +1268,10 @@ function RobustnessBody({
       {row.fragile_specs.length > 0 ? (
         <p className="text-[12px] text-slate-600">
           <span className="font-semibold text-slate-700">Fragile under:</span>{' '}
-          {row.fragile_specs.slice(0, 3).join(', ')}
+          {row.fragile_specs
+            .slice(0, 3)
+            .map((spec) => humanizeSpecKey(spec, cells))
+            .join('; ')}
           {row.fragile_specs.length > 3
             ? ` (+${row.fragile_specs.length - 3} more)`
             : ''}

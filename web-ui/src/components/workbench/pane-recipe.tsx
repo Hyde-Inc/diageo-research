@@ -441,10 +441,10 @@ function FalsifiersList({
               : 'border-emerald-200 bg-emerald-50 text-emerald-700';
         const badgeLabel =
           status === 'triggered'
-            ? 'triggered'
+            ? 'TRIGGERED'
             : status === 'unevaluated'
-              ? 'un-evaluable'
-              : 'not triggered';
+              ? 'UN-EVALUABLE'
+              : 'NOT TRIGGERED';
         return (
           <div
             key={i}

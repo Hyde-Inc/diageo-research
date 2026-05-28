@@ -278,12 +278,19 @@ function DecisionBody({
           Scope
         </h2>
         <div className="mt-2 grid gap-2 text-sm text-slate-700">
-          <div>
-            Study:{' '}
-            <span className="font-medium text-slate-950">
-              {studyLabel ?? scope.study_id ?? '—'}
-            </span>
-          </div>
+          {/* For MBP-scoped decisions the planning context is already
+              spelled out in the body line ("Committed by … in
+              <mbp_name · must_do · driver>"). The study row repeats the
+              raw study slug (e.g. `pricing_pressure_na`), so we hide it
+              for MBPs and only show study scope when there is no MBP. */}
+          {!record.mbp ? (
+            <div>
+              Study:{' '}
+              <span className="font-medium text-slate-950">
+                {studyLabel ?? scope.study_id ?? '—'}
+              </span>
+            </div>
+          ) : null}
           {driverId ? (
             <div>
               Growth driver:{' '}
@@ -386,7 +393,7 @@ function CounterfactualCard({ cfId, row }: { cfId: string; row: CfRow | undefine
             {title}
           </h3>
           {promptSlug ? (
-            <span className="mt-1 inline-flex w-fit items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-slate-500">
+            <span className="mt-1 inline-flex w-fit items-center font-mono text-[10px] lowercase tracking-tight text-slate-400">
               {promptSlug}
             </span>
           ) : null}

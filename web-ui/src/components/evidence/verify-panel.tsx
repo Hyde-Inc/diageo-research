@@ -108,7 +108,7 @@ export function VerifyPanel({
           detail={
             agree.total <= 1
               ? 'Only one scenario has been run — add more scenarios to stress-test.'
-              : `Spawning more counter-scenarios will widen the test.`
+              : `Brainstorm counter-scenarios to widen the test.`
           }
           tone={robustnessTone}
         />
