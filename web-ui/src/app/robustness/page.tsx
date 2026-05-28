@@ -146,6 +146,9 @@ function RobustnessBody() {
         !studyId ? null : loadingCurve || !curve ? (
           <FocusCard tone="muted">
             <div className="grid gap-3">
+              <p className="text-[11px] italic leading-snug text-slate-500">
+                Loading the robustness chart…
+              </p>
               <div className="h-44 animate-pulse rounded-2xl bg-slate-200/70" />
               <div className="h-24 animate-pulse rounded-2xl bg-slate-200/70" />
             </div>

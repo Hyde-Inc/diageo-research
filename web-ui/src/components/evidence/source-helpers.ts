@@ -153,6 +153,20 @@ function groupKey(c: RunCitation): string | null {
   return null;
 }
 
+// ─── Technical-error detection ──────────────────────────────────────
+
+// DuckDB / SQL error-shape patterns that leak into citation snippets
+// or verification_notes. Anything matching this regex is treated as
+// stack-trace noise and routed behind a "Show technical detail"
+// disclosure on SourceCard rather than rendered as evidence body.
+const TECHNICAL_ERROR_PATTERN =
+  /(?:^|\s)(catalog|parser|binder|conversion|out of range|invalid input|http) error:|^re-?exec error|table\s+(?:with name\s+)?["'`]?\w+["'`]?\s+does not exist|0 rows but citation cites/i;
+
+export function isTechnicalErrorText(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return TECHNICAL_ERROR_PATTERN.test(text.trim());
+}
+
 // ─── Verifier flags ─────────────────────────────────────────────────
 
 const VERIFIER_FAILURE_NOTE = /^re-exec error|catalog error|table.*does not exist|0 rows but citation cites/i;

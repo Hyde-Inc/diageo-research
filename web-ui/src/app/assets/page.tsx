@@ -864,13 +864,18 @@ function KindBadge({ kind }: { kind: string }) {
 
 function AssetSkeleton() {
   return (
-    <div className="grid gap-3 md:grid-cols-2">
-      {Array.from({ length: 6 }).map((_, index) => (
-        <div
-          key={index}
-          className="h-44 animate-pulse rounded-2xl border border-slate-200 bg-slate-100"
-        />
-      ))}
+    <div className="grid gap-2">
+      <p className="text-[11px] italic leading-snug text-slate-500">
+        Loading assets…
+      </p>
+      <div className="grid gap-3 md:grid-cols-2">
+        {Array.from({ length: 6 }).map((_, index) => (
+          <div
+            key={index}
+            className="h-44 animate-pulse rounded-2xl border border-slate-200 bg-slate-100"
+          />
+        ))}
+      </div>
     </div>
   );
 }

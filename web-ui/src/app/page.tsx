@@ -296,7 +296,12 @@ function SectionGroup({
         </span>
       </header>
       {loading ? (
-        <div className="h-16 animate-pulse rounded-2xl bg-slate-200/70" />
+        <>
+          <p className="text-[11px] italic leading-snug text-slate-500">
+            Loading {title.toLowerCase()}…
+          </p>
+          <div className="h-16 animate-pulse rounded-2xl bg-slate-200/70" />
+        </>
       ) : count === 0 ? (
         <p className="text-[12px] leading-snug text-slate-500">{empty}</p>
       ) : (

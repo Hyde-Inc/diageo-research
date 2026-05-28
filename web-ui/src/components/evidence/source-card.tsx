@@ -29,6 +29,7 @@ import type { RunCitation } from '@/components/workbench/types';
 import { citationKind, hostFromUrl, sourceLabel } from './claim-utils';
 import {
   isGarbageSnippet,
+  isTechnicalErrorText,
   SNIPPET_UNAVAILABLE_FALLBACK,
   VERIFIER_BADGE_TOOLTIP,
 } from './source-helpers';
@@ -61,15 +62,32 @@ export function SourceCard({
 
   // For web docs, prefer the curated paragraph-derived sentence; the
   // raw scraped snippet is often binary / page chrome. SQL keeps its
-  // own renderer below.
+  // own renderer below. SQL queries that returned a DuckDB error
+  // (Catalog Error, Parser Error, etc.) leak the raw exception text in
+  // the snippet — hide those behind the technical-detail disclosure
+  // below so the body keeps a stakeholder-friendly fallback.
   const rawSnippet = citation.snippet?.trim() ?? '';
   const snippetIsGarbage = isGarbageSnippet(rawSnippet);
+  const snippetIsTechnicalError = isTechnicalErrorText(rawSnippet);
   const renderedSnippet =
     kind === 'web' && preferredSnippet
       ? preferredSnippet
       : kind === 'web' && snippetIsGarbage
         ? null
-        : rawSnippet || null;
+        : snippetIsTechnicalError
+          ? null
+          : rawSnippet || null;
+  const noteText = (citation.verification_note ?? '').trim();
+  const noteIsTechnicalError = isTechnicalErrorText(noteText);
+  const technicalDetail = [
+    snippetIsTechnicalError ? rawSnippet : null,
+    noteIsTechnicalError ? noteText : null,
+  ]
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+  const friendlyVerifierNote =
+    noteText && !noteIsTechnicalError ? noteText : null;
 
   return (
     <article className="grid gap-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition-colors hover:border-slate-300">
@@ -152,10 +170,20 @@ export function SourceCard({
             {verified ? 'Verified' : 'Unverified'}
           </span>
         ) : null}
-        {citation.verification_note ? (
+        {friendlyVerifierNote ? (
           <span className="text-[10px] text-slate-500">
-            {citation.verification_note}
+            {friendlyVerifierNote}
           </span>
+        ) : null}
+        {technicalDetail ? (
+          <details className="basis-full text-[10px] text-slate-500">
+            <summary className="cursor-pointer font-semibold uppercase tracking-wider text-slate-500 hover:text-slate-700">
+              Show technical detail
+            </summary>
+            <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 font-mono text-[10px] leading-snug text-slate-600">
+              {technicalDetail}
+            </pre>
+          </details>
         ) : null}
         {citation.url ? (
           <a

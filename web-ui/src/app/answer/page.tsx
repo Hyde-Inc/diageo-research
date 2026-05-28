@@ -52,6 +52,9 @@ export default function AnswerPage() {
         !studyId ? null : loadingDetail || loadingCurve ? (
           <FocusCard tone="muted">
             <div className="grid gap-3">
+              <p className="text-[11px] italic leading-snug text-slate-500">
+                Loading the executive answer…
+              </p>
               <div className="h-7 w-3/4 animate-pulse rounded-lg bg-slate-200" />
               <div className="h-4 w-1/2 animate-pulse rounded-full bg-slate-200" />
               <div className="h-4 w-2/3 animate-pulse rounded-full bg-slate-100" />
