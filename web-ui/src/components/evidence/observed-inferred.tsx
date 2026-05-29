@@ -279,7 +279,7 @@ export function ObservedInferredSplit({
                   href={withStudy(`/scenario/${row.cluster_id}`, studyId)}
                   className="text-[11px] font-semibold text-violet-700 underline-offset-2 hover:underline"
                 >
-                  Inspect the framings & re-run the spec curve →
+                  Inspect the framings that tested it →
                 </Link>
               ) : null}
             </div>
