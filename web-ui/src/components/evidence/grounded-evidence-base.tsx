@@ -59,6 +59,12 @@ export function GroundedEvidenceBase({
   const sources = dedupeByLabel(citations);
   const diageo = sources.filter((s) => s.scope.tier === 'diageo');
   const publicSrc = sources.filter((s) => s.scope.tier === 'public');
+  const checkable = sources.filter(
+    (s) => s.verification.status === 'verified',
+  ).length;
+  const attested = sources.filter(
+    (s) => s.verification.status === 'attested',
+  ).length;
 
   if (sources.length === 0) return null;
 
@@ -79,6 +85,20 @@ export function GroundedEvidenceBase({
           don&apos;t replace them.
         </p>
       </div>
+      {checkable + attested > 0 ? (
+        <p className="text-[11px] leading-snug text-slate-500">
+          Of these,{' '}
+          <span className="font-semibold text-emerald-700">
+            {checkable} {checkable === 1 ? 'is' : 'are'} checkable
+          </span>{' '}
+          (the verifier re-ran them) and{' '}
+          <span className="font-semibold text-indigo-700">
+            {attested} owner-attested
+          </span>{' '}
+          (taken on the owner&apos;s word). Each source carries its own badge
+          below.
+        </p>
+      ) : null}
 
       <TierBlock
         tone="diageo"

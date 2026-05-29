@@ -272,6 +272,13 @@ export default function EvidencePage({
     const text = paragraphMatch?.paragraph ?? row.representative;
     return extractCiteIds(text);
   }, [row, paragraphMatch]);
+  // The brief's own reasoning prose (the "Verdict" / rationale section),
+  // surfaced as the middle "judgment" step of the observed→inferred leap
+  // so the jump from measured numbers to the call is legible, not hidden.
+  const reasoning = useMemo(
+    () => extractReasoning(finalLoad.value?.markdown),
+    [finalLoad.value],
+  );
   const sortedCitations = useMemo(() => {
     if (!citations.length || !referencedIds.length) return citations;
     const order = new Map(referencedIds.map((cite_id, i) => [cite_id, i]));
@@ -391,6 +398,7 @@ export default function EvidencePage({
               row={row}
               referencedIds={referencedIds}
               studyId={studyId}
+              reasoning={reasoning}
             />
           ) : null}
 
@@ -889,6 +897,30 @@ function ProvenanceLine({
       ) : null}
     </div>
   );
+}
+
+// Pull the brief's rationale prose — the paragraph under a "Verdict" /
+// "Why" / "Rationale" heading — so the observed→inferred panel can show
+// the actual reasoning that links the measured numbers to the call,
+// rather than asserting "reasoned from S5/S6". Returns the first one or
+// two sentences (capped), or null when the brief has no such section.
+function extractReasoning(markdown: string | undefined): string | null {
+  if (!markdown) return null;
+  const m = markdown.match(
+    /^#{1,4}\s*(?:Verdict|Why|Rationale|Reasoning|Analysis)[^\n]*\n+([\s\S]*?)(?=\n#{1,4}\s|$)/im,
+  );
+  if (!m) return null;
+  const body = m[1]
+    .replace(/\*\*/g, '')
+    .replace(/\[(S|B|Q)\d+\]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (body.length < 24) return null;
+  // Keep the first 1–2 sentences so the judgment step stays scannable.
+  const sentences = body.match(/[^.!?]+[.!?]+/g) ?? [body];
+  let out = sentences[0].trim();
+  if (out.length < 90 && sentences[1]) out = `${out} ${sentences[1].trim()}`;
+  return out.length > 260 ? `${out.slice(0, 257).trimEnd()}…` : out;
 }
 
 function extractLeadSentence(res: RunFinal): string | null {

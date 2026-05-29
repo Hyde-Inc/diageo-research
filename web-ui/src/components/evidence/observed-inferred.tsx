@@ -23,6 +23,7 @@
 
 import Link from 'next/link';
 import {
+  ArrowDown,
   CheckCircle2,
   Database,
   Eye,
@@ -34,7 +35,6 @@ import {
 import type { RunCitation, SpecCurveRow } from '@/components/workbench/types';
 import { withStudy } from '@/components/study/use-study';
 import { sourceLabel } from './claim-utils';
-import { classifyCitationTier } from './source-tier';
 import {
   cleanObservedValue,
   groupCitations,
@@ -147,19 +147,25 @@ export function ObservedInferredSplit({
   row,
   referencedIds,
   studyId,
+  reasoning,
 }: {
   claim: string;
   citations: RunCitation[];
   row: SpecCurveRow | null;
   referencedIds: string[];
   studyId: string | null;
+  reasoning?: string | null;
 }) {
   const groups = groupCitations(citations);
   const sources = groups.map((g) => g.primary);
   const detailed = sources.slice(0, MAX_DETAILED);
-  const diageoCount = citations.filter(
-    (c) => classifyCitationTier(c).tier === 'diageo',
-  ).length;
+  // Honest groundedness split: how many of these sources the verifier
+  // could actually re-run vs. how many are taken on the owner's word.
+  // Lumping them into one "N sources" count oversells the evidence.
+  const verifs = sources.map((c) => summarizeVerification(c));
+  const checkable = verifs.filter((v) => v.status === 'verified').length;
+  const attested = verifs.filter((v) => v.status === 'attested').length;
+  const unverified = verifs.filter((v) => v.status === 'unverified').length;
 
   const total = row
     ? row.n_agree + row.n_weaker + row.n_flips + row.n_missing
@@ -171,6 +177,11 @@ export function ObservedInferredSplit({
   const cited = referencedIds.filter((id) =>
     citations.some((c) => c.cite_id === id),
   );
+  // The cited inputs the conclusion is built on, with the values they
+  // actually measured — the left-hand end of the reasoning leap.
+  const citedSources = cited
+    .map((id) => citations.find((c) => c.cite_id === id))
+    .filter((c): c is RunCitation => Boolean(c));
 
   return (
     <div
@@ -198,10 +209,27 @@ export function ObservedInferredSplit({
             <>
               <p className="text-[12px] leading-snug text-slate-700">
                 {sources.length} cited{' '}
-                {sources.length === 1 ? 'source' : 'sources'} ({diageoCount}{' '}
-                Diageo-owned) — each shown with the query or document, the
-                value measured, and whether the brief&apos;s verifier could
-                re-run it.
+                {sources.length === 1 ? 'source' : 'sources'}, but they
+                don&apos;t carry equal weight:{' '}
+                <span className="font-semibold text-emerald-700">
+                  {checkable} checkable
+                </span>{' '}
+                — the verifier re-ran the SQL or re-extracted the numbers —
+                and{' '}
+                <span className="font-semibold text-indigo-700">
+                  {attested} owner-attested
+                </span>
+                , internal Diageo docs with no public URL to re-run, taken on
+                the owner&apos;s word.
+                {unverified > 0 ? (
+                  <>
+                    {' '}
+                    <span className="font-semibold text-orange-700">
+                      {unverified} failed
+                    </span>{' '}
+                    re-verification.
+                  </>
+                ) : null}
               </p>
               <ul className="grid gap-1.5">
                 {detailed.map((c) => (
@@ -230,28 +258,12 @@ export function ObservedInferredSplit({
               Inferred by grounded simulation
             </span>
           </header>
-          <p className="text-[12px] leading-snug text-slate-800">
-            &ldquo;{claim}&rdquo;
-          </p>
-          <p className="text-[11px] leading-snug text-slate-600">
-            {cited.length > 0 ? (
-              <>
-                Reasoned from the observed inputs it cites —{' '}
-                <span className="font-mono text-[10px] text-slate-700">
-                  {cited.join(' ')}
-                </span>{' '}
-                on the left. It is a conclusion drawn from those measurements,
-                not itself a measured number.
-              </>
-            ) : (
-              <>
-                Reasoned from the {sources.length} observed{' '}
-                {sources.length === 1 ? 'source' : 'sources'} on the left. It
-                is a conclusion drawn from those measurements, not itself a
-                measured number.
-              </>
-            )}
-          </p>
+          <ReasoningLeap
+            claim={claim}
+            citedSources={citedSources}
+            sourceCount={sources.length}
+            reasoning={reasoning ?? null}
+          />
           {total > 0 ? (
             <div className="grid gap-1.5 rounded-xl border border-violet-100 bg-white/70 px-3 py-2">
               <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-700">
@@ -291,6 +303,119 @@ export function ObservedInferredSplit({
           )}
         </section>
       </div>
+    </div>
+  );
+}
+
+// ── Reasoning leap ───────────────────────────────────────────────────
+//
+// The owner's complaint: the inferred side never shows HOW you get from
+// "crown_peach_index=128" to "make it the default pour". This makes the
+// jump explicit and honest in three steps — the measured facts it starts
+// from, the judgment it applies (which is NOT itself a measured number),
+// and the conclusion — so the reasoning is challengeable, not hidden
+// behind "reasoned from S5/S6".
+function ReasoningLeap({
+  claim,
+  citedSources,
+  sourceCount,
+  reasoning,
+}: {
+  claim: string;
+  citedSources: RunCitation[];
+  sourceCount: number;
+  reasoning: string | null;
+}) {
+  return (
+    <div className="grid gap-1">
+      <LeapStep label="Starts from — checkable facts" tone="fact">
+        {citedSources.length > 0 ? (
+          <ul className="grid gap-1">
+            {citedSources.map((c) => {
+              const value = cleanObservedValue(c);
+              return (
+                <li key={c.cite_id} className="text-[11px] leading-snug text-slate-700">
+                  <span className="font-mono text-[10px] font-semibold text-slate-500">
+                    [{c.cite_id}]
+                  </span>{' '}
+                  <span className="font-medium text-slate-800">
+                    {sourceLabel(c)}
+                  </span>
+                  {value ? <> — {value}</> : null}
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="text-[11px] leading-snug text-slate-600">
+            the {sourceCount} observed{' '}
+            {sourceCount === 1 ? 'source' : 'sources'} on the left.
+          </p>
+        )}
+      </LeapStep>
+      <LeapConnector />
+      <LeapStep label="The leap — a judgment, not a measurement" tone="judgment">
+        <p className="text-[11px] leading-snug text-slate-700">
+          {reasoning ? (
+            reasoning
+          ) : (
+            <>
+              The panel reads those measurements as the signal behind the call,
+              then keeps the call only because it survives the framings it was
+              stress-tested across (below).
+            </>
+          )}{' '}
+          <span className="text-slate-500">
+            This middle step is reasoning — it is not itself a re-runnable
+            number, so it&apos;s where judgment enters.
+          </span>
+        </p>
+      </LeapStep>
+      <LeapConnector />
+      <LeapStep label="Concludes" tone="conclusion">
+        <p className="text-[12px] font-medium leading-snug text-slate-900">
+          &ldquo;{claim}&rdquo;
+        </p>
+      </LeapStep>
+    </div>
+  );
+}
+
+function LeapStep({
+  label,
+  tone,
+  children,
+}: {
+  label: string;
+  tone: 'fact' | 'judgment' | 'conclusion';
+  children: React.ReactNode;
+}) {
+  const accent =
+    tone === 'fact'
+      ? 'border-emerald-200 bg-emerald-50/70'
+      : tone === 'judgment'
+        ? 'border-amber-200 bg-amber-50/70'
+        : 'border-violet-200 bg-white';
+  const tag =
+    tone === 'fact'
+      ? 'text-emerald-700'
+      : tone === 'judgment'
+        ? 'text-amber-700'
+        : 'text-violet-700';
+  return (
+    <div className={`grid gap-1 rounded-xl border px-3 py-2 ${accent}`}>
+      <span className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${tag}`}>
+        {label}
+      </span>
+      {children}
+    </div>
+  );
+}
+
+function LeapConnector() {
+  return (
+    <div className="grid place-items-center text-slate-300">
+      <ArrowDown className="h-3 w-3" />
     </div>
   );
 }

@@ -406,6 +406,13 @@ function ChartCard({
   currentRow: SpecCurveRow | null;
 }) {
   const summary = useMemo(() => summarise(scenarios), [scenarios]);
+  // The either/or choices that define a framing, read straight off the
+  // columns on screen: one row per dimension, with the values it takes.
+  // This is what makes "8 framings = combinations of choices" legible.
+  const choices = useMemo(
+    () => buildChoices(dimensions, scenarios),
+    [dimensions, scenarios],
+  );
   // The single most useful read of the chart: of the framings that do NOT
   // hold, which analytic choices do they all share? That's the load-bearing
   // assumption. Derived from the cells — only shown when something is fragile.
@@ -428,28 +435,35 @@ function ChartCard({
   }, [scenarios, dimensions]);
   return (
     <FocusCard>
-      <header className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+      <header className="mb-3 flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold tracking-tight text-slate-950">
             {currentRow
               ? truncateSentence(cleanRepresentative(currentRow.representative), 140)
               : 'Pick a recommendation'}
           </h3>
-          <p className="mt-1 text-[12px] leading-snug text-slate-600">
-            {scenarios.length === 0
-              ? 'No scenarios match the current filter.'
-              : `${summary.holds} hold · ${summary.weakens} weaken · ${summary.flips} flip${summary.missing > 0 ? ` · ${summary.missing} no read` : ''}.`}
-          </p>
+          {scenarios.length > 0 ? (
+            <p className="mt-1 text-[13px] font-medium leading-snug text-slate-800">
+              {verdictSentence(summary, scenarios.length)}
+            </p>
+          ) : (
+            <p className="mt-1 text-[12px] leading-snug text-slate-600">
+              No scenarios match the current filter.
+            </p>
+          )}
         </div>
         {currentRow ? (
           <Badge
             variant="outline"
-            className="border-slate-200 bg-white text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600"
+            className="shrink-0 border-slate-200 bg-white text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600"
           >
             Robustness {(currentRow.robustness * 100).toFixed(0)}%
           </Badge>
         ) : null}
       </header>
+      {scenarios.length > 0 && choices.length > 0 ? (
+        <HowToRead choices={choices} columns={scenarios.length} />
+      ) : null}
       <SpecCurveChart
         scenarios={scenarios}
         dimensions={dimensions}
@@ -478,14 +492,111 @@ function ChartCard({
       <div className="mt-3 grid gap-2">
         <ChartLegend />
         <p className="text-[11px] leading-snug text-slate-500">
-          Each column is one defensible way to frame the question. The marker
-          shows whether the recommendation holds, weakens, or flips under that
-          framing; the matrix below shows the analytic choices that define it.
-          Click a column for its detail.
+          Click any column to see that framing&apos;s exact choices and the
+          brief it produced.
         </p>
       </div>
     </FocusCard>
   );
+}
+
+// ── Teaching strip: what a framing is, built from the columns on screen ──
+//
+// The chart assumes the reader knows what a "framing" is. They don't.
+// This strip defines it by example: each column is one pick from each
+// either/or choice, and the choices multiply out to the columns shown.
+function HowToRead({
+  choices,
+  columns,
+}: {
+  choices: Array<{ dim: string; values: string[] }>;
+  columns: number;
+}) {
+  const product = choices.reduce((acc, c) => acc * c.values.length, 1);
+  const equation = choices.map((c) => c.values.length).join(' × ');
+  const matchesGrid = product === columns;
+  return (
+    <div className="mb-3 grid gap-2 rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3">
+      <p className="text-[12px] leading-snug text-slate-700">
+        <span className="font-semibold text-slate-900">How to read this. </span>
+        Each column is one <span className="font-semibold">framing</span> — a
+        defensible way to set the analysis up. You build one by picking a side
+        of each either/or choice:
+      </p>
+      <ul className="grid gap-1">
+        {choices.map((c) => (
+          <li
+            key={c.dim}
+            className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[12px]"
+          >
+            <span className="w-28 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+              {humaniseDimension(c.dim)}
+            </span>
+            <span className="text-slate-800">
+              {c.values.map((v, i) => (
+                <span key={v}>
+                  <span className="font-semibold text-slate-900">
+                    {humaniseValue(v)}
+                  </span>
+                  {i < c.values.length - 1 ? (
+                    <span className="text-slate-400"> or </span>
+                  ) : null}
+                </span>
+              ))}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="text-[11px] leading-snug text-slate-500">
+        {matchesGrid ? (
+          <>
+            Every combination = <span className="font-semibold text-slate-700">{equation} = {product} framings</span>, the {columns} columns below.{' '}
+          </>
+        ) : (
+          <>The combinations make up the {columns} columns below. </>
+        )}
+        If the recommendation only wins under one setup it&apos;s a fluke; if it
+        survives across all of them, it&apos;s trustworthy.
+      </p>
+    </div>
+  );
+}
+
+// Read the either/or choices off the columns currently on screen: one
+// entry per dimension, with the distinct values it takes, in first-seen
+// order so the strip matches the matrix rows.
+function buildChoices(
+  dimensions: string[],
+  scenarios: ScenarioDatum[],
+): Array<{ dim: string; values: string[] }> {
+  return dimensions
+    .map((dim) => {
+      const values: string[] = [];
+      for (const s of scenarios) {
+        const v = s.cell.axes[dim];
+        if (v && !values.includes(v)) values.push(v);
+      }
+      return { dim, values };
+    })
+    .filter((c) => c.values.length > 0);
+}
+
+// Plain-English verdict that leads the card: how many framings hold, and
+// whether that makes the recommendation robust. Derived, so the live
+// study (all hold) never implies fake fragility.
+function verdictSentence(
+  summary: { holds: number; weakens: number; flips: number; missing: number },
+  total: number,
+): string {
+  const { holds, weakens, flips } = summary;
+  const fragile = weakens + flips;
+  if (holds === total) {
+    return `Holds in all ${total} framings — no defensible setup tested reverses it.`;
+  }
+  if (holds / total >= 0.6) {
+    return `Holds in ${holds} of ${total} framings — it survives most defensible setups. The ${fragile} that don't are flagged below.`;
+  }
+  return `Holds in only ${holds} of ${total} framings — the answer is fragile; ${fragile} setup${fragile === 1 ? '' : 's'} weaken or flip it.`;
 }
 
 function DetailPanel({

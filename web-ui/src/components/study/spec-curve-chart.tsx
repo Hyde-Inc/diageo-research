@@ -444,10 +444,10 @@ function abbrev(raw: string): string {
 
 export function ChartLegend({ className }: { className?: string }) {
   const items: Array<{ status: ScenarioStatus; copy: string }> = [
-    { status: 'agree', copy: 'Holds — the recommendation survives this framing' },
-    { status: 'weaker', copy: 'Weakens (fragile) — softens or hedges' },
-    { status: 'flips', copy: 'Flips (fragile) — the framing reverses it' },
-    { status: 'missing', copy: 'No read — no directive from this framing yet' },
+    { status: 'agree', copy: 'Holds — the same answer still wins' },
+    { status: 'weaker', copy: 'Weakens — same answer, but softer / hedged' },
+    { status: 'flips', copy: 'Flips — the answer reverses' },
+    { status: 'missing', copy: 'No read — this framing gave no directive' },
   ];
   return (
     <ul
