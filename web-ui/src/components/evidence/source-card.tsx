@@ -27,6 +27,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { RunCitation } from '@/components/workbench/types';
 import { citationKind, hostFromUrl, sourceLabel } from './claim-utils';
+import { classifyCitationTier, tierBadgeClass } from './source-tier';
 import {
   isGarbageSnippet,
   isTechnicalErrorText,
@@ -59,6 +60,7 @@ export function SourceCard({
   const label = sourceLabel(citation);
   const host = hostFromUrl(citation.url);
   const verified = citation.verified;
+  const tier = classifyCitationTier(citation);
 
   // For web docs, prefer the curated paragraph-derived sentence; the
   // raw scraped snippet is often binary / page chrome. SQL keeps its
@@ -93,6 +95,16 @@ export function SourceCard({
     <article className="grid gap-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition-colors hover:border-slate-300">
       <header className="flex flex-wrap items-start gap-2">
         <KindChip kind={kind} />
+        <Badge
+          variant="outline"
+          className={cn(
+            'shrink-0 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+            tierBadgeClass(tier.tier),
+          )}
+          title={`Speaks to ${tier.speaksTo} Can't speak to ${tier.cantSpeakTo}`}
+        >
+          {tier.tierLabel}
+        </Badge>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-slate-900">
             {label}

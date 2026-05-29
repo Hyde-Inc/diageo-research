@@ -20,6 +20,7 @@ import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { useStudyData, withStudy } from '@/components/study/use-study';
+import { classifyPointerTier } from '@/components/evidence/source-tier';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import {
@@ -204,7 +205,7 @@ const GROWTH_DRIVERS: GrowthDriver[] = [
       'Co-branded grill content drives stronger serve recall than standalone ads.',
     ],
     fragileAssumption:
-      'Crown Peach trial in tailgate occasions recruits new buyers instead of cannibalizing flagship Crown.',
+      'If competitor tailgate spend in TX/WI rises 20% or more year on year, Crown Peach’s structural tailgate advantage compresses 8–14 points.',
     illustrative: false,
     assetKeyEncoded: null,
   },
@@ -673,11 +674,7 @@ function ArgumentColumn({
               No evidence pointers attached yet.
             </p>
           ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {driver.evidence.map((item) => (
-                <EvidenceChip key={item} pointer={item} studyId={studyId} />
-              ))}
-            </div>
+            <GroundedEvidence evidence={driver.evidence} studyId={studyId} />
           )}
         </Block>
 
@@ -787,6 +784,81 @@ function Block({
       ) : null}
       {children}
     </section>
+  );
+}
+
+// Grounded evidence base for a driver — splits its evidence pointers
+// into Diageo-owned (primary) vs Public (enriching), mirroring the
+// /evidence source tiering so the planner sees the simulation starts
+// from approved internal evidence.
+function GroundedEvidence({
+  evidence,
+  studyId,
+}: {
+  evidence: string[];
+  studyId: string | null;
+}) {
+  const diageo = evidence.filter(
+    (p) => classifyPointerTier(p).tier === 'diageo',
+  );
+  const publicPtrs = evidence.filter(
+    (p) => classifyPointerTier(p).tier === 'public',
+  );
+  return (
+    <div className="grid gap-2">
+      <EvidenceTierRow
+        label="Diageo-owned"
+        tone="diageo"
+        pointers={diageo}
+        studyId={studyId}
+        empty="No Diageo-owned source attached yet."
+      />
+      <EvidenceTierRow
+        label="Public"
+        tone="public"
+        pointers={publicPtrs}
+        studyId={studyId}
+        empty="No public source attached yet."
+      />
+    </div>
+  );
+}
+
+function EvidenceTierRow({
+  label,
+  tone,
+  pointers,
+  studyId,
+  empty,
+}: {
+  label: string;
+  tone: 'diageo' | 'public';
+  pointers: string[];
+  studyId: string | null;
+  empty: string;
+}) {
+  return (
+    <div className="grid gap-1">
+      <span
+        className={cn(
+          'inline-flex w-fit items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+          tone === 'diageo'
+            ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+            : 'border-slate-200 bg-slate-50 text-slate-600',
+        )}
+      >
+        {label}
+      </span>
+      {pointers.length === 0 ? (
+        <p className="text-[11px] italic text-slate-400">{empty}</p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {pointers.map((item) => (
+            <EvidenceChip key={item} pointer={item} studyId={studyId} />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

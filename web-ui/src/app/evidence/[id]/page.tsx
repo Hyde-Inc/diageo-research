@@ -67,6 +67,8 @@ import {
   unlabeledSourceFallback,
 } from '@/components/evidence/claim-utils';
 import { CounterScenarioPicker } from '@/components/evidence/counter-scenario-picker';
+import { GroundedEvidenceBase } from '@/components/evidence/grounded-evidence-base';
+import { ObservedInferredSplit } from '@/components/evidence/observed-inferred';
 import { SourceCard } from '@/components/evidence/source-card';
 import {
   extractVerifierFlags,
@@ -381,6 +383,14 @@ export default function EvidencePage({
             hasSources={summary.total > 0}
             loadingSources={finalLoad.loading}
           />
+
+          {!finalLoad.loading && !finalLoad.error ? (
+            <ObservedInferredSplit
+              claim={claimTitle}
+              citations={citations}
+              row={row}
+            />
+          ) : null}
 
           <Step
             number={1}
@@ -970,6 +980,10 @@ function SourcesBody({
       </p>
 
       <VerifierFlags flags={verifierFlags} />
+
+      <GroundedEvidenceBase
+        citations={[...referencedCitations, ...otherCitations]}
+      />
 
       {totalCited === 0 ? (
         <p className="text-[13px] text-slate-600">
