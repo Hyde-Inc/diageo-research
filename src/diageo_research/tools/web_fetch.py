@@ -11,6 +11,7 @@ Returns the same `{url, title, text}` shape as `browser.browse` so the
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any
@@ -21,6 +22,13 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT_S = 20
+# One retry with a short backoff absorbs transient connection blips on the
+# working keyless endpoints (api.bls.gov, data.bls.gov, ttb.gov) during a
+# concurrent multi-cell run. It deliberately does NOT rescue hard blocks like
+# www.bls.gov (instant 403) or fred.stlouisfed.org (hangs past 60s) — those are
+# handled by steering the model to the keyless APIs via the tool descriptions.
+_MAX_ATTEMPTS = 2
+_RETRY_BACKOFF_S = 0.5
 _MAX_TEXT_CHARS = 1200
 _USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -55,25 +63,31 @@ async def fetch(
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
     }
-    try:
-        async with httpx.AsyncClient(
-            timeout=_DEFAULT_TIMEOUT_S,
-            follow_redirects=True,
-            headers=headers,
-        ) as client:
-            resp = await client.get(url)
-    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as e:
-        logger.warning("web_fetch: network error url=%r err=%s", url, e)
-        _record_failure(failed_urls, url, f"network_error: {type(e).__name__}")
-        return []
-    except Exception as e:  # noqa: BLE001
-        # SSLError lives at httpx.SSLError (a re-export). Catching it
-        # alongside the catch-all gives the same cache treatment but
-        # surfaces a friendlier reason string for the model.
-        reason = "ssl_error" if "SSL" in type(e).__name__.upper() else f"error: {type(e).__name__}"
-        logger.warning("web_fetch: error url=%r err=%s", url, e)
-        _record_failure(failed_urls, url, reason)
-        return []
+    resp = None
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            async with httpx.AsyncClient(
+                timeout=_DEFAULT_TIMEOUT_S,
+                follow_redirects=True,
+                headers=headers,
+            ) as client:
+                resp = await client.get(url)
+            break
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as e:
+            if attempt + 1 < _MAX_ATTEMPTS:
+                await asyncio.sleep(_RETRY_BACKOFF_S)
+                continue
+            logger.warning("web_fetch: network error url=%r err=%s", url, e)
+            _record_failure(failed_urls, url, f"network_error: {type(e).__name__}")
+            return []
+        except Exception as e:  # noqa: BLE001
+            # SSLError lives at httpx.SSLError (a re-export). Catching it
+            # alongside the catch-all gives the same cache treatment but
+            # surfaces a friendlier reason string for the model.
+            reason = "ssl_error" if "SSL" in type(e).__name__.upper() else f"error: {type(e).__name__}"
+            logger.warning("web_fetch: error url=%r err=%s", url, e)
+            _record_failure(failed_urls, url, reason)
+            return []
 
     if resp.status_code >= 400:
         logger.warning("web_fetch: status=%d url=%r", resp.status_code, url)
@@ -232,12 +246,24 @@ __all__ = ["fetch"]
 TOOL_SPEC: dict[str, Any] = {
     "name": "web_fetch",
     "description": (
-        "Fetch a SINGLE known URL and return its title + extracted text. Use this when "
-        "you already know exactly which page to read (Wikipedia article, specific FRED "
-        "series page, TTB statistical release URL, an article you saw in earlier search). "
-        "Faster and cheaper than `web_browse`. The returned snippet gets a stable `cite_id` "
-        "like `B7`; you MUST inline `[B7]` in every sentence of your final answer that "
-        "draws on it."
+        "Fetch a SINGLE known URL and return its title + extracted text (JSON API "
+        "responses are returned as compact text you can read numbers straight off). "
+        "Faster and cheaper than `web_browse`. The returned snippet gets a stable "
+        "`cite_id` like `B7`; you MUST inline `[B7]` in every sentence of your final "
+        "answer that draws on it.\n"
+        "PREFER these keyless endpoints — they reliably return real data from this "
+        "environment:\n"
+        "• BLS series as JSON (NO key needed): "
+        "https://api.bls.gov/publicAPI/v2/timeseries/data/<SERIES_ID> — e.g. CUUR0000SA0 "
+        "(CPI all items), CUUR0000SAF (food), CUUR0000SEFW (distilled spirits at home), "
+        "CUUR0000SEFV (alcohol away from home). Also https://data.bls.gov/timeseries/<SERIES_ID>.\n"
+        "• TTB: https://www.ttb.gov/spirits/statistics (landing pages only — do NOT guess "
+        "dated PDF paths, they 404).\n"
+        "• CDC/NCHS NHANES, pubmed/ncbi, and Wikipedia all work.\n"
+        "AVOID — these are blocked or hang from here and will waste your turn: "
+        "www.bls.gov HTML pages (return HTTP 403), fred.stlouisfed.org (times out), and "
+        "guessed PDF/article URLs. For any quantitative claim you cannot fetch, use "
+        "`duckdb_query`."
     ),
     "input_schema": {
         "type": "object",

@@ -291,9 +291,13 @@ class ToolRegistry:
                         "`web_browse` is disabled for this run (the unattended "
                         "browser harness is unreliable against Google/.gov in "
                         "headless and every step is a paid Sonnet call). Use "
-                        "`web_fetch` against a specific authoritative URL "
-                        "(TTB.gov, BLS.gov, BEA.gov, FRED, Wikipedia, etc.), or "
-                        "fall back to `duckdb_query` for any quantitative claim."
+                        "`web_fetch` against a keyless endpoint that works from "
+                        "here: the BLS public API "
+                        "(https://api.bls.gov/publicAPI/v2/timeseries/data/<SERIES_ID>, "
+                        "e.g. CUUR0000SA0), data.bls.gov, www.ttb.gov/spirits/statistics, "
+                        "CDC/NCHS, or Wikipedia. AVOID www.bls.gov HTML (403) and "
+                        "fred.stlouisfed.org (timeout). Or fall back to `duckdb_query` "
+                        "for any quantitative claim."
                     ),
                 }
             if self._browse_calls_total >= self._max_browses_per_cell:
@@ -450,9 +454,13 @@ class ToolRegistry:
                     "snippets": [],
                     "query": url,
                     "hint": (
-                        f"URL {url!r} failed with `{failure_reason}`. Pick a "
-                        f"different domain or try `duckdb_query`. This URL is "
-                        f"now cached as failed for the rest of this cell."
+                        f"URL {url!r} failed with `{failure_reason}`. This URL is "
+                        f"now cached as failed for the rest of this cell. Try a "
+                        f"keyless endpoint that works from here instead: the BLS "
+                        f"public API "
+                        f"(https://api.bls.gov/publicAPI/v2/timeseries/data/<SERIES_ID>), "
+                        f"data.bls.gov, www.ttb.gov/spirits/statistics, CDC/NCHS, or "
+                        f"`duckdb_query`. Avoid www.bls.gov HTML and fred.stlouisfed.org."
                     ),
                 }
             payload = self._assign_browser_snippets(raw, url)
