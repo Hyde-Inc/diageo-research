@@ -406,6 +406,26 @@ function ChartCard({
   currentRow: SpecCurveRow | null;
 }) {
   const summary = useMemo(() => summarise(scenarios), [scenarios]);
+  // The single most useful read of the chart: of the framings that do NOT
+  // hold, which analytic choices do they all share? That's the load-bearing
+  // assumption. Derived from the cells — only shown when something is fragile.
+  const fragileInsight = useMemo(() => {
+    const fragile = scenarios.filter(
+      (s) => s.status === 'weaker' || s.status === 'flips',
+    );
+    if (fragile.length === 0) return null;
+    const shared = dimensions
+      .map((dim) => {
+        const values = new Set(
+          fragile.map((s) => s.cell.axes[dim]).filter(Boolean),
+        );
+        return values.size === 1
+          ? { dim, value: Array.from(values)[0] as string }
+          : null;
+      })
+      .filter((x): x is { dim: string; value: string } => x !== null);
+    return { count: fragile.length, shared };
+  }, [scenarios, dimensions]);
   return (
     <FocusCard>
       <header className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
@@ -437,12 +457,31 @@ function ChartCard({
         onSelectCell={onSelectCell}
         ariaLabel="Robustness curve: scenarios on x, effect on y, dimensions in the matrix below."
       />
+      {fragileInsight && fragileInsight.shared.length > 0 ? (
+        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/70 px-3.5 py-2.5">
+          <p className="text-[12px] leading-snug text-amber-900">
+            <span className="font-semibold">Where it breaks — </span>
+            the {fragileInsight.count} framing
+            {fragileInsight.count === 1 ? '' : 's'} that don&apos;t hold all share{' '}
+            {fragileInsight.shared.map((t, idx) => (
+              <span key={t.dim}>
+                <span className="font-semibold">
+                  {humaniseValue(t.value)} {humaniseDimension(t.dim)}
+                </span>
+                {idx < fragileInsight.shared.length - 1 ? ' + ' : ''}
+              </span>
+            ))}
+            . Every other framing holds.
+          </p>
+        </div>
+      ) : null}
       <div className="mt-3 grid gap-2">
         <ChartLegend />
         <p className="text-[11px] leading-snug text-slate-500">
-          “Holds” means the framing supports the recommendation. “Weakens”
-          softens or hedges it. “Flips” reverses it. Click a column to see
-          its assumptions and open the scenario.
+          Each column is one defensible way to frame the question. The marker
+          shows whether the recommendation holds, weakens, or flips under that
+          framing; the matrix below shows the analytic choices that define it.
+          Click a column for its detail.
         </p>
       </div>
     </FocusCard>
