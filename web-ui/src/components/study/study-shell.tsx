@@ -43,6 +43,7 @@ export function StudyShell({
   leftLabel,
   rightLabel,
   mainLabel,
+  banner,
   children,
 }: {
   data: StudyData;
@@ -70,6 +71,8 @@ export function StudyShell({
   leftLabel?: string;
   mainLabel?: string;
   rightLabel?: string;
+  /** Full-width strip above the three-column grid. */
+  banner?: React.ReactNode;
   children?: React.ReactNode;
 }) {
   const hasSlots = Boolean(left || main || right);
@@ -148,7 +151,9 @@ export function StudyShell({
             </EmptyState>
           ) : null}
           {hasSlots ? (
-            <ThreeColumn
+            <div className="grid gap-4">
+              {banner}
+              <ThreeColumn
               left={left}
               main={main}
               right={right}
@@ -156,6 +161,7 @@ export function StudyShell({
               mainLabel={mainLabel}
               rightLabel={rightLabel}
             />
+            </div>
           ) : (
             children
           )}

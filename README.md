@@ -292,8 +292,7 @@ Consumption (SDMX dataflow renamed), NHTSA FARS CrashAPI (503), INEGI ENIGH
 Honest list of things the workbench narrative implies but the repo does not
 ship today:
 
-- **Frontend rebuild.** `src/diageo_research/web/static/index.html` is the
-  current single-file UI. The richer FE lives in a separate repo.
+- **Frontend rebuild.** The product UI lives in [`web-ui/`](web-ui/) (Next.js on `:3011` via [`deploy.yaml`](deploy.yaml)). [`src/diageo_research/web/static/index.html`](src/diageo_research/web/static/index.html) remains a deprecated dev console for SSE debugging only.
 - **Prefect ↔ Dagster abstraction.** We picked Dagster (see below); there is
   no portable interface between orchestrators today.
 - **Recipe / template library.** `samples/` has two YAML specs

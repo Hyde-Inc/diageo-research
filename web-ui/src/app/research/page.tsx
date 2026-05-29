@@ -21,12 +21,14 @@
  */
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
   Beaker,
+  ChevronDown,
   Compass,
   HelpCircle,
+  Lightbulb,
   ListPlus,
   MessageCircle,
   PencilLine,
@@ -34,43 +36,45 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { cleanRepresentative } from '@/components/evidence/claim-utils';
 import { ConfidencePanel } from '@/components/study/confidence-panel';
+import {
+  findingsFromApi,
+  type Finding,
+} from '@/components/study/finding-types';
+import { LiveRunConsole } from '@/components/study/live-run-console';
+import { RobustnessPanel } from '@/components/study/robustness-panel';
 import { FocusCard, StudyShell } from '@/components/study/study-shell';
 import { useStudyData, withStudy } from '@/components/study/use-study';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import {
-  wb,
-  type ResearchSummary,
-  type SpecCurveRow,
-  type TopRiskCard,
-} from '@/components/workbench/types';
+import { cleanRepresentative } from '@/components/evidence/claim-utils';
+import { wb, type ResearchSummary } from '@/components/workbench/types';
 
-type Finding = {
-  id: string;
-  rank: number;
-  clusterId: number;
-  title: string;
-  whatsHappening: string;
-  whyItMatters: string;
-  evidence: string[];
-  illustrative: boolean;
-  robustness: number;
-  nAgree: number;
-  nTotal: number;
-  fragileSpecs: string[];
-  /** Occasion this finding is scoped to, when one is on the matched
-   * top-risk card — drives downstream /simulation occasion= param. */
-  occasion?: string | null;
-};
+type ResearchTab = 'findings' | 'robustness' | 'answer';
 
 export default function ResearchPage() {
+  return (
+    <Suspense fallback={null}>
+      <ResearchPageBody />
+    </Suspense>
+  );
+}
+
+function ResearchPageBody() {
   const data = useStudyData();
   const { studyId, loadingDetail, curve, prereg, detail, loadingCurve } = data;
   const router = useRouter();
   const searchParams = useSearchParams();
   const findingParam = searchParams.get('finding');
+  const tab = (searchParams.get('tab') as ResearchTab | null) ?? 'findings';
+
+  const setTab = (next: ResearchTab) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (next === 'findings') params.delete('tab');
+    else params.set('tab', next);
+    const qs = params.toString();
+    router.replace(qs ? `/research?${qs}` : '/research');
+  };
 
   const [researchFetch, setResearchFetch] = useState<{
     key: string;
@@ -109,9 +113,23 @@ export default function ResearchPage() {
   const question = detail?.question?.trim() || summary?.question?.trim() || '';
 
   const findings = useMemo<Finding[]>(
-    () => buildFindings(curve?.rows ?? [], summary?.top_risks ?? []),
-    [curve, summary],
+    () => findingsFromApi(summary?.findings ?? []),
+    [summary],
   );
+
+  const cellCounts = useMemo(() => {
+    const cells = detail?.cells ?? [];
+    return {
+      complete: cells.filter((c) => c.status === 'complete').length,
+      total: cells.length,
+      errors: cells.filter((c) => c.status === 'error').length,
+    };
+  }, [detail]);
+
+  const running =
+    detail?.status === 'running' ||
+    detail?.status === 'pending' ||
+    (detail != null && cellCounts.complete < cellCounts.total);
 
   const selectedIndex = useMemo(() => {
     if (findings.length === 0) return -1;
@@ -131,6 +149,7 @@ export default function ResearchPage() {
   };
 
   const selected = findings[selectedIndex] ?? null;
+  const showFindingsLayout = tab === 'findings';
 
   return (
     <StudyShell
@@ -144,11 +163,36 @@ export default function ResearchPage() {
             : 'No study question registered yet'
       }
       contentClassName="max-w-[1500px]"
-      leftLabel="Findings list"
-      mainLabel="Selected finding detail"
-      rightLabel="Next actions"
+      leftLabel={showFindingsLayout ? 'Findings list' : undefined}
+      mainLabel={
+        tab === 'robustness'
+          ? 'Robustness'
+          : tab === 'answer'
+            ? 'Executive answer'
+            : 'Selected finding detail'
+      }
+      rightLabel={showFindingsLayout ? 'Next actions' : undefined}
+      intro={
+        tab === 'robustness'
+          ? 'Each scenario tries the same question with a different defensible framing.'
+          : undefined
+      }
+      banner={
+        studyId ? (
+          <div className="grid gap-3">
+            <ResearchTabs tab={tab} onTab={setTab} />
+            {running ? (
+              <LiveRunConsole
+                studyId={studyId}
+                study={detail}
+                defaultCollapsed={false}
+              />
+            ) : null}
+          </div>
+        ) : null
+      }
       left={
-        !studyId ? null : loading ? (
+        !showFindingsLayout || !studyId ? null : loading ? (
           <RailSkeleton />
         ) : findings.length === 0 ? null : (
           <FindingsRail
@@ -160,7 +204,11 @@ export default function ResearchPage() {
         )
       }
       main={
-        !studyId ? null : loading ? (
+        !studyId ? null : tab === 'robustness' ? (
+          <RobustnessPanel />
+        ) : tab === 'answer' ? (
+          <AnswerTab curve={curve} studyId={studyId} loading={loadingCurve} />
+        ) : loading ? (
           <FocusCard tone="muted">
             <div className="h-48 animate-pulse rounded-2xl bg-slate-200/70" />
           </FocusCard>
@@ -183,6 +231,9 @@ export default function ResearchPage() {
         ) : (
           <div className="grid gap-4">
             {selected ? <FindingDetail finding={selected} studyId={studyId} /> : null}
+            {summary?.brief_markdown ? (
+              <BriefPanel markdown={summary.brief_markdown} />
+            ) : null}
             <ConfidencePanel
               curve={curve}
               prereg={prereg}
@@ -213,7 +264,7 @@ export default function ResearchPage() {
         )
       }
       right={
-        !studyId ? null : (
+        !showFindingsLayout || !studyId ? null : (
           <ActionRail
             studyId={studyId}
             hasFindings={findings.length > 0}
@@ -454,19 +505,27 @@ function ActionRail({
       ? { cluster: String(selectedFinding.clusterId) }
       : undefined;
   return (
-    <FocusCard>
-      <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-        What&apos;s next
-      </h3>
-      {selectedFinding ? (
-        <p className="mt-1 text-[11px] leading-snug text-slate-600">
-          Acting on:{' '}
-          <em className="font-semibold not-italic text-slate-900">
-            {selectedFinding.title}
-          </em>
-        </p>
-      ) : null}
-      <div className="mt-3 grid gap-2">
+    <details className="group">
+      <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+        <FocusCard className="group-open:rounded-b-none">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+              What&apos;s next
+            </h3>
+            <ChevronDown className="h-4 w-4 text-slate-400 transition-transform group-open:rotate-180" />
+          </div>
+          {selectedFinding ? (
+            <p className="mt-1 text-[11px] leading-snug text-slate-600">
+              Acting on:{' '}
+              <em className="font-semibold not-italic text-slate-900">
+                {selectedFinding.title}
+              </em>
+            </p>
+          ) : null}
+        </FocusCard>
+      </summary>
+      <FocusCard className="rounded-t-none border-t-0 pt-0">
+      <div className="grid gap-2">
         <ActionPrimary
           href={withStudy('/growth-driver', studyId, findingScope)}
           icon={<TrendingUp className="h-3.5 w-3.5" />}
@@ -474,7 +533,10 @@ function ActionRail({
           detail="Move this finding into the growth-driver planner."
         />
         <ActionSecondary
-          href={withStudy('/robustness', studyId, clusterScope)}
+          href={withStudy('/research', studyId, {
+            tab: 'robustness',
+            ...(clusterScope ?? {}),
+          })}
           icon={<Compass className="h-3.5 w-3.5" />}
           label="Stress-test"
           detail="See which framings hold, weaken, or flip this finding."
@@ -519,7 +581,8 @@ function ActionRail({
           Some actions become more useful once the first scenarios finish.
         </p>
       ) : null}
-    </FocusCard>
+      </FocusCard>
+    </details>
   );
 }
 
@@ -717,6 +780,129 @@ function SourceLabelsLine({
 // be read from the finding text or study question. Anything we can't
 // derive is left off so /simulation renders its honest empty state
 // instead of fabricating a default.
+function ResearchTabs({
+  tab,
+  onTab,
+}: {
+  tab: ResearchTab;
+  onTab: (t: ResearchTab) => void;
+}) {
+  const tabs: Array<{ id: ResearchTab; label: string; Icon: typeof Lightbulb }> = [
+    { id: 'findings', label: 'Findings', Icon: Sparkles },
+    { id: 'robustness', label: 'Robustness', Icon: Compass },
+    { id: 'answer', label: 'Answer', Icon: Lightbulb },
+  ];
+  return (
+    <nav
+      className="flex flex-wrap gap-2"
+      aria-label="Research views"
+    >
+      {tabs.map(({ id, label, Icon }) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => onTab(id)}
+          className={cn(
+            'inline-flex h-9 items-center gap-1.5 rounded-full border px-3.5 text-[12px] font-semibold shadow-sm transition-colors',
+            tab === id
+              ? 'border-slate-900 bg-slate-950 text-white'
+              : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300',
+          )}
+          aria-current={tab === id ? 'page' : undefined}
+        >
+          <Icon className="h-3.5 w-3.5" />
+          {label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+function BriefPanel({ markdown }: { markdown: string }) {
+  return (
+    <FocusCard>
+      <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+        Full brief
+      </h3>
+      <div className="prose prose-sm mt-3 max-w-none prose-slate prose-headings:text-slate-900">
+        {markdown.split('\n').map((line, i) => {
+          if (line.startsWith('### ')) {
+            return (
+              <h4 key={i} className="mt-4 text-sm font-semibold text-slate-900">
+                {line.slice(4)}
+              </h4>
+            );
+          }
+          if (line.startsWith('## ')) {
+            return (
+              <h3 key={i} className="mt-4 text-base font-semibold text-slate-900">
+                {line.slice(3)}
+              </h3>
+            );
+          }
+          if (!line.trim()) return <br key={i} />;
+          return (
+            <p key={i} className="text-[13px] leading-relaxed text-slate-700">
+              {line}
+            </p>
+          );
+        })}
+      </div>
+    </FocusCard>
+  );
+}
+
+function AnswerTab({
+  curve,
+  studyId,
+  loading,
+}: {
+  curve: ReturnType<typeof useStudyData>['curve'];
+  studyId: string | null;
+  loading: boolean;
+}) {
+  const lead = curve?.rows[0] ?? null;
+  if (loading || !curve) {
+    return (
+      <FocusCard tone="muted">
+        <div className="h-32 animate-pulse rounded-2xl bg-slate-200/70" />
+      </FocusCard>
+    );
+  }
+  if (!lead) {
+    return (
+      <FocusCard>
+        <p className="text-sm text-slate-600">No executive answer yet.</p>
+      </FocusCard>
+    );
+  }
+  const text = cleanRepresentative(lead.representative);
+  return (
+    <FocusCard>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+        Lead recommendation
+      </p>
+      <p className="mt-2 text-lg font-semibold leading-snug text-slate-950">
+        {text}
+      </p>
+      <p className="mt-2 text-sm text-slate-600">
+        Holds in {lead.n_agree} of{' '}
+        {lead.n_agree + lead.n_weaker + lead.n_flips + lead.n_missing} defensible
+        framings ({Math.round(lead.robustness * 100)}% robustness).
+      </p>
+      {studyId ? (
+        <Link
+          href={withStudy('/growth-driver', studyId)}
+          className="mt-4 inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-950 px-3.5 text-[12px] font-semibold text-white"
+        >
+          Take to MBP
+          <ArrowRight className="h-3 w-3" />
+        </Link>
+      ) : null}
+    </FocusCard>
+  );
+}
+
 function buildCounterScenarioParams(
   finding: Finding | null,
   selectedIndex: number,
@@ -739,56 +925,7 @@ function buildCounterScenarioParams(
   return params;
 }
 
-function buildFindings(
-  rows: SpecCurveRow[],
-  topRisks: TopRiskCard[],
-): Finding[] {
-  const risksByKey = new Map<string, TopRiskCard>();
-  for (const r of topRisks) {
-    const key = (r.line || '').slice(0, 40).toLowerCase().trim();
-    if (key) risksByKey.set(key, r);
-  }
-
-  return rows.map((row, idx) => {
-    const total = row.n_agree + row.n_weaker + row.n_flips + row.n_missing;
-    const text = cleanRepresentative(row.representative);
-    const sentences = splitSentences(text);
-    const happening = sentences[0] ?? text;
-    const followUp = sentences.slice(1, 3).filter((s) => s.length < 240);
-    const mattersBecause =
-      followUp.join(' ').trim() ||
-      `Holds in ${row.n_agree} of ${total} defensible framings — strong enough that breaking it would move the headline answer.`;
-    const title = titleFromSentence(happening);
-
-    const repKey = text.slice(0, 40).toLowerCase().trim();
-    let matchedRisk: TopRiskCard | undefined;
-    if (repKey) matchedRisk = risksByKey.get(repKey);
-    if (!matchedRisk && topRisks.length > 0 && idx < topRisks.length) {
-      matchedRisk = topRisks[idx];
-    }
-    const evidence = humaniseSupports(matchedRisk?.source_assets ?? []);
-    return {
-      id: String(row.cluster_id),
-      rank: idx + 1,
-      clusterId: row.cluster_id,
-      title,
-      whatsHappening: happening,
-      whyItMatters: mattersBecause,
-      evidence,
-      illustrative: Boolean(matchedRisk?.illustrative),
-      robustness: row.robustness,
-      nAgree: row.n_agree,
-      nTotal: total,
-      fragileSpecs: humaniseFragile(row.fragile_specs),
-      occasion: matchedRisk?.occasion ?? null,
-    };
-  });
-}
-
-// Known Diageo NA brands the demo studies discuss. Used to derive a
-// brand= param for /simulation when neither the finding nor the matched
-// risk card spell one out. If nothing matches we leave brand off so the
-// downstream page can render its honest empty state.
+// Known Diageo NA brands the demo studies discuss.
 const KNOWN_BRANDS = [
   'Don Julio',
   'Crown Royal',
@@ -819,72 +956,9 @@ function deriveBrand(...sources: Array<string | null | undefined>): string | nul
   return null;
 }
 
-function splitSentences(text: string): string[] {
-  if (!text) return [];
-  return text
-    .split(/(?<=[.!?])\s+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-function titleFromSentence(first: string): string {
-  const trimmed = first.trim();
-  if (!trimmed) return 'Finding';
-  const candidate = trimmed.split(/[,;:]\s+/)[0];
-  const cleaned = candidate.replace(/[.!?]+$/, '').trim();
-  if (cleaned.length === 0) return trimmed.slice(0, 80);
-  if (cleaned.length > 90) return trimmed.slice(0, 80) + '…';
-  return cleaned;
-}
-
-function humaniseFragile(specs: string[]): string[] {
-  return specs
-    .slice(0, 4)
-    .map((s) => s.replace(/__/g, ' / ').replace(/_/g, ' '));
-}
-
-const SUPPORT_LABELS: Record<string, string> = {
-  loyalty: 'Loyalty panel',
-  loyalty_panel: 'Loyalty panel',
-  occasion_mix: 'Occasion volume share',
-  occasion_share: 'Occasion volume share',
-  elasticity: 'Price sensitivity',
-  elasticity_note: 'Price sensitivity',
-  promo: 'Promo holdout',
-  promo_holdout: 'Promo holdout',
-  brief: 'Research brief',
-};
-
-function humaniseSupports(assets: string[]): string[] {
-  if (!assets || assets.length === 0) return [];
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const raw of assets.slice(0, 4)) {
-    const file = raw.split('/').pop() ?? raw;
-    const stem = file
-      .replace(/\.[a-z0-9]+$/i, '')
-      .replace(/[-_]+/g, ' ')
-      .trim();
-    const key = stem.toLowerCase().replace(/\s+/g, '_');
-    const label = SUPPORT_LABELS[key] ?? toTitleCase(stem) ?? 'Research evidence';
-    if (!label || seen.has(label)) continue;
-    seen.add(label);
-    out.push(label);
-  }
-  return out.slice(0, 3);
-}
-
 function trimToBoundary(text: string, max: number): string {
   if (text.length <= max) return text;
   const slice = text.slice(0, max);
   const lastSpace = slice.lastIndexOf(' ');
   return (lastSpace > 40 ? slice.slice(0, lastSpace) : slice) + '…';
-}
-
-function toTitleCase(value: string): string {
-  if (!value) return '';
-  return value
-    .split(' ')
-    .map((word) => (word ? word[0].toUpperCase() + word.slice(1) : word))
-    .join(' ');
 }

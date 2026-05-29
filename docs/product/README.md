@@ -17,22 +17,25 @@ they move money, not just generate a persuasive answer.
 
 ## What Is Currently Built
 
-Core product surfaces:
+Core product surfaces (demo spine):
 
-- `/` - scan-friendly launcher for the main views.
-- `/growth-driver` - MBP wedge surface for growth-driver setup and trade-offs.
-- `/research` - study brief with Top 3 at risk and evidence trace entry points.
-- `/answer` - plain-language recommendation for the active study.
-- `/robustness` - robustness grid across scenarios/specs.
-- `/scenario` and `/scenario/[id]` - scenario list and single-scenario detail.
-- `/why-it-could-be-wrong` - falsifiers and caveats in plain English.
-- `/evidence` and `/evidence/[id]` - claim/source/transformation trace views.
-- `/assets` and `/assets/[key]` - Dagster-style assets, lineage, and metadata.
-- `/plan` - editable research plan / plan-revise flow.
-- `/simulation` - discount vs bundling planning simulator.
-- `/ask` - grounded Q&A over the active study.
-- `/workbench` - power-user study workbench.
-- Dagit - native Dagster asset graph, runs, and materializations.
+- `/` — question-first launcher, resume card, browse-all toggle.
+- `/research` — findings (API-shaped answers), live run console, robustness + answer tabs.
+- `/growth-driver` — MBP wedge surface for growth-driver setup and trade-offs.
+- `/simulation` — counterfactual stress-test for drivers and findings.
+- `/evidence` and `/evidence/[id]` — claim/source/transformation trace views.
+- `/ask` — grounded Q&A over the active study.
+
+Legacy redirects (deep links still work):
+
+- `/answer` → `/research?tab=answer`
+- `/robustness` → `/research?tab=robustness`
+- `/scenario` and `/scenario/[id]` — scenario detail (linked from research/evidence).
+
+Power-user / secondary:
+
+- `/assets`, `/workbench`, `/plan`, `/setup`
+- Dagit — native Dagster asset graph, runs, and materializations.
 
 Backend capabilities:
 
@@ -114,14 +117,30 @@ UI, carry the study id as a query string, for example:
 http://127.0.0.1:3011/research?study=<study_id>
 ```
 
+## Demo bootstrap
+
+After clone, seed the deterministic hero study (Crown Royal × NFL) so validation-layer screenshots work:
+
+```bash
+uv run python scripts/demo_smoke.sh   # requires API + FE running
+# or seed only:
+uv run python scripts/seed_hero_study.py
+```
+
+| Study | Role |
+|-------|------|
+| `study_31c6667a40` | Hero — seeded MBP demo, all six validation layers |
+| `study_a5544ca972` | Live proof — Don Julio multiverse (sparse citations OK) |
+
+Spec for live Don Julio reruns: [`samples/study_don_julio_occasions.yaml`](samples/study_don_julio_occasions.yaml).
+
 ## Demo/Test Sequence
 
-1. Start at `/growth-driver` to show the MBP wedge: the product is helping set
-   and pressure-test a growth driver, not just answering a question.
-2. Open `/research?study=<id>` to review the Top 3 at risk and click into
-   evidence traces.
-3. Use `/answer`, `/robustness`, `/scenario`, and `/why-it-could-be-wrong` as
-   single-purpose executive views.
+1. Start at `/` — type a question or resume the latest study; watch the live run console on `/research`.
+2. Read answer-shaped findings on `/research` (Findings tab), then Robustness tab on the same page.
+3. Open `/growth-driver?study=study_31c6667a40` for the MBP wedge.
+4. Stress-test via `/simulation`, commit a decision, trace evidence on `/evidence`.
+5. Power-user surfaces: `/workbench`, `/assets`, `/plan`.
 4. Open `/plan` to edit the research plan and exercise plan revise.
 5. Use `/simulation` to compare discounting vs bundling assumptions.
 6. Ask a grounded follow-up in `/ask`.

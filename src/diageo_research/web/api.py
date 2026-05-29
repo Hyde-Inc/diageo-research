@@ -34,6 +34,7 @@ from typing import Any, AsyncIterator, Literal
 
 import yaml
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
@@ -112,6 +113,17 @@ from ..run_writer import list_stage_files
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Diageo Research — Hypothesis Workbench")
+
+# Next.js dev UI on :3011 opens EventSource directly against the API port.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:3011",
+        "http://localhost:3011",
+    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -236,6 +248,7 @@ class TraceResponse(BaseModel):
 
 @app.get("/")
 def index() -> FileResponse:
+    """Deprecated dev console — Next.js web-ui is the product surface."""
     return FileResponse(STATIC_DIR / "index.html")
 
 
@@ -1396,6 +1409,23 @@ def get_study_research(study_id: str) -> dict[str, Any]:
                 "source_assets": c.source_assets,
             }
             for c in summary.top_risks
+        ],
+        "findings": [
+            {
+                "cluster_id": f.cluster_id,
+                "rank": f.rank,
+                "answer_title": f.answer_title,
+                "answer_summary": f.answer_summary,
+                "robustness": f.robustness,
+                "holds_label": f.holds_label,
+                "n_agree": f.n_agree,
+                "n_total": f.n_total,
+                "fragile_specs": f.fragile_specs,
+                "occasion": f.occasion,
+                "illustrative": f.illustrative,
+                "source_assets": f.source_assets,
+            }
+            for f in summary.findings
         ],
         "brief_markdown": summary.brief_markdown,
         "brief_illustrative": summary.brief_illustrative,

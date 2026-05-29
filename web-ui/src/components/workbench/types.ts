@@ -364,10 +364,26 @@ export type TopRiskCard = {
   source_assets: string[];
 };
 
+export type ResearchFinding = {
+  cluster_id: number;
+  rank: number;
+  answer_title: string;
+  answer_summary: string;
+  robustness: number;
+  holds_label: string;
+  n_agree: number;
+  n_total: number;
+  fragile_specs: string[];
+  occasion: string | null;
+  illustrative: boolean;
+  source_assets: string[];
+};
+
 export type ResearchSummary = {
   study_id: string;
   question: string;
   top_risks: TopRiskCard[];
+  findings: ResearchFinding[];
   brief_markdown: string;
   brief_illustrative: boolean;
   lead_cluster_id: number | null;

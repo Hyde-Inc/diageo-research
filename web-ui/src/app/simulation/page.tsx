@@ -54,6 +54,14 @@ import { useStudyData, withStudy } from '@/components/study/use-study';
 import { PaneCard } from '@/components/workbench/pane-layout';
 import { cn } from '@/lib/utils';
 import {
+  confidenceToneClass,
+  effectMagnitude,
+  effectToneClass,
+  formatDeltaVsBaseline,
+  prettify,
+  type ConfidenceLevel,
+} from '@/components/simulation/helpers';
+import {
   wb,
   type AssetSummary,
   type CounterfactualScopeBody,
@@ -89,8 +97,6 @@ type FindingScope = {
 type EmptyScope = { kind: 'empty' };
 
 type Scope = DriverScope | FindingScope | EmptyScope;
-
-type ConfidenceLevel = 'Low' | 'Medium' | 'High';
 
 type EvidenceInput = { label: string; source: string };
 
@@ -474,31 +480,6 @@ function buildScopeMbpDescriptor(
     mustDo: mustDoRow?.title || scope.mustDoLabel || '',
     driver: driverRow?.driver_name || scope.driverLabel,
   };
-}
-
-// Title-case kebab/snake fragments, but keep small connectors lowercase
-// when they sit between two real words (e.g. "discount-vs-bundle" →
-// "Discount vs Bundle"). Used for brand/occasion/prompt labels coming
-// from URL params, so the H1 reads like prose instead of slugs.
-function prettify(slug: string): string {
-  if (!slug) return '';
-  const words = slug
-    .replace(/[_-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .split(' ')
-    .filter(Boolean);
-  if (words.length === 0) return '';
-  const SMALL = new Set(['vs', 'and', 'or', 'of', 'the', 'a', 'an', 'in']);
-  return words
-    .map((w, i) => {
-      const lower = w.toLowerCase();
-      // Render "A&P" instead of "Ap" for cut-ap-30, alternative-ap, etc.
-      if (lower === 'ap') return 'A&P';
-      if (i > 0 && i < words.length - 1 && SMALL.has(lower)) return lower;
-      return lower[0].toUpperCase() + lower.slice(1);
-    })
-    .join(' ');
 }
 
 // Per-prompt title + intro copy for driver-scoped stress-tests. The
@@ -1744,34 +1725,6 @@ function bestEffect(a: Variant, b: Variant): Variant {
   return av >= bv ? a : b;
 }
 
-function effectMagnitude(variant: Variant): number {
-  const match = variant.effectValue.match(/(-?\d+(?:\.\d+)?)/);
-  if (!match) return 0;
-  const v = Number(match[1]);
-  return Number.isFinite(v) ? v : 0;
-}
-
-// Compose a "−1.0 vs baseline" / "+0.5 vs baseline" badge for variants
-// after the first, using the same units that the absolute pill carries
-// (e.g. "pp spend retention").
-function formatDeltaVsBaseline(variant: Variant, baseline: Variant): string {
-  const a = effectMagnitude(baseline);
-  const b = effectMagnitude(variant);
-  const delta = b - a;
-  if (!Number.isFinite(delta)) return '';
-  // Pull the trailing units from the baseline's effectValue —
-  // everything after the leading number — so a delta on
-  // "+6.0 pp spend retention" reads "−1.0 pp vs baseline" (not just
-  // "−1.0").
-  const tail = baseline.effectValue.replace(/^[+\-]?\d+(\.\d+)?\s*/, '').trim();
-  const unit = tail.split(' ')[0] ?? '';
-  const sign = delta >= 0 ? '+' : '−';
-  const magnitude = Math.abs(delta).toFixed(1);
-  return unit
-    ? `${sign}${magnitude} ${unit} vs baseline`
-    : `${sign}${magnitude} vs baseline`;
-}
-
 function pickWinner(variants: Variant[]): Variant | null {
   if (variants.length === 0) return null;
   return variants.reduce<Variant>((best, v) => bestEffect(v, best), variants[0]);
@@ -1910,31 +1863,4 @@ function buildValidateDescription(
     return `Validate the ${scope.promptLabel} counter-scenario for ${subject}${where} against connected promo data.`;
   }
   return 'Validate the active counterfactual against connected promo data.';
-}
-
-function effectToneClass(kind: Variant['effectKind']): string {
-  switch (kind) {
-    case 'lift':
-      return 'border-emerald-200 bg-emerald-50 text-emerald-700';
-    case 'hold':
-      return 'border-blue-200 bg-blue-50 text-blue-700';
-    case 'hedge':
-      return 'border-amber-200 bg-amber-50 text-amber-700';
-    case 'risk':
-      return 'border-orange-200 bg-orange-50 text-orange-700';
-    default:
-      return 'border-slate-200 bg-slate-50 text-slate-700';
-  }
-}
-
-function confidenceToneClass(level: ConfidenceLevel): string {
-  switch (level) {
-    case 'High':
-      return 'border-emerald-200 bg-emerald-50 text-emerald-700';
-    case 'Medium':
-      return 'border-yellow-200 bg-yellow-50 text-yellow-700';
-    case 'Low':
-    default:
-      return 'border-orange-200 bg-orange-50 text-orange-700';
-  }
 }

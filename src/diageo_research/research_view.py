@@ -1,10 +1,9 @@
-"""Stakeholder-facing research summary: top occasions at risk + brief excerpt."""
+"""Stakeholder-facing research summary: structured findings + brief excerpt."""
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from .config import get_settings
 from .multiverse import read_study
@@ -22,19 +21,33 @@ class TopRiskCard:
 
 
 @dataclass
+class ResearchFinding:
+    cluster_id: int
+    rank: int
+    answer_title: str
+    answer_summary: str
+    robustness: float
+    holds_label: str
+    n_agree: int
+    n_total: int
+    fragile_specs: list[str]
+    occasion: str | None
+    illustrative: bool
+    source_assets: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ResearchSummary:
     study_id: str
     question: str
     top_risks: list[TopRiskCard]
+    findings: list[ResearchFinding]
     brief_markdown: str
     brief_illustrative: bool
     lead_cluster_id: int | None = None
 
 
 _OCCASION_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    # MBP / NFL-season occasions (Crown Royal × NFL worked example). Listed
-    # first so the hero study's tailgate-led briefs surface on-narrative
-    # occasion cards instead of the generic pricing-pressure fallback.
     (re.compile(r"tailgat", re.I), "NFL Tailgating"),
     (re.compile(r"game\s?day|stadium\s+suite|sports[\s-]?bar", re.I), "NFL Gameday"),
     (re.compile(r"sunday\s+(?:hosting|funday)|hosting\s+ritual", re.I), "Sunday Hosting"),
@@ -47,6 +60,15 @@ _OCCASION_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"rtd|ready[\s-]?to[\s-]?drink", re.I), "RTD / premix"),
     (re.compile(r"moderation", re.I), "Moderation-led socializing"),
 ]
+
+_IMPERATIVE_OPENER = re.compile(
+    r"^(?:"
+    r"Anchor|Prioritize|Prioritise|Focus|Invest|Build|Shift|Lean into|"
+    r"Double down on|Concentrate|Extend|Protect|Defend|Emphasize|Emphasise|"
+    r"Allocate|Reallocate|Strengthen|Reduce|Increase|Decrease"
+    r")\s+",
+    re.I,
+)
 
 
 def _robustness_label(score: float) -> str:
@@ -66,6 +88,38 @@ def _extract_executive(md: str) -> str:
     return (m.group(1).strip() if m else md[:1200]).strip()
 
 
+def _first_sentence(text: str) -> str:
+    parts = re.split(r"(?<=[.!?])\s+", text.strip())
+    return parts[0].strip() if parts and parts[0].strip() else text.strip()
+
+
+def _answer_title(text: str) -> str:
+    """Turn a directive brief sentence into a short answer-shaped title."""
+    trimmed = text.strip()
+    if not trimmed:
+        return "Finding"
+    candidate = _first_sentence(trimmed).split(",")[0].split(";")[0].strip()
+    candidate = _IMPERATIVE_OPENER.sub("", candidate).strip()
+    candidate = candidate.rstrip(".!? ")
+    if not candidate:
+        candidate = trimmed[:80]
+    if len(candidate) > 90:
+        return candidate[:87] + "…"
+    return candidate
+
+
+def _answer_summary(text: str, n_agree: int, n_total: int) -> str:
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s.strip()]
+    if len(sentences) >= 2:
+        follow = " ".join(s for s in sentences[1:3] if len(s) < 240)
+        if follow:
+            return follow
+    return (
+        f"Holds in {n_agree} of {n_total} defensible framings — "
+        "strong enough that breaking it would move the headline answer."
+    )
+
+
 def _scan_occasions(text: str) -> list[str]:
     found: list[str] = []
     for pat, label in _OCCASION_PATTERNS:
@@ -75,7 +129,7 @@ def _scan_occasions(text: str) -> list[str]:
 
 
 def _fallback_cards(question: str) -> list[TopRiskCard]:
-    """Grounded demo cards when briefs don't yet expose occasion-level splits."""
+    """Illustrative cards for zero-cell demo states only."""
     q = question.lower()
     cards = [
         TopRiskCard(
@@ -115,6 +169,34 @@ def _fallback_cards(question: str) -> list[TopRiskCard]:
     return cards
 
 
+def _build_findings(
+    curve_rows: list,
+    top_risks: list[TopRiskCard],
+) -> list[ResearchFinding]:
+    findings: list[ResearchFinding] = []
+    for idx, row in enumerate(curve_rows):
+        total = row.n_agree + row.n_weaker + row.n_flips + row.n_missing
+        text = (row.representative or "").strip()
+        matched = top_risks[idx] if idx < len(top_risks) else None
+        findings.append(
+            ResearchFinding(
+                cluster_id=row.cluster_id,
+                rank=idx + 1,
+                answer_title=_answer_title(text),
+                answer_summary=_answer_summary(text, row.n_agree, total),
+                robustness=row.robustness,
+                holds_label=_robustness_label(row.robustness),
+                n_agree=row.n_agree,
+                n_total=total,
+                fragile_specs=list(row.fragile_specs or []),
+                occasion=matched.occasion if matched else None,
+                illustrative=bool(matched.illustrative if matched else False),
+                source_assets=list(matched.source_assets if matched else []),
+            )
+        )
+    return findings
+
+
 def build_research_summary(study_id: str) -> ResearchSummary:
     study = read_study(study_id)
     if study is None:
@@ -122,6 +204,7 @@ def build_research_summary(study_id: str) -> ResearchSummary:
     settings = get_settings()
     curve = build_spec_curve(study_id)
     lead = curve.rows[0] if curve.rows else None
+    n_complete = sum(1 for c in study.cells if c.status == "complete")
 
     occasion_scores: dict[str, tuple[float, str, list[str]]] = {}
     brief_parts: list[str] = []
@@ -151,6 +234,7 @@ def build_research_summary(study_id: str) -> ResearchSummary:
             )
 
     top_risks: list[TopRiskCard] = []
+    illustrative_brief = False
     if occasion_scores:
         ranked = sorted(
             occasion_scores.items(),
@@ -167,26 +251,27 @@ def build_research_summary(study_id: str) -> ResearchSummary:
                     source_assets=assets,
                 )
             )
-    else:
+    elif n_complete == 0:
         top_risks = _fallback_cards(study.question)
+        illustrative_brief = True
+
+    findings = _build_findings(curve.rows, top_risks)
 
     brief_md = ""
-    illustrative_brief = True
     if brief_parts:
         brief_md = "\n\n".join(brief_parts)
-        illustrative_brief = False
     elif lead:
         brief_md = (
             f"## Lead recommendation\n\n{lead.representative}\n\n"
             f"Robustness across scenarios: **{lead.robustness:.0%}** "
             f"({lead.n_agree} agree · {lead.n_weaker} weaker · {lead.n_flips} flip)."
         )
-        illustrative_brief = False
 
     return ResearchSummary(
         study_id=study_id,
         question=study.question,
         top_risks=top_risks,
+        findings=findings,
         brief_markdown=brief_md,
         brief_illustrative=illustrative_brief,
         lead_cluster_id=lead.cluster_id if lead else None,

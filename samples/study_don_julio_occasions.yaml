@@ -1,0 +1,120 @@
+name: don_julio_occasions_us
+question: >-
+  Which US drinking occasions are the most defensible FY27 growth drivers for
+  Don Julio, and how exposed is each to post-inflation trade-down?
+
+# Pre-registration: signed BEFORE any data run. The multiverse runner refuses
+# to start without a valid prereg block. The synthesizer surfaces these fields
+# in the final brief so the partner sees the rule the answer is scored against.
+prereg:
+  question: >-
+    Which US drinking occasions are the most defensible FY27 growth drivers for
+    Don Julio, and how exposed is each to post-inflation trade-down?
+  decision_rule: >-
+    Name a US drinking occasion a defensible FY27 growth driver for Don Julio
+    only if it leads on forward growth trajectory AND its post-inflation
+    trade-down exposure stays bounded, and only if at least 60% of defensible
+    specs agree on that occasion as a lead driver. Flag for partner review any
+    occasion whose defensibility verdict flips between the value-substitution
+    and lateral-premium trade-down framings.
+  evidence_thresholds:
+    multiverse_agreement_min: 0.6
+    backcasting_pass_min: 0  # backcasting engine not gating in this phase
+    effect_size_min: 5.0     # min growth-trajectory gap, percentage points
+  falsifier_conditions:
+    - The lead occasion's defensibility ranking flips between the cultural-core
+      and premium-discovery occasion framings in more than 50% of cells.
+    - The recommended occasion does not survive substituting the
+      value-substitution trade-down lens for the lateral-premium lens.
+    - Post-inflation trade-down exposure for the recommended occasion shows
+      unbounded down-tier leakage at the $50+ super-premium price band across
+      three or more defensible specifications.
+  holdout_reservation: >-
+    FY27 Q1 Don Julio US depletion + on/off-premise mix actuals reserved for
+    blind evaluation; not read into any spec, prompt, or prereg until the
+    calibration ledger reads them at quarter close.
+  signed_at: 2026-05-29T08:00:00Z
+  signed_by: Tim Leers
+  notes: >-
+    Live demo study (workstream B): a deliberately small 4-cell grid
+    (occasion_lens x trade_down_lens) sized for a CLEAN unattended completion,
+    not a big robustness sweep. Cost-tuned from the May-25 8-cell run, where two
+    cells tripped a $1.50 budget guard mid-synthesis: this study runs 2 personas
+    x 2 turns with browse OFF and a $3.00/cell ceiling (above the ~$2.50
+    empirical floor) so synthesis always has budget headroom. A recommendation
+    must survive both the occasion framing and the trade-down framing to count
+    as robust.
+
+# Defaults applied to every cell unless an axis value overrides them.
+#
+# Cost guardrails tuned for a clean unattended 4-cell run:
+# - n_personas/max_turns kept lean (2x2) so each cell's real spend sits well
+#   under the cap.
+# - enable_web_browse OFF: the local Chromium path burns paid Sonnet steps on
+#   Google/.gov CAPTCHAs; the panel leans on `web_fetch` (specific BLS/TTB/
+#   Census URLs) + `duckdb_query` instead.
+# - max_cost_usd 3.00: above the ~$2.50 empirical floor so a cell never trips
+#   the budget guard before synthesis writes the brief.
+defaults:
+  n_personas: 2
+  max_turns: 2
+  enable_web_browse: false
+  max_browses_per_cell: 0
+  max_cost_usd: 3.00
+
+# Cells in flight at once. Two waves of two keeps us inside LLM rate limits.
+concurrency: 2
+
+# Multiverse axes. Cartesian product = 2 x 2 = 4 cells. Each axis maps to one
+# half of the question: occasion_lens -> "most defensible growth drivers";
+# trade_down_lens -> "how exposed to post-inflation trade-down".
+axes:
+  - name: occasion_lens
+    label: Occasion framing
+    description: >-
+      How Don Julio's US occasions are segmented. A robust recommendation
+      should not depend on whether the panel frames occasions through the
+      Hispanic cultural core or the premium-discovery lens.
+    values:
+      - id: cultural_core
+        label: Hispanic cultural-core occasions
+        addendum: >-
+          Frame Don Julio's US growth through its Hispanic cultural-core
+          occasions: family gathering, celebration toast, Cinco de Mayo, and
+          Dia de los Muertos. Treat the durable Hispanic consumer base and
+          household celebration occasions as the primary growth spine; judge
+          each occasion's FY27 defensibility on demographic durability.
+      - id: premium_discovery
+        label: Premium-discovery occasions
+        addendum: >-
+          Frame Don Julio's US growth through aspirational premium-discovery
+          occasions: the Don Julio 1942 status sip, fine-dining and craft
+          margarita, gifting, and the elevated at-home cocktail. Treat
+          premiumisation and new-cohort discovery (millennial / Gen Z
+          premium-seekers) as the primary growth spine; judge each occasion's
+          FY27 defensibility on premium pull and brand equity.
+
+  - name: trade_down_lens
+    label: Trade-down exposure framing
+    description: >-
+      How post-inflation trade-down risk is modelled. A robust recommendation
+      should not flip depending on whether trade-down is modelled as down-tier
+      flight or as lateral super-premium substitution.
+    values:
+      - id: value_substitution
+        label: Down-tier value substitution (sub-$60k, post-inflation)
+        addendum: >-
+          Model post-inflation trade-down as down-tier flight. Weight the
+          2022-2025 post-inflation regime most heavily, emphasise sub-$60k US
+          household-income cohorts, and treat substitution to value tequila,
+          Espolon, tequila RTDs, and out-of-category as first-class trade-down
+          outcomes. Quantify exposure at the $50+ super-premium price band.
+      - id: lateral_premium
+        label: Lateral super-premium substitution (full cycle)
+        addendum: >-
+          Model post-inflation trade-down as lateral substitution within
+          super-premium. Use the full 2018-2025 cycle and the full US income
+          distribution, and treat competitive flow to Casamigos, Teremana, and
+          Clase Azul as the primary trade-down channel, with brand equity
+          defending premium occasions. Quantify exposure as share shift inside
+          the super-premium tier rather than down-tier leakage.

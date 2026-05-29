@@ -1,18 +1,11 @@
 'use client';
 
 /**
- * Home — grouped explorer.
+ * Home — question-first launcher with resume + browse.
  *
- * Four sections (top to bottom), each with a small section header + a
- * count chip. A single free-text filter at the top searches across all
- * four sections. "Start a new study" pins top-right. The old tile
- * shortcuts get demoted to a small footer block.
- *
- *   1. Planning contexts (MBPs) — currently the Crown Royal × NFL MBP,
- *      hydrated from GET /studies/{study_31c6667a40}/growth-drivers.
- *   2. Studies — every research study on disk.
- *   3. Committed decisions — GET /assets?kind=decision.
- *   4. In-year queries — GET /assets?kind=in_year_query.
+ * Primary: type a question → POST /studies/quick → /research with live console.
+ * Secondary: resume the most recent study.
+ * Tertiary: "Browse all" reveals planning contexts, studies, decisions, in-year.
  */
 
 import Link from 'next/link';
@@ -33,7 +26,8 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet';
-import { cn } from '@/lib/utils';
+import { LiveRunConsole } from '@/components/study/live-run-console';
+import { cn, useLocalStorageString } from '@/lib/utils';
 import {
   wb,
   type AssetSummary,
@@ -50,6 +44,8 @@ const SEEDED_MBP = {
   mbpLabel: 'Crown Royal × NFL 2026-27 MBP',
   cycleWindow: 'Q3 2026 → Q2 2027',
 };
+
+type Preset = 'smoke' | 'robust';
 
 type MbpRow = {
   studyId: string;
@@ -69,6 +65,11 @@ export default function HomePage() {
   const [inYear, setInYear] = useState<AssetSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
+  const [browseOpen, setBrowseOpen] = useState(false);
+  const [lastStudyId, setLastStudyId] = useLocalStorageString(
+    'diageo:last-study-id',
+    '',
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -172,22 +173,53 @@ export default function HomePage() {
     return counts;
   }, [inYear]);
 
+  const resumeStudy = useMemo(() => {
+    const ordered = [...studies].sort((a, b) =>
+      b.created_at.localeCompare(a.created_at),
+    );
+    if (lastStudyId) {
+      const match = ordered.find((s) => s.id === lastStudyId);
+      if (match) return match;
+    }
+    return ordered[0] ?? null;
+  }, [studies, lastStudyId]);
+
   return (
     <main className="min-h-svh bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.10),transparent_32rem),linear-gradient(180deg,#f8fafc_0%,#eef2f7_100%)] px-4 py-8 font-sans text-slate-950 sm:px-6">
       <div className="mx-auto grid w-full max-w-5xl gap-6">
         <section className="grid gap-3">
           <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
             <FlaskConical className="h-3.5 w-3.5" />
-            Diageo Research
+            Hyde Workbench
           </div>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <h1 className="max-w-3xl text-balance text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">
-              Pick what you want to work on.
-            </h1>
-            <NewStudyTrigger />
-          </div>
+          <h1 className="max-w-3xl text-balance text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">
+            What do you want to know?
+          </h1>
+          <p className="max-w-2xl text-sm leading-relaxed text-slate-600">
+            Ask a planning question, watch the multiverse run live, then read
+            answer-shaped findings before you take anything to MBP.
+          </p>
         </section>
 
+        <QuestionLauncher onStarted={setLastStudyId} />
+
+        {resumeStudy ? (
+          <ResumeCard study={resumeStudy} />
+        ) : null}
+
+        <section className="flex flex-wrap items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => setBrowseOpen((v) => !v)}
+            className="text-sm font-semibold text-slate-900 underline-offset-4 hover:underline"
+          >
+            {browseOpen ? 'Hide browse' : 'Browse all planning contexts'}
+          </button>
+          <NewStudyTrigger />
+        </section>
+
+        {browseOpen ? (
+          <>
         <section>
           <label className="relative flex h-10 items-center rounded-full border border-slate-200 bg-white px-3 shadow-sm focus-within:border-slate-400">
             <Search className="mr-2 h-3.5 w-3.5 text-slate-400" />
@@ -267,8 +299,127 @@ export default function HomePage() {
             </code>
           </p>
         </details>
+          </>
+        ) : null}
       </div>
     </main>
+  );
+}
+
+function QuestionLauncher({
+  onStarted,
+}: {
+  onStarted: (studyId: string) => void;
+}) {
+  const router = useRouter();
+  const [question, setQuestion] = useState('');
+  const [preset, setPreset] = useState<Preset>('robust');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleLaunch(event: React.FormEvent) {
+    event.preventDefault();
+    const q = question.trim();
+    if (!q || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    const name = q
+      .slice(0, 48)
+      .replace(/[^\w\s-]/g, '')
+      .trim()
+      .replace(/\s+/g, '_')
+      .toLowerCase() || 'quick_study';
+    try {
+      const res = await wb.startQuickStudy({
+        question: q,
+        name,
+        preset,
+      });
+      onStarted(res.study_id);
+      router.push(`/research?study=${res.study_id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form
+      onSubmit={handleLaunch}
+      className="grid gap-3 rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm"
+    >
+      <label className="grid gap-1">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+          Planning question
+        </span>
+        <textarea
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          rows={3}
+          placeholder="Which US drinking occasions are the most defensible FY27 growth drivers for Don Julio?"
+          className="min-h-[88px] resize-y rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 shadow-inner focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+        />
+      </label>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <select
+          value={preset}
+          onChange={(e) => setPreset(e.target.value as Preset)}
+          className="h-9 rounded-full border border-slate-200 bg-white px-3 text-[12px] font-medium text-slate-700"
+        >
+          <option value="smoke">Smoke · 1 cell</option>
+          <option value="robust">Robust · 2×2 grid</option>
+        </select>
+        <button
+          type="submit"
+          disabled={!question.trim() || submitting}
+          className={cn(
+            'inline-flex h-9 items-center gap-2 rounded-full px-4 text-[13px] font-semibold shadow-sm',
+            question.trim() && !submitting
+              ? 'bg-slate-950 text-white hover:bg-slate-800'
+              : 'cursor-not-allowed bg-slate-200 text-slate-500',
+          )}
+        >
+          {submitting ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <ArrowRight className="h-3.5 w-3.5" />
+          )}
+          {submitting ? 'Starting…' : 'Run research'}
+        </button>
+      </div>
+      {error ? (
+        <p className="text-[12px] text-orange-700">{error}</p>
+      ) : null}
+    </form>
+  );
+}
+
+function ResumeCard({ study }: { study: StudySummary }) {
+  const running = study.status === 'running' || study.status === 'pending';
+  return (
+    <section className="grid gap-2 rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+            Resume
+          </p>
+          <h2 className="mt-1 text-sm font-semibold text-slate-950">
+            {study.question || study.name}
+          </h2>
+          <p className="mt-1 text-[12px] text-slate-600">
+            {study.n_complete}/{study.n_cells} cells · {study.status}
+          </p>
+        </div>
+        <Link
+          href={`/research?study=${study.id}`}
+          className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-[12px] font-semibold text-slate-900 shadow-sm hover:bg-slate-50"
+        >
+          Open
+          <ArrowRight className="h-3 w-3" />
+        </Link>
+      </div>
+      {running ? <LiveRunConsole studyId={study.id} defaultCollapsed={false} /> : null}
+    </section>
   );
 }
 
@@ -561,15 +712,6 @@ function formatTimestamp(iso: string): string {
 }
 
 // ─── Start-a-new-study modal ─────────────────────────────────────────
-//
-// Opens a side-panel (the existing Sheet primitive — built on Radix
-// Dialog) with a minimal form: question, short name, optional brand,
-// preset (smoke / robust). Posts to POST /studies/quick which builds
-// the StudySpec server-side. On success, navigates the user to the
-// freshly created study's research page so they land on a working
-// surface rather than a no-op.
-
-type Preset = 'smoke' | 'robust';
 
 function NewStudyTrigger() {
   const [open, setOpen] = useState(false);
