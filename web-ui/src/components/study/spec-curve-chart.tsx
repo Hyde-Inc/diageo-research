@@ -28,6 +28,7 @@
 
 import { useMemo } from 'react';
 import { cn } from '@/lib/utils';
+import { humaniseValue } from '@/components/evidence/claim-utils';
 import type {
   CellRowStatus,
   CellSummary,
@@ -480,10 +481,11 @@ function humaniseDim(d: string): string {
   return d.replace(/_/g, ' ');
 }
 
-function abbrev(value: string): string {
-  if (!value) return '·';
-  if (value.length <= 11) return value;
-  return value.slice(0, 10) + '…';
+function abbrev(raw: string): string {
+  if (!raw) return '·';
+  const value = humaniseValue(raw);
+  if (value.length <= 13) return value;
+  return value.slice(0, 12) + '…';
 }
 
 export function ChartLegend({ className }: { className?: string }) {

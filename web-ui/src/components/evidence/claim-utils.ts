@@ -396,7 +396,10 @@ export function cellDimensionLabel(cell: CellSummary): string {
     return 'the single defined scenario';
   }
   return entries
-    .map(([dimension, value]) => `${dimension}: ${value}`)
+    .map(
+      ([dimension, value]) =>
+        `${dimension.replace(/_/g, ' ')}: ${humaniseValue(value)}`,
+    )
     .join(' · ');
 }
 
@@ -448,9 +451,15 @@ const SPEC_VALUE_OVERRIDES: Record<string, string> = {
   demand_space: 'Demand-space',
   colab: 'Co-lab',
   solo: 'Solo',
+  nfl_heavy: 'NFL-heavy',
+  national: 'National',
+  regular: 'Regular',
+  playoffs: 'Playoffs',
+  tailgate: 'Tailgate',
+  gameday: 'Gameday',
 };
 
-function humaniseValue(value: string): string {
+export export function humaniseValue(value: string): string {
   if (!value) return '';
   const lower = value.toLowerCase();
   if (SPEC_VALUE_OVERRIDES[lower]) return SPEC_VALUE_OVERRIDES[lower];

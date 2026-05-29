@@ -26,6 +26,7 @@ import { ArrowRight, Filter, ListChecks, MessageCircle } from 'lucide-react';
 import { FocusCard, StudyShell } from '@/components/study/study-shell';
 import { useStudyData, withStudy } from '@/components/study/use-study';
 import { Badge } from '@/components/ui/badge';
+import { humaniseValue } from '@/components/evidence/claim-utils';
 import {
   ChartLegend,
   SpecCurveChart,
@@ -380,9 +381,9 @@ function DimensionFilterRow({
                   : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50',
               )}
               aria-pressed={isHidden}
-              title={isHidden ? `Show ${value}` : `Hide ${value}`}
+              title={isHidden ? `Show ${humaniseValue(value)}` : `Hide ${humaniseValue(value)}`}
             >
-              {value}
+              {humaniseValue(value)}
             </button>
           );
         })}
@@ -525,7 +526,7 @@ function DetailPanel({
                   {humaniseDimension(dim)}
                 </span>
                 <span className="font-medium text-slate-900">
-                  {scenario.cell.axes[dim] ?? '—'}
+                  {humaniseValue(scenario.cell.axes[dim] ?? '') || '—'}
                 </span>
               </li>
             ))}
@@ -623,7 +624,7 @@ function effectSentence(scenario: ScenarioDatum): string {
 
 function humaniseScenarioTitle(scenario: ScenarioDatum): string {
   const parts = Object.entries(scenario.cell.axes).map(
-    ([dim, value]) => `${humaniseDimension(dim)} · ${value}`,
+    ([dim, value]) => `${humaniseDimension(dim)} · ${humaniseValue(value)}`,
   );
   if (parts.length === 0) return scenario.cellId;
   return parts.join('  /  ');
