@@ -32,6 +32,12 @@ class ResearchSummary:
 
 
 _OCCASION_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    # MBP / NFL-season occasions (Crown Royal × NFL worked example). Listed
+    # first so the hero study's tailgate-led briefs surface on-narrative
+    # occasion cards instead of the generic pricing-pressure fallback.
+    (re.compile(r"tailgat", re.I), "NFL Tailgating"),
+    (re.compile(r"game\s?day|stadium\s+suite|sports[\s-]?bar", re.I), "NFL Gameday"),
+    (re.compile(r"sunday\s+(?:hosting|funday)|hosting\s+ritual", re.I), "Sunday Hosting"),
     (re.compile(r"casual\s+unwind", re.I), "Casual Unwind"),
     (re.compile(r"social\s+celebrat", re.I), "Social Celebration"),
     (re.compile(r"intentional\s+discover", re.I), "Intentional Discovery"),
