@@ -34,9 +34,12 @@ import {
   CheckCircle2,
   Compass,
   FileSearch,
+  FlaskConical,
+  Gauge,
   History,
   Info,
   Sparkles,
+  Target,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { FocusCard, StudyShell } from '@/components/study/study-shell';
@@ -182,11 +185,14 @@ export default function DecisionDetailPage({
       }
       right={
         record ? (
-          <InYearPanel
-            state={inYear}
-            committedAt={record.committed_at}
-            onRun={handleInYear}
-          />
+          <div className="grid gap-3">
+            <InYearPanel
+              state={inYear}
+              committedAt={record.committed_at}
+              onRun={handleInYear}
+            />
+            <BacktestPanel record={record} />
+          </div>
         ) : null
       }
     />
@@ -273,6 +279,14 @@ function DecisionBody({
         </div>
       </FocusCard>
 
+      <div data-validation="permitted-use">
+        <PermittedUsePanel record={record} />
+      </div>
+
+      <div data-validation="targeted-data">
+        <TargetedDataPanel record={record} />
+      </div>
+
       <FocusCard>
         <h2 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
           Scope
@@ -338,6 +352,240 @@ function DecisionBody({
       <InputsSection inputs={record.inputs_used || []} />
 
       <SnapshotDisclosure record={record} />
+    </div>
+  );
+}
+
+// ─── Screen 4a: decision-readiness (permitted-use ladder) ──────────
+//
+// The platform tells the team what the output is good for. Some outputs
+// only open hypotheses; only outputs that passed stronger validation
+// should support budget / pricing / portfolio decisions. We derive the
+// rung from the committed confidence + whether a load-bearing
+// assumption is still untested. Budget-grade is deliberately gated on
+// an outcome backtest the platform never auto-asserts, so the badge
+// stays honest.
+
+const PERMITTED_USE_LADDER = [
+  'Open hypotheses',
+  'Prioritise options',
+  'Recommend',
+  'Budget / pricing / portfolio',
+] as const;
+
+type PermittedUse = {
+  rung: number;
+  goodFor: string;
+  reason: string;
+};
+
+function computePermittedUse(record: DecisionRecord): PermittedUse {
+  const total = record.confidence?.of ?? 0;
+  const holds = record.confidence?.holds_in ?? 0;
+  const ratio = total > 0 ? holds / total : 0;
+  const hasFragile = Boolean(record.fragile_assumption?.trim());
+  const nPointers = record.snapshot?.evidence_pointers?.length ?? 0;
+
+  let rung: number;
+  let goodFor: string;
+  let reason: string;
+  if (total <= 1 || ratio < 0.4 || nPointers === 0) {
+    rung = 0;
+    goodFor = 'opening hypotheses';
+    reason =
+      total <= 1
+        ? 'Only one framing has voted — robustness is undefined, so treat this as a hypothesis to test, not a basis to act.'
+        : nPointers === 0
+          ? 'No named evidence is attached yet — use it to frame hypotheses, not to act.'
+          : `It holds in only ${holds} of ${total} framings — use it to open hypotheses, not to act.`;
+  } else if (ratio < 0.85 || hasFragile) {
+    rung = 1;
+    goodFor = 'prioritising options';
+    reason = hasFragile
+      ? `It holds in ${holds} of ${total} framings, but a load-bearing assumption is still untested and there is no outcome backtest yet.`
+      : `It holds in ${holds} of ${total} framings — enough to prioritise options, not yet to commit budget.`;
+  } else {
+    rung = 2;
+    goodFor = 'a recommendation';
+    reason = `It holds in ${holds} of ${total} framings with no load-bearing fragility — strong enough to recommend, but budget-grade still needs an outcome backtest.`;
+  }
+  return { rung, goodFor, reason };
+}
+
+function PermittedUsePanel({ record }: { record: DecisionRecord }) {
+  const use = computePermittedUse(record);
+  return (
+    <FocusCard>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+          <Gauge className="h-3.5 w-3.5" />
+          Decision-readiness
+        </h2>
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[12px] font-semibold text-emerald-800">
+          <CheckCircle2 className="h-3.5 w-3.5" />
+          Good for: {use.goodFor} — NOT yet budget-grade
+        </span>
+      </div>
+
+      <ol className="mt-3 flex flex-wrap items-stretch gap-1.5">
+        {PERMITTED_USE_LADDER.map((label, idx) => {
+          const reached = idx <= use.rung;
+          const current = idx === use.rung;
+          return (
+            <li key={label} className="flex items-center gap-1.5">
+              <span
+                className={cn(
+                  'inline-flex items-center rounded-xl border px-2.5 py-1 text-[11px] font-semibold leading-snug',
+                  current
+                    ? 'border-slate-900 bg-slate-950 text-white shadow-sm'
+                    : reached
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                      : 'border-dashed border-slate-200 bg-white text-slate-400',
+                )}
+                title={
+                  reached
+                    ? current
+                      ? 'Where this decision sits today'
+                      : 'Cleared'
+                    : 'Not cleared yet'
+                }
+              >
+                {label}
+                {idx > use.rung ? (
+                  <span className="ml-1 text-[9px] uppercase tracking-wide">
+                    not yet
+                  </span>
+                ) : null}
+              </span>
+              {idx < PERMITTED_USE_LADDER.length - 1 ? (
+                <ArrowRight className="h-3 w-3 text-slate-300" />
+              ) : null}
+            </li>
+          );
+        })}
+      </ol>
+      <p className="mt-3 text-[12px] leading-snug text-slate-600">{use.reason}</p>
+    </FocusCard>
+  );
+}
+
+// ─── Screen 4b: targeted data collection (where to look next) ──────
+//
+// Where evidence is too thin to support the decision, point at EXACTLY
+// where — the most consequential weak spot — and direct a proportionate
+// human check there, rather than commissioning a broad study. The
+// fragile assumption is, by construction, the biggest consequential
+// gap, so we derive the target from it.
+
+function extractGapLabel(fragile: string): string {
+  let s = (fragile || '').trim().replace(/^if\s+/i, '');
+  const cut = s.search(/[,;]/);
+  if (cut > 20) s = s.slice(0, cut).trim();
+  if (s.length > 0) s = s.charAt(0).toUpperCase() + s.slice(1);
+  return s.length > 130 ? `${s.slice(0, 127)}…` : s;
+}
+
+function TargetedDataPanel({ record }: { record: DecisionRecord }) {
+  const fragile = record.fragile_assumption?.trim() || '';
+  const use = computePermittedUse(record);
+  return (
+    <FocusCard className="border-blue-200 bg-blue-50/40">
+      <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-800">
+        <Target className="h-3.5 w-3.5" />
+        Where to look next
+      </div>
+      {fragile ? (
+        <div className="mt-2 grid gap-3">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              Biggest, most consequential evidence gap
+            </div>
+            <p className="mt-1 text-sm font-medium leading-snug text-slate-900">
+              {extractGapLabel(fragile)}
+            </p>
+            <p className="mt-1 text-[12px] leading-snug text-slate-600">
+              {fragile}
+            </p>
+          </div>
+          <div className="rounded-2xl border border-blue-200 bg-white px-3 py-2.5">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-blue-700">
+              Recommended next step
+            </div>
+            <p className="mt-1 text-[13px] leading-snug text-slate-800">
+              A targeted check on exactly this — an SME review plus one
+              tracker pull — not a broad study. It is the smallest amount of
+              new evidence that would change the answer.
+            </p>
+            <p className="mt-1.5 text-[11px] leading-snug text-slate-500">
+              Closing this gap is what would move the decision beyond{' '}
+              {use.goodFor} toward budget-grade.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <p className="mt-2 text-[13px] leading-snug text-slate-700">
+          No single weakest assumption was captured at commit time. The next
+          step is to name the one input most likely to change this answer, so
+          a targeted check can be aimed at it rather than commissioning a
+          broad study.
+        </p>
+      )}
+    </FocusCard>
+  );
+}
+
+// ─── Screen 5: empirical validation (backtest / drift) ─────────────
+//
+// Where possible, tested against reality. Today there is no closed
+// outcome to score against, so this states the method honestly and
+// names the data that would complete it — method-ready, not validated.
+
+function BacktestPanel({ record }: { record: DecisionRecord }) {
+  const window = record.mbp?.cycle_window?.trim();
+  const brand = record.mbp?.brand?.trim();
+  const outcomePhrase = window
+    ? `the realized ${window} outcome`
+    : 'the realized outcome for the committed window';
+  return (
+    <div
+      data-validation="backtest"
+      className="grid gap-3 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm"
+    >
+      <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+        <FlaskConical className="h-3.5 w-3.5" />
+        Backtest check
+      </div>
+      <p className="text-sm font-medium leading-snug text-slate-900">
+        Would Hyde have called this right?
+      </p>
+      <p className="text-[12px] leading-snug text-slate-600">
+        Committed {formatCommittedAt(record.committed_at)}. There is no
+        closed-outcome data to score this decision against yet — so it is
+        not yet empirically validated.
+      </p>
+      <div className="grid gap-1 rounded-2xl border border-slate-200 bg-slate-50/70 px-3 py-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+          Method
+        </span>
+        <p className="text-[12px] leading-snug text-slate-700">
+          Replay the committed snapshot against {outcomePhrase} and score
+          whether the recommendation matched what happened
+          {brand ? ` for ${brand}` : ''}.
+        </p>
+      </div>
+      <div className="grid gap-1 rounded-2xl border border-slate-200 bg-slate-50/70 px-3 py-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+          What would complete it
+        </span>
+        <p className="text-[12px] leading-snug text-slate-700">
+          The reserved outcome actuals for this window (held out as a blind
+          check) plus the realized result for the bet. Until those land,
+          treat this as method-ready, not validated.
+        </p>
+      </div>
+      <span className="inline-flex w-fit items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800">
+        Method ready · outcome data pending
+      </span>
     </div>
   );
 }
@@ -580,7 +828,10 @@ function InYearPanel({
   onRun: () => void;
 }) {
   return (
-    <div className="grid gap-3 rounded-3xl border border-slate-900 bg-slate-950 p-4 text-slate-50 shadow-sm">
+    <div
+      data-validation="in-year"
+      className="grid gap-3 rounded-3xl border border-slate-900 bg-slate-950 p-4 text-slate-50 shadow-sm"
+    >
       <div>
         <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
           <History className="h-3.5 w-3.5" />
