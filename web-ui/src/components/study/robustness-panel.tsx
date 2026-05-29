@@ -13,8 +13,6 @@ import { useStudyData, withStudy } from '@/components/study/use-study';
 import { Badge } from '@/components/ui/badge';
 import { humaniseValue } from '@/components/evidence/claim-utils';
 import {
-  ChartLegend,
-  SpecCurveChart,
   buildScenarios,
   sortScenarios,
   type ScenarioDatum,
@@ -27,6 +25,20 @@ const SORT_LABEL: Record<SortMode, string> = {
   effect: 'effect (holds → flips)',
   agreement: 'scenario agreement across all findings',
   index: 'scenario index (original order)',
+};
+
+// Verdict styling, keyed off the per-cell spec-curve status. The verdict
+// is the answer, so the header cells are solid colour; the choice cells
+// below inherit only a faint tint when the setup does NOT hold, so the
+// 2 non-holding columns read as a group straight down to their choices.
+const VERDICT: Record<
+  ScenarioDatum['status'],
+  { label: string; cell: string; tint: string; dot: string }
+> = {
+  agree: { label: 'Holds', cell: 'bg-emerald-500 text-white', tint: '', dot: 'bg-emerald-500' },
+  weaker: { label: 'Weakens', cell: 'bg-amber-500 text-white', tint: 'bg-amber-50', dot: 'bg-amber-500' },
+  flips: { label: 'Flips', cell: 'bg-red-500 text-white', tint: 'bg-red-50', dot: 'bg-red-500' },
+  missing: { label: 'No read', cell: 'bg-slate-200 text-slate-600', tint: 'bg-slate-50', dot: 'bg-slate-300' },
 };
 
 export function RobustnessPanel() {
@@ -377,16 +389,9 @@ function ChartCard({
   currentRow: SpecCurveRow | null;
 }) {
   const summary = useMemo(() => summarise(scenarios), [scenarios]);
-  // The either/or choices that define a framing, read straight off the
-  // columns on screen: one row per dimension, with the values it takes.
-  // This is what makes "8 framings = combinations of choices" legible.
-  const choices = useMemo(
-    () => buildChoices(dimensions, scenarios),
-    [dimensions, scenarios],
-  );
-  // The single most useful read of the chart: of the framings that do NOT
-  // hold, which analytic choices do they all share? That's the load-bearing
-  // assumption. Derived from the cells — only shown when something is fragile.
+  // Of the setups that do NOT hold, which analytic choices do they all
+  // share? That's the load-bearing assumption — the one "where it breaks"
+  // line. Derived from the cells, so an all-hold study shows nothing.
   const fragileInsight = useMemo(() => {
     const fragile = scenarios.filter(
       (s) => s.status === 'weaker' || s.status === 'flips',
@@ -404,170 +409,206 @@ function ChartCard({
       .filter((x): x is { dim: string; value: string } => x !== null);
     return { count: fragile.length, shared };
   }, [scenarios, dimensions]);
+  const hasMissing = scenarios.some((s) => s.status === 'missing');
   return (
-    <FocusCard>
-      <header className="mb-3 flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
-          <h3 className="text-sm font-semibold tracking-tight text-slate-950">
-            {currentRow
-              ? truncateSentence(cleanRepresentative(currentRow.representative), 140)
-              : 'Pick a recommendation'}
-          </h3>
-          {scenarios.length > 0 ? (
-            <p className="mt-1 text-[13px] font-medium leading-snug text-slate-800">
-              {verdictSentence(summary, scenarios.length)}
+    <div data-testid="robustness-verdict-card">
+      <FocusCard>
+        <header className="mb-3 flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+              Same question · {scenarios.length} defensible setups — does the
+              answer survive?
             </p>
-          ) : (
-            <p className="mt-1 text-[12px] leading-snug text-slate-600">
-              No scenarios match the current filter.
-            </p>
-          )}
-        </div>
-        {currentRow ? (
-          <Badge
-            variant="outline"
-            className="shrink-0 border-slate-200 bg-white text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600"
-          >
-            Robustness {(currentRow.robustness * 100).toFixed(0)}%
-          </Badge>
+            <h3 className="mt-1 text-sm font-semibold tracking-tight text-slate-950">
+              {currentRow
+                ? truncateSentence(cleanRepresentative(currentRow.representative), 140)
+                : 'Pick a recommendation'}
+            </h3>
+            {scenarios.length > 0 ? (
+              <p className="mt-1 text-[13px] font-medium leading-snug text-slate-800">
+                {verdictSentence(summary, scenarios.length)}
+              </p>
+            ) : (
+              <p className="mt-1 text-[12px] leading-snug text-slate-600">
+                No scenarios match the current filter.
+              </p>
+            )}
+          </div>
+          {currentRow ? (
+            <Badge
+              variant="outline"
+              className="shrink-0 border-slate-200 bg-white text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600"
+            >
+              Robustness {(currentRow.robustness * 100).toFixed(0)}%
+            </Badge>
+          ) : null}
+        </header>
+        {scenarios.length > 0 ? (
+          <VerdictTable
+            scenarios={scenarios}
+            dimensions={dimensions}
+            selectedCellId={selectedCellId}
+            onSelectCell={onSelectCell}
+          />
         ) : null}
-      </header>
-      {scenarios.length > 0 && choices.length > 0 ? (
-        <HowToRead choices={choices} columns={scenarios.length} />
-      ) : null}
-      <SpecCurveChart
-        scenarios={scenarios}
-        dimensions={dimensions}
-        selectedCellId={selectedCellId}
-        onSelectCell={onSelectCell}
-        ariaLabel="Robustness curve: scenarios on x, effect on y, dimensions in the matrix below."
-      />
-      {fragileInsight && fragileInsight.shared.length > 0 ? (
-        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/70 px-3.5 py-2.5">
-          <p className="text-[12px] leading-snug text-amber-900">
-            <span className="font-semibold">Where it breaks — </span>
-            the {fragileInsight.count} framing
-            {fragileInsight.count === 1 ? '' : 's'} that don&apos;t hold all share{' '}
+        {fragileInsight && fragileInsight.shared.length > 0 ? (
+          <p className="mt-3 text-[12px] leading-snug text-slate-700">
+            <span className="font-semibold text-amber-700">Where it breaks — </span>
+            the {fragileInsight.count} setup
+            {fragileInsight.count === 1 ? '' : 's'} that don&apos;t hold all use{' '}
             {fragileInsight.shared.map((t, idx) => (
-              <span key={t.dim}>
-                <span className="font-semibold">
-                  {humaniseValue(t.value)} {humaniseDimension(t.dim)}
-                </span>
-                {idx < fragileInsight.shared.length - 1 ? ' + ' : ''}
+              <span key={t.dim} className="font-semibold text-slate-900">
+                {humaniseValue(t.value)}
+                {idx < fragileInsight.shared.length - 1 ? (
+                  <span className="font-normal text-slate-500"> + </span>
+                ) : null}
               </span>
             ))}
-            . Every other framing holds.
+            .
           </p>
+        ) : null}
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-slate-600">
+          <VerdictKey status="agree" label="Holds — same answer wins" />
+          <VerdictKey status="weaker" label="Weakens — same answer, softer" />
+          <VerdictKey status="flips" label="Flips — answer reverses" />
+          {hasMissing ? <VerdictKey status="missing" label="No read" /> : null}
         </div>
-      ) : null}
-      <div className="mt-3 grid gap-2">
-        <ChartLegend />
-        <p className="text-[11px] leading-snug text-slate-500">
-          Click any column to see that framing&apos;s exact choices and the
-          brief it produced.
-        </p>
-      </div>
-    </FocusCard>
-  );
-}
-
-// ── Teaching strip: what a framing is, built from the columns on screen ──
-//
-// The chart assumes the reader knows what a "framing" is. They don't.
-// This strip defines it by example: each column is one pick from each
-// either/or choice, and the choices multiply out to the columns shown.
-function HowToRead({
-  choices,
-  columns,
-}: {
-  choices: Array<{ dim: string; values: string[] }>;
-  columns: number;
-}) {
-  const product = choices.reduce((acc, c) => acc * c.values.length, 1);
-  const equation = choices.map((c) => c.values.length).join(' × ');
-  const matchesGrid = product === columns;
-  return (
-    <div className="mb-3 grid gap-2 rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3">
-      <p className="text-[12px] leading-snug text-slate-700">
-        <span className="font-semibold text-slate-900">How to read this. </span>
-        Each column is one <span className="font-semibold">framing</span> — a
-        defensible way to set the analysis up. You build one by picking a side
-        of each either/or choice:
-      </p>
-      <ul className="grid gap-1">
-        {choices.map((c) => (
-          <li
-            key={c.dim}
-            className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[12px]"
-          >
-            <span className="w-28 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-              {humaniseDimension(c.dim)}
-            </span>
-            <span className="text-slate-800">
-              {c.values.map((v, i) => (
-                <span key={v}>
-                  <span className="font-semibold text-slate-900">
-                    {humaniseValue(v)}
-                  </span>
-                  {i < c.values.length - 1 ? (
-                    <span className="text-slate-400"> or </span>
-                  ) : null}
-                </span>
-              ))}
-            </span>
-          </li>
-        ))}
-      </ul>
-      <p className="text-[11px] leading-snug text-slate-500">
-        {matchesGrid ? (
-          <>
-            Every combination = <span className="font-semibold text-slate-700">{equation} = {product} framings</span>, the {columns} columns below.{' '}
-          </>
-        ) : (
-          <>The combinations make up the {columns} columns below. </>
-        )}
-        If the recommendation only wins under one setup it&apos;s a fluke; if it
-        survives across all of them, it&apos;s trustworthy.
-      </p>
+      </FocusCard>
     </div>
   );
 }
 
-// Read the either/or choices off the columns currently on screen: one
-// entry per dimension, with the distinct values it takes, in first-seen
-// order so the strip matches the matrix rows.
-function buildChoices(
-  dimensions: string[],
-  scenarios: ScenarioDatum[],
-): Array<{ dim: string; values: string[] }> {
-  return dimensions
-    .map((dim) => {
-      const values: string[] = [];
-      for (const s of scenarios) {
-        const v = s.cell.axes[dim];
-        if (v && !values.includes(v)) values.push(v);
-      }
-      return { dim, values };
-    })
-    .filter((c) => c.values.length > 0);
+// The whole robustness view, as one table: columns are the defensible
+// setups (sorted holds → flips so the non-holding ones group on the
+// right), the top row is the verdict per setup, and the rows beneath are
+// the either/or choices that define each setup. No chart, no legend
+// paragraph — the colours and labels carry it.
+function VerdictTable({
+  scenarios,
+  dimensions,
+  selectedCellId,
+  onSelectCell,
+}: {
+  scenarios: ScenarioDatum[];
+  dimensions: string[];
+  selectedCellId: string | null;
+  onSelectCell: (cellId: string | null) => void;
+}) {
+  return (
+    <div className="overflow-x-auto" data-testid="verdict-table">
+      <table className="w-full table-fixed border-separate border-spacing-1">
+        <colgroup>
+          <col className="w-24 sm:w-28" />
+          {scenarios.map((s) => (
+            <col key={s.cellId} />
+          ))}
+        </colgroup>
+        <thead>
+          <tr>
+            <th
+              scope="col"
+              className="px-1 pb-1 text-left align-bottom text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500"
+            >
+              Verdict
+            </th>
+            {scenarios.map((s, i) => {
+              const v = VERDICT[s.status];
+              const isSel = selectedCellId === s.cellId;
+              return (
+                <th
+                  key={s.cellId}
+                  scope="col"
+                  className={cn(
+                    'rounded-lg p-0 align-middle',
+                    v.cell,
+                    isSel && 'ring-2 ring-slate-900 ring-offset-1',
+                  )}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onSelectCell(isSel ? null : s.cellId)}
+                    aria-pressed={isSel}
+                    aria-label={`Setup ${i + 1}: ${v.label}. Show its brief.`}
+                    className="flex w-full flex-col items-center gap-0.5 rounded-lg px-1.5 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
+                  >
+                    <span className="text-[9px] font-medium uppercase tracking-wide opacity-80">
+                      {i + 1}
+                    </span>
+                    <span className="text-[13px] font-bold leading-tight">
+                      {v.label}
+                    </span>
+                  </button>
+                </th>
+              );
+            })}
+          </tr>
+        </thead>
+        <tbody>
+          {dimensions.map((dim) => (
+            <tr key={dim}>
+              <th
+                scope="row"
+                className="px-1 py-1.5 text-left align-middle text-[10px] font-semibold uppercase tracking-wide text-slate-500"
+              >
+                {humaniseDimension(dim)}
+              </th>
+              {scenarios.map((s) => {
+                const isSel = selectedCellId === s.cellId;
+                const isHold = s.status === 'agree';
+                const value = s.cell.axes[dim] ?? '';
+                return (
+                  <td
+                    key={s.cellId + dim}
+                    className={cn(
+                      'break-words rounded-md border px-1.5 py-1.5 text-center align-middle text-[12px] font-medium leading-tight text-slate-800',
+                      isHold
+                        ? 'border-slate-200 bg-white'
+                        : cn('border-transparent', VERDICT[s.status].tint),
+                      isSel && 'ring-1 ring-slate-400',
+                    )}
+                  >
+                    {humaniseValue(value) || '—'}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
-// Plain-English verdict that leads the card: how many framings hold, and
-// whether that makes the recommendation robust. Derived, so the live
-// study (all hold) never implies fake fragility.
+function VerdictKey({
+  status,
+  label,
+}: {
+  status: ScenarioDatum['status'];
+  label: string;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className={cn('h-3 w-3 rounded-[3px]', VERDICT[status].dot)} />
+      <span>{label}</span>
+    </span>
+  );
+}
+
+// One-line verdict that leads the card: how many setups hold. Derived, so
+// the live study (all hold) never implies fake fragility. The table and
+// the "where it breaks" line carry the detail, so this stays short.
 function verdictSentence(
   summary: { holds: number; weakens: number; flips: number; missing: number },
   total: number,
 ): string {
-  const { holds, weakens, flips } = summary;
-  const fragile = weakens + flips;
+  const { holds } = summary;
   if (holds === total) {
-    return `Holds in all ${total} framings — no defensible setup tested reverses it.`;
+    return `Holds in all ${total} setups — no defensible setup reverses it.`;
   }
   if (holds / total >= 0.6) {
-    return `Holds in ${holds} of ${total} framings — it survives most defensible setups. The ${fragile} that don't are flagged below.`;
+    return `Holds in ${holds} of ${total} setups.`;
   }
-  return `Holds in only ${holds} of ${total} framings — the answer is fragile; ${fragile} setup${fragile === 1 ? '' : 's'} weaken or flip it.`;
+  return `Holds in only ${holds} of ${total} setups — the answer is fragile.`;
 }
 
 function DetailPanel({
@@ -589,8 +630,8 @@ function DetailPanel({
     return (
       <FocusCard tone="muted" className="border-dashed">
         <p className="text-[12px] leading-snug text-slate-600">
-          Click any column to see that scenario&apos;s assumptions, the
-          recommendation&apos;s status for it, and a link to its detail
+          Click a setup&apos;s verdict to see that scenario&apos;s assumptions,
+          the recommendation&apos;s status for it, and a link to its detail
           page.
         </p>
       </FocusCard>
