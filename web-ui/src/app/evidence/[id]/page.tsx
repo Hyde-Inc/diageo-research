@@ -389,6 +389,8 @@ export default function EvidencePage({
               claim={claimTitle}
               citations={citations}
               row={row}
+              referencedIds={referencedIds}
+              studyId={studyId}
             />
           ) : null}
 

@@ -118,9 +118,23 @@ export function hostFromUrl(url: string | null | undefined): string | null {
   }
 }
 
+/**
+ * Pull the queried table out of a DuckDB citation's SQL so a source can
+ * be named by what it actually queried (``tailgate_occasion_volume``)
+ * rather than the meaningless generic label "Internal SQL query". Returns
+ * the verbatim identifier (no de-slugging — it's a real table name the
+ * reader can look up), or ``null`` when no ``FROM`` clause parses.
+ */
+export function sqlTableName(sql: string | null | undefined): string | null {
+  if (!sql) return null;
+  const m = sql.match(/\bfrom\s+([a-zA-Z_][\w.]*)/i);
+  return m ? m[1] : null;
+}
+
 export function sourceLabel(citation: RunCitation): string {
   if (citation.source === 'duckdb') {
-    return 'Internal SQL query';
+    const table = sqlTableName(citation.sql);
+    return table ? `Internal data · ${table}` : 'Internal SQL query';
   }
   if (citation.title) {
     // Prefer the document title when we have one — it's the human-

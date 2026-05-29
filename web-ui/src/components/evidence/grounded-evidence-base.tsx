@@ -15,14 +15,21 @@
  * with no special-casing.
  */
 
-import { Database, Globe2, ShieldCheck } from 'lucide-react';
+import { CheckCircle2, Database, Globe2, ShieldCheck, XCircle } from 'lucide-react';
 import type { RunCitation } from '@/components/workbench/types';
 import { sourceLabel } from './claim-utils';
 import { classifyCitationTier, type TierClassification } from './source-tier';
+import {
+  cleanObservedValue,
+  summarizeVerification,
+  type VerificationSummary,
+} from './source-helpers';
 
 type TieredSource = {
   label: string;
   scope: TierClassification;
+  value: string | null;
+  verification: VerificationSummary;
 };
 
 function dedupeByLabel(citations: RunCitation[]): TieredSource[] {
@@ -34,7 +41,12 @@ function dedupeByLabel(citations: RunCitation[]): TieredSource[] {
     const key = `${label}::${scope.category}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ label, scope });
+    out.push({
+      label,
+      scope,
+      value: cleanObservedValue(c),
+      verification: summarizeVerification(c),
+    });
   }
   return out;
 }
@@ -88,6 +100,30 @@ export function GroundedEvidenceBase({
   );
 }
 
+function VerificationChip({ v }: { v: VerificationSummary }) {
+  const cls =
+    v.status === 'verified'
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+      : v.status === 'unverified'
+        ? 'border-orange-200 bg-orange-50 text-orange-700'
+        : v.status === 'attested'
+          ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+          : 'border-slate-200 bg-slate-50 text-slate-500';
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold ${cls}`}
+      title={v.note ?? undefined}
+    >
+      {v.status === 'verified' ? (
+        <CheckCircle2 className="h-3 w-3" />
+      ) : v.status === 'unverified' ? (
+        <XCircle className="h-3 w-3" />
+      ) : null}
+      {v.label}
+    </span>
+  );
+}
+
 function TierBlock({
   tone,
   Icon,
@@ -138,9 +174,18 @@ function TierBlock({
               key={`${s.label}-${s.scope.category}`}
               className="rounded-xl border border-white bg-white px-3 py-2 shadow-sm"
             >
-              <p className="text-[12px] font-semibold text-slate-900">
-                {s.label}
-              </p>
+              <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
+                <p className="text-[12px] font-semibold text-slate-900">
+                  {s.label}
+                </p>
+                <VerificationChip v={s.verification} />
+              </div>
+              {s.value ? (
+                <p className="mt-0.5 text-[11px] leading-snug text-slate-700">
+                  <span className="font-medium text-slate-500">Measured:</span>{' '}
+                  {s.value}
+                </p>
+              ) : null}
               <p className="mt-0.5 text-[11px] leading-snug text-slate-600">
                 <span className="font-medium text-emerald-700">Speaks to:</span>{' '}
                 {s.scope.speaksTo}

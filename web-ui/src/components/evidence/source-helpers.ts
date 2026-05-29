@@ -226,6 +226,57 @@ export function extractVerifierFlags(
   return out;
 }
 
+// ─── Observed value + verification summary (auditability panel) ─────
+
+/**
+ * The measured fact a citation actually carries — its snippet, once
+ * binary/page-chrome blobs and DuckDB error text are filtered out.
+ * Returns ``null`` when nothing renderable remains, so callers show an
+ * honest "no extractable value" state instead of leaking noise.
+ */
+export function cleanObservedValue(c: RunCitation): string | null {
+  const raw = (c.snippet ?? '').trim();
+  if (!raw) return null;
+  if (isGarbageSnippet(raw) || isTechnicalErrorText(raw)) return null;
+  return raw;
+}
+
+export type VerificationSummary = {
+  status: 'verified' | 'unverified' | 'attested' | 'unchecked';
+  label: string;
+  note: string | null;
+};
+
+/**
+ * Collapse a citation's ``verified`` flag + ``verification_note`` into a
+ * single chip the auditability panel can render: the brief's own
+ * verifier re-ran the SQL / re-extracted the numbers (verified), it
+ * failed re-verification (unverified, with a friendly reason), it's an
+ * owner-attested internal source with no public URL to re-run
+ * (attested), or it was never checked.
+ */
+export function summarizeVerification(c: RunCitation): VerificationSummary {
+  const note = (c.verification_note ?? '').trim();
+  if (c.verified === true) {
+    return {
+      status: 'verified',
+      label: 'Verified',
+      note: note && !isTechnicalErrorText(note) ? note : null,
+    };
+  }
+  if (c.verified === false) {
+    return {
+      status: 'unverified',
+      label: 'Unverified',
+      note: friendlyVerifierFailure(note),
+    };
+  }
+  if (note) {
+    return { status: 'attested', label: 'Owner-attested', note };
+  }
+  return { status: 'unchecked', label: 'Not re-checked', note: null };
+}
+
 export const VERIFIER_BADGE_TOOLTIP =
   'The verifier re-runs the cited SQL or re-extracts numbers from the cited URL and checks every numeric value the brief quoted. Higher percentages mean the claim’s numbers survived re-verification.';
 
