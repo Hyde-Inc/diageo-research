@@ -115,5 +115,8 @@ def apply_edits(plan: PlanForReview, edit: PlanEdit) -> PlanForReview:
             "sections": (
                 edit.sections if edit.sections is not None else plan.sections
             ),
+            "framings": (
+                edit.framings if edit.framings is not None else plan.framings
+            ),
         }
     )

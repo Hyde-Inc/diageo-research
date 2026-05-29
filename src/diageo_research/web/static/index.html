@@ -82,7 +82,11 @@
     <label>Executive intent</label>
     <textarea id="plan-intent"></textarea>
   </div>
-  <h3 style="margin-top: 18px;">Analyst panel <button class="small secondary" type="button" onclick="addPersona()">+ Add analyst</button></h3>
+  <h3 style="margin-top: 18px;">Question framings <button class="small secondary" type="button" onclick="addFraming()">+ Add framing</button></h3>
+  <div class="hint">The same core question, rephrased multiple ways. Each cohort respondent answers EVERY framing in turn so the final brief aggregates across angles.</div>
+  <div id="plan-framings"></div>
+  <h3 style="margin-top: 18px;">Cohort respondents <button class="small secondary" type="button" onclick="addPersona()">+ Add cohort</button></h3>
+  <div class="hint">Each respondent speaks for ONE specific consumer demographic intersection (geography × age × ethnicity × occasion / income tier).</div>
   <div id="plan-personas"></div>
   <h3 style="margin-top: 18px;">Outline sections <button class="small secondary" type="button" onclick="addSection()">+ Add section</button></h3>
   <div id="plan-sections"></div>
@@ -134,31 +138,63 @@ function el(tag, attrs, children) {
 
 function renderPlan(plan) {
   editablePlan = JSON.parse(JSON.stringify(plan)); // deep clone for editing
+  if (!editablePlan.framings) editablePlan.framings = [];
   document.getElementById('plan-question').textContent = plan.question;
   document.getElementById('plan-intent').value = plan.executive_intent || '';
+  renderFramings();
   renderPersonas();
   renderSections();
   $review.classList.remove('hidden');
   $review.scrollIntoView({behavior: 'smooth', block: 'start'});
 }
 
+function renderFramings() {
+  const wrap = document.getElementById('plan-framings');
+  wrap.innerHTML = '';
+  if (!editablePlan.framings || editablePlan.framings.length === 0) {
+    wrap.appendChild(el('div', {class: 'hint'}, ['(no framings yet — add one above)']));
+    return;
+  }
+  editablePlan.framings.forEach((f, idx) => {
+    const card = el('div', {class: 'panel-card'}, [
+      el('div', {class: 'topline'}, [
+        el('div', {style: 'flex: 1;'}, [
+          el('strong', {}, [`Framing ${idx + 1} `]),
+          (function () {
+            const ta = el('textarea', {});
+            ta.value = f;
+            ta.style.minHeight = '40px';
+            ta.addEventListener('input', () => editablePlan.framings[idx] = ta.value);
+            return ta;
+          })(),
+        ]),
+        el('button', {type: 'button', class: 'small danger', onclick: () => { editablePlan.framings.splice(idx, 1); renderFramings(); }}, ['×']),
+      ]),
+    ]);
+    wrap.appendChild(card);
+  });
+}
+
 function renderPersonas() {
   const wrap = document.getElementById('plan-personas');
   wrap.innerHTML = '';
   editablePlan.personas.forEach((p, idx) => {
+    const headerLabel = el('div', {style: 'flex: 1;'}, [
+      el('div', {style: 'font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 2px;'}, [`${p.id} · cohort respondent`]),
+      el('input', {type: 'text', value: p.name, oninput: (e) => p.name = e.target.value, style: 'font-weight: 600; font-size: 15px; border: 0; padding: 4px 0; background: transparent; width: 100%;'}),
+    ]);
     const card = el('div', {class: 'panel-card'}, [
       el('div', {class: 'topline'}, [
-        el('div', {}, [
-          el('strong', {}, [`${p.id} · `]),
-          el('input', {type: 'text', value: p.name, oninput: (e) => p.name = e.target.value}),
-        ]),
+        headerLabel,
         el('button', {type: 'button', class: 'small danger', onclick: () => { editablePlan.personas.splice(idx, 1); renderPersonas(); }}, ['Remove']),
       ]),
+      labeled('Demographic intersection', el('input', {type: 'text', value: p.demographic || '', oninput: (e) => p.demographic = e.target.value, placeholder: 'e.g. Gen Z Latino, LA / Houston, weekend off-premise'})),
+      labeled('SKU focus (optional)', el('input', {type: 'text', value: p.sku_focus || '', oninput: (e) => p.sku_focus = e.target.value, placeholder: 'e.g. Don Julio 1942 750ml — leave blank for portfolio-wide'})),
       labeled('Role', el('input', {type: 'text', value: p.role, oninput: (e) => p.role = e.target.value})),
       labeled('Lens', taText(p.lens, (v) => p.lens = v)),
       labeled('Description', taText(p.description, (v) => p.description = v)),
       labeled('System prompt', taText(p.system_prompt, (v) => p.system_prompt = v)),
-      labeled('Checklist', renderChecklist(p)),
+      labeled('Checklist (optional — framings drive the interview)', renderChecklist(p)),
     ]);
     wrap.appendChild(card);
   });
@@ -212,12 +248,14 @@ function addPersona() {
   const nextN = editablePlan.personas.length + 1;
   editablePlan.personas.push({
     id: `p${nextN}`,
-    name: `Lens ${nextN}`,
+    name: `Cohort ${nextN}`,
     role: '',
     lens: '',
     description: '',
     system_prompt: '',
     persona_type: 'expert',
+    demographic: '',
+    sku_focus: '',
     checklist: [],
     section_assignments: [],
   });
@@ -227,6 +265,12 @@ function addPersona() {
 function addSection() {
   editablePlan.sections.push({heading: 'New section', intent: ''});
   renderSections();
+}
+
+function addFraming() {
+  if (!editablePlan.framings) editablePlan.framings = [];
+  editablePlan.framings.push('');
+  renderFramings();
 }
 
 document.getElementById('plan-approve').addEventListener('click', () => submitPlan('approve'));
@@ -240,6 +284,7 @@ async function submitPlan(decision) {
         executive_intent: document.getElementById('plan-intent').value,
         personas: editablePlan.personas,
         sections: editablePlan.sections,
+        framings: (editablePlan.framings || []).filter((f) => (f || '').trim().length > 0),
       }
     : {decision: 'abort'};
   try {
@@ -254,7 +299,7 @@ async function submitPlan(decision) {
     }
     $review.classList.add('hidden');
     log('persona', decision === 'approve'
-      ? `✓ plan approved (${editablePlan.personas.length} analysts, ${editablePlan.sections.length} sections); resuming…`
+      ? `✓ plan approved (${editablePlan.personas.length} cohort respondents, ${editablePlan.sections.length} sections, ${(editablePlan.framings || []).length} framings); resuming…`
       : '✕ plan aborted by user');
   } catch (err) {
     log('err', `Plan submit error: ${err}`);
@@ -308,7 +353,22 @@ function connectStream(runId) {
   es.addEventListener('persona_created', (e) => {
     const ev = parse(e); if (!ev) return;
     personaNames[ev.persona_id] = ev.data.name;
-    log('persona', `[${ev.persona_id}] ${ev.data.name} — ${ev.data.role}`);
+    const demo = ev.data.demographic ? ` [${ev.data.demographic}]` : '';
+    const sku = ev.data.sku_focus ? ` × ${ev.data.sku_focus}` : '';
+    log('persona', `[${ev.persona_id}] ${ev.data.name}${demo}${sku} — ${ev.data.role || ''}`);
+  });
+  es.addEventListener('question_plan', (e) => {
+    const ev = parse(e); if (!ev) return;
+    const fr = ev.data.framings || [];
+    if (fr.length) {
+      log('persona', `· ${fr.length} framings of the question generated:`);
+      fr.forEach((f, i) => log('q', `    [${i + 1}/${fr.length}] ${f}`));
+    }
+  });
+  es.addEventListener('framings_planned', (e) => {
+    const ev = parse(e); if (!ev) return;
+    const n = ev.data.n_framings || (ev.data.framings || []).length;
+    log('persona', `[${ev.persona_id}] will be asked ${n} framings of the question`);
   });
   es.addEventListener('plan_ready_for_review', (e) => {
     const ev = parse(e); if (!ev) return;
@@ -317,7 +377,8 @@ function connectStream(runId) {
   });
   es.addEventListener('plan_approved', (e) => {
     const ev = parse(e); if (!ev) return;
-    log('persona', `▶ resumed (${ev.data.n_personas} analysts, ${ev.data.n_sections} sections)`);
+    const fr = ev.data.n_framings != null ? `, ${ev.data.n_framings} framings` : '';
+    log('persona', `▶ resumed (${ev.data.n_personas} cohort respondents, ${ev.data.n_sections} sections${fr})`);
   });
   es.addEventListener('run_aborted', (e) => {
     const ev = parse(e); if (!ev) return;
@@ -326,7 +387,10 @@ function connectStream(runId) {
   });
   es.addEventListener('turn_started', (e) => {
     const ev = parse(e); if (!ev) return;
-    log('q', `[${ev.persona_id}] Q${ev.turn_idx}: ${ev.data.question}`);
+    const fr = ev.data.framing_idx != null
+      ? ` (framing ${ev.data.framing_idx + 1}${ev.data.n_framings ? '/' + ev.data.n_framings : ''})`
+      : '';
+    log('q', `[${ev.persona_id}] Q${ev.turn_idx}${fr}: ${ev.data.question}`);
   });
   es.addEventListener('tool_call', (e) => {
     const ev = parse(e); if (!ev) return;

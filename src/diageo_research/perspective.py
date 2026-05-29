@@ -75,10 +75,23 @@ class PerspectiveAgent:
         # Reset per-turn counters (web_browse cap, etc.) at the top of every turn.
         self.registry.start_turn()
         # Panel is analyst-only by design; the full dataset_schema (with macros
-        # listed below the tables) goes to every persona.
+        # listed below the tables) goes to every persona. We prepend the
+        # demographic anchor + SKU focus to the persona-specific system
+        # prompt so the LLM leads with cohort identity even on persona
+        # cards that were generated before the demographic anchoring rule
+        # was added.
+        anchor_lines: list[str] = []
+        if self.persona.demographic:
+            anchor_lines.append(f"**Demographic anchor:** {self.persona.demographic}")
+        if self.persona.sku_focus:
+            anchor_lines.append(f"**SKU focus:** {self.persona.sku_focus}")
+        if anchor_lines:
+            persona_system = "\n".join(anchor_lines) + "\n\n" + self.persona.system_prompt
+        else:
+            persona_system = self.persona.system_prompt
         system_prompt = render(
             "perspective",
-            persona_system_prompt=self.persona.system_prompt,
+            persona_system_prompt=persona_system,
             persona_tools_block=self._persona_tools_block(),
             question=self.question,
             dataset_schema=self.dataset_schema,

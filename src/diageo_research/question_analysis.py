@@ -99,6 +99,7 @@ def _parse_plan(obj: dict) -> QuestionPlan:
 
     axes = [str(a).strip() for a in obj.get("axes", []) or [] if str(a).strip()]
     sub_qs = [str(q).strip() for q in obj.get("sub_questions", []) or [] if str(q).strip()]
+    framings = [str(f).strip() for f in obj.get("framings", []) or [] if str(f).strip()]
     specs: list[PerspectiveSpec] = []
     for row in obj.get("must_have_perspectives", []) or []:
         if not isinstance(row, dict):
@@ -126,6 +127,7 @@ def _parse_plan(obj: dict) -> QuestionPlan:
         must_have_perspectives=specs,
         sub_questions=sub_qs,
         rationale=str(obj.get("rationale", "")).strip(),
+        framings=framings,
     )
 
 

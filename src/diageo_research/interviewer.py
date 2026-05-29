@@ -1,9 +1,24 @@
-"""Interviewer agent: reads dialogue memory and asks the next question (Sonnet 4.6).
+"""Interviewer agent.
 
-Now checklist-aware: the interviewer is shown the persona's research checklist
-and assigned outline sections, and is told to keep asking until those are
-covered. This makes STOP an objective signal rather than a vibes-based one
-(improvement #1).
+Two interview modes coexist for backward compatibility:
+
+1. **Framing-driven (default when framings are supplied).** The
+   orchestrator generates 2–4 alternate framings of the user's question
+   at question-analysis time, and we ask each respondent the SAME
+   framings in order. Each turn is a deterministic pull from the
+   `framings` list — no LLM call is needed to pick the next question, so
+   each interview's wall-time is bounded and the answers across cohorts
+   are directly comparable per framing. STOP fires when every framing
+   has been asked.
+
+2. **Checklist-driven (legacy fallback when framings are empty).** The
+   interviewer uses Sonnet to pick the next question off the persona's
+   uncovered checklist + assigned sections. Kept for runs without
+   framings (older saved plans, CLI-only smoke tests, etc.).
+
+The new default — framing-driven — is what the partner sees in the FE:
+each turn is tagged with `framing_idx` so the UI can render
+`Framing 2/3: <text>` next to the persona card.
 """
 from __future__ import annotations
 
@@ -26,13 +41,37 @@ class Interviewer:
         persona: Persona,
         question: str,
         memory: DialogueMemory,
+        framings: list[str] | None = None,
     ) -> None:
         self.client = client
         self.persona = persona
         self.question = question
         self.memory = memory
+        self.framings = list(framings or [])
+        # Index of the next framing to ask. When the framings list is
+        # supplied, the interviewer returns framings[i] deterministically
+        # on each call until exhausted.
+        self._framing_idx = 0
 
-    async def next_question(self) -> str | None:
+    async def next_question(self) -> tuple[str, int | None] | None:
+        """Return `(question_text, framing_idx)` or None to STOP.
+
+        `framing_idx` is the 0-based index in `self.framings` for
+        framing-driven mode, or None for legacy checklist-driven turns.
+        """
+        if self.framings:
+            return self._next_framing()
+        return await self._next_checklist_question()
+
+    def _next_framing(self) -> tuple[str, int] | None:
+        if self._framing_idx >= len(self.framings):
+            return None
+        framing = self.framings[self._framing_idx]
+        idx = self._framing_idx
+        self._framing_idx += 1
+        return framing, idx
+
+    async def _next_checklist_question(self) -> tuple[str, None] | None:
         settings = get_settings()
         prompt = render(
             "interviewer",
@@ -54,16 +93,25 @@ class Interviewer:
             return None
         if text.upper().split()[0].rstrip(".") == "STOP":
             return None
-        return text
+        return text, None
 
     def _persona_card(self) -> str:
-        return (
-            f"**Name:** {self.persona.name}\n"
-            f"**Type:** {self.persona.persona_type}\n"
-            f"**Role:** {self.persona.role}\n"
-            f"**Lens:** {self.persona.lens}\n"
-            f"**Background:** {self.persona.description}"
+        # Lead with the demographic + SKU anchor — that's how the partner reads
+        # the panel in the FE — then back it with the analyst-style metadata.
+        bits: list[str] = []
+        if self.persona.demographic:
+            bits.append(f"**Demographic:** {self.persona.demographic}")
+        if self.persona.sku_focus:
+            bits.append(f"**SKU focus:** {self.persona.sku_focus}")
+        bits.extend(
+            [
+                f"**Name:** {self.persona.name}",
+                f"**Role:** {self.persona.role}",
+                f"**Lens:** {self.persona.lens}",
+                f"**Background:** {self.persona.description}",
+            ]
         )
+        return "\n".join(bits)
 
     def _section_assignments_block(self) -> str:
         if not self.persona.section_assignments:

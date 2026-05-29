@@ -107,6 +107,11 @@ class QuestionPlan(BaseModel):
     must_have_perspectives: list[PerspectiveSpec] = Field(default_factory=list)
     sub_questions: list[str] = Field(default_factory=list)
     rationale: str = ""
+    # Multi-framing: 2-4 different rephrasings of the user's question. Each
+    # cohort respondent answers EVERY framing in turn so the final brief
+    # aggregates across angles instead of a single-shot interpretation.
+    # Defaulted to [] so older runs without framings keep working.
+    framings: list[str] = Field(default_factory=list)
 
 
 class FinalReport(BaseModel):
@@ -128,6 +133,10 @@ class PlanForReview(BaseModel):
     executive_intent: str = ""
     personas: list[Persona] = Field(default_factory=list)
     sections: list[OutlineSection] = Field(default_factory=list)
+    # The N framings each cohort respondent will be asked in turn. Editable
+    # at the HITL pause so a partner can rephrase / drop / add framings
+    # before any interviews run.
+    framings: list[str] = Field(default_factory=list)
 
 
 class PlanEdit(BaseModel):
@@ -139,6 +148,7 @@ class PlanEdit(BaseModel):
     executive_intent: str | None = None
     personas: list[Persona] | None = None
     sections: list[OutlineSection] | None = None
+    framings: list[str] | None = None
 
 
 class RunState(BaseModel):

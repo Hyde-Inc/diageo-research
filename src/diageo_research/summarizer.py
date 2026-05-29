@@ -51,7 +51,14 @@ async def draft_subreport(
     question: str,
     turns: list[DialogueTurn],
 ) -> SubReport:
-    """Distill a single persona's interview transcript into a sub-report (Sonnet, terse)."""
+    """Distill a single persona's interview transcript into a sub-report (Sonnet, terse).
+
+    When the interview was framing-driven (the new default), each turn
+    answers the SAME core question rephrased differently. The sub-report
+    must aggregate across the framings: where do the framings converge,
+    where do they diverge, and what's the consensus the partner should
+    take away from this cohort.
+    """
     settings = get_settings()
     transcript = "\n\n".join(
         f"### Turn {t.turn_idx}\nQ: {t.question}\nA: {t.answer}" for t in turns
@@ -65,30 +72,49 @@ async def draft_subreport(
             seen.add(c.cite_id)
             deduped.append(c)
 
-    # All panel personas are analysts. Write in the analyst voice they own.
+    demo_line = (
+        f" anchored on **{persona.demographic}**" if persona.demographic else ""
+    )
+    sku_line = (
+        f" with SKU focus **{persona.sku_focus}**" if persona.sku_focus else ""
+    )
+    multi_framing = len(turns) > 1
+    framing_rule = (
+        "- The transcript answers the SAME core question through "
+        f"{len(turns)} different framings (data-first, decision-first, "
+        "counterfactual). Aggregate across them: lead with what is "
+        "consistent across framings, name any framing where this cohort "
+        "diverges from the consensus, and explicitly call out 'across "
+        "framings' or 'on the counterfactual framing' when relevant.\n"
+        if multi_framing
+        else ""
+    )
+
     prompt = (
-        f"You are {persona.name} ({persona.role}), an analyst on a Diageo strategy panel. "
+        f"You are {persona.name} ({persona.role}), a cohort respondent"
+        f"{demo_line}{sku_line} on a Diageo strategy panel. "
         f"Distill the interview transcript below into a tight, executive-grade sub-report "
         f"(150–280 words, markdown) on this strategy question:\n\n"
         f"# Shared socializing context (your lens; never cite verbatim)\n{socializing_brief()}\n\n"
         f"# Question\n{question}\n\n"
         f"# Transcript\n{transcript}\n\n"
-        f"# Voice\nWrite as the analyst lens this persona owns. Ground every claim in the "
-        f"datasets and trade press the persona reaches for; preserve magnitudes and time "
-        f"windows verbatim from the transcript. Don't drift into adjacent lenses your "
-        f"sibling personas own.\n\n"
+        f"# Voice\nWrite as the demographic-anchored analyst lens this respondent owns. "
+        f"Ground every claim in the datasets and trade press the respondent reaches for; "
+        f"preserve magnitudes and time windows verbatim from the transcript. Don't drift "
+        f"into adjacent demographics other respondents on the panel cover.\n\n"
         f"Rules:\n"
         f"- Preserve every `[B?]` / `[Q?]` citation marker from the transcript verbatim. "
         f"Do not drop them. Do not invent attribution-style tags like `[B-MyName]` — they "
         f"get stripped by the synthesizer and the claim becomes unsupported.\n"
-        f"- Lead with the single most consequential finding from your lens — this is the "
+        f"- Lead with the single most consequential finding from this cohort — this is the "
         f"headline claim the synthesizer will surface to the partner.\n"
         f"- 2–4 short paragraphs. No section headings beyond the title. No filler.\n"
         f"- Every numeric / factual sentence carries a `[B?]` or `[Q?]` marker. "
         f"Ungrounded prose gets dropped at synthesis.\n"
         f"- Where your data contradicts a CoLab Future-of-Socializing assumption, name "
-        f"the contradiction in one sentence.\n\n"
-        f"Return ONLY markdown, beginning with `### {persona.name}'s view`."
+        f"the contradiction in one sentence.\n"
+        f"{framing_rule}"
+        f"\nReturn ONLY markdown, beginning with `### {persona.name}'s view`."
     )
     resp = await client.messages.create(
         model=settings.sonnet_model_id,

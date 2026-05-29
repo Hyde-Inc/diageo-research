@@ -136,6 +136,7 @@ async def run_research(
                 "axes": plan.axes,
                 "n_seeds": len(plan.must_have_perspectives),
                 "rationale": plan.rationale,
+                "framings": plan.framings,
             },
         )
     )
@@ -235,6 +236,11 @@ async def run_research(
             },
         ))
 
+        # The framings list (3 alternate phrasings of the user's question)
+        # comes from the question-analysis pass and threads down into each
+        # interview so every cohort respondent answers the SAME framings.
+        framings = list(plan.framings)
+
         # 2.5 Human-in-the-loop pause (opt-in via the HTTP API).
         # Surface the plan, await edits, apply them. CLI flows skip this.
         if human_in_loop:
@@ -249,6 +255,7 @@ async def run_research(
                 executive_intent=executive_intent,
                 personas=personas,
                 sections=seed_sections,
+                framings=framings,
             )
             await bus.emit(SSEEvent(
                 type="plan_ready_for_review",
@@ -266,6 +273,7 @@ async def run_research(
             edited = hitl.apply_edits(plan_for_review, edit)
             executive_intent = edited.executive_intent
             seed_sections = edited.sections
+            framings = list(edited.framings)
             # Personas may have been added/removed/edited. Preserve any
             # `section_assignments` the user kept; rebuild missing ones with
             # the same fallback the assign_sections stage uses so every
@@ -286,8 +294,8 @@ async def run_research(
             elapsed_hitl = round(time.monotonic() - t_stage, 1)
             stage_timings.append(("hitl_review", elapsed_hitl))
             logger.info(
-                "stage hitl_review done in %ss — %d personas, %d sections post-edit",
-                elapsed_hitl, len(personas), len(seed_sections),
+                "stage hitl_review done in %ss — %d personas, %d sections post-edit, %d framings",
+                elapsed_hitl, len(personas), len(seed_sections), len(framings),
             )
             await bus.emit(SSEEvent(
                 type="plan_approved",
@@ -295,7 +303,9 @@ async def run_research(
                 data={
                     "n_personas": len(personas),
                     "n_sections": len(seed_sections),
+                    "n_framings": len(framings),
                     "executive_intent": executive_intent,
+                    "framings": framings,
                 },
             ))
             await bus.emit(SSEEvent(
@@ -319,6 +329,7 @@ async def run_research(
                     dataset_schema=dataset_schema,
                     max_turns=max_turns,
                     writer=writer,
+                    framings=framings,
                 )
 
         results = await asyncio.gather(
@@ -472,33 +483,66 @@ async def _interview_persona(
     dataset_schema: str,
     max_turns: int,
     writer: RunWriter | None = None,
+    framings: list[str] | None = None,
 ) -> SubReport:
     memory = DialogueMemory()
-    interviewer = Interviewer(client, persona, question, memory)
+    # Cap framings at max_turns so users can throttle wall-time. The
+    # orchestrator still emits the full intended list to the FE so the
+    # operator sees what got truncated.
+    framings = list(framings or [])
+    framings_for_run = framings[:max_turns] if framings else []
+    interviewer = Interviewer(
+        client, persona, question, memory, framings=framings_for_run
+    )
     perspective = PerspectiveAgent(client, persona, question, dataset_schema)
+
+    if framings_for_run:
+        await bus.emit(
+            SSEEvent(
+                type="framings_planned",
+                run_id=run_id,
+                persona_id=persona.id,
+                data={
+                    "framings": framings_for_run,
+                    "n_framings": len(framings_for_run),
+                    "n_intended": len(framings),
+                },
+            )
+        )
 
     turns: list[DialogueTurn] = []
     for t in range(1, max_turns + 1):
-        q = await interviewer.next_question()
-        if q is None:
+        next_q = await interviewer.next_question()
+        if next_q is None:
             await bus.emit(
                 SSEEvent(
                     type="interviewer_stopped",
                     run_id=run_id,
                     persona_id=persona.id,
                     turn_idx=t,
-                    data={"reason": "checklist + sections covered"},
+                    data={
+                        "reason": (
+                            "all framings asked"
+                            if framings_for_run
+                            else "checklist + sections covered"
+                        )
+                    },
                 )
             )
             break
 
+        q, framing_idx = next_q
         await bus.emit(
             SSEEvent(
                 type="turn_started",
                 run_id=run_id,
                 persona_id=persona.id,
                 turn_idx=t,
-                data={"question": q},
+                data={
+                    "question": q,
+                    "framing_idx": framing_idx,
+                    "n_framings": len(framings_for_run) or None,
+                },
             )
         )
 
@@ -528,6 +572,7 @@ async def _interview_persona(
                     "answer": turn.answer,
                     "n_citations": len(turn.citations),
                     "done": turn.done,
+                    "framing_idx": framing_idx,
                 },
             )
         )
