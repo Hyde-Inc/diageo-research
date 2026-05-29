@@ -17,7 +17,7 @@
 
 import Link from 'next/link';
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { useStudyData, withStudy } from '@/components/study/use-study';
 import { classifyPointerTier } from '@/components/evidence/source-tier';
@@ -319,6 +319,14 @@ type DriverFetch = {
 };
 
 export default function GrowthDriverPage() {
+  return (
+    <Suspense fallback={null}>
+      <GrowthDriverBody />
+    </Suspense>
+  );
+}
+
+function GrowthDriverBody() {
   const data = useStudyData();
   const { studyId } = data;
 

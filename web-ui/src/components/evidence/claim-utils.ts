@@ -459,7 +459,7 @@ const SPEC_VALUE_OVERRIDES: Record<string, string> = {
   gameday: 'Gameday',
 };
 
-export export function humaniseValue(value: string): string {
+export function humaniseValue(value: string): string {
   if (!value) return '';
   const lower = value.toLowerCase();
   if (SPEC_VALUE_OVERRIDES[lower]) return SPEC_VALUE_OVERRIDES[lower];

@@ -41,6 +41,7 @@ import {
   cleanRepresentative,
   extractClaimTitle,
   formatSourceSummary,
+  humaniseValue,
   summarizeAgreement,
   summarizeCitations,
   type SourceKind,
@@ -432,7 +433,7 @@ function FilterBar({
               return (
                 <FilterPill
                   key={opt}
-                  label={`${dim}: ${val}`}
+                  label={`${dim.replace(/_/g, ' ')}: ${humaniseValue(val)}`}
                   active={scenarioFilter === opt}
                   onClick={() => onScenarioFilter(opt)}
                 />
